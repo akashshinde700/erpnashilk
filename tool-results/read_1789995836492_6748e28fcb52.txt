@@ -1,0 +1,1947 @@
+     1→     1→Haan. Agar aap **manufacturing companies ke liye SaaS ERP** banana chahte ho, to sirf Invoice + Purchase Order banana enough nahi hoga. Aapko **Lead/Quotation → Sales → Purchase → Inventory → Production → Quality → Dispatch → Finance → GST → Reports** ka end-to-end flow banana chahiye.
+     2→     2→
+     3→     3→Aapke existing projects ki tarah main ise **modular, scalable, multi-tenant SaaS** architecture ke hisaab se design karunga.
+     4→     4→
+     5→     5→### Senior Engineer ke perspective se recommended scope
+     6→     6→
+     7→     7→**1. SaaS / Multi-Tenant**
+     8→     8→
+     9→     9→* Company/Tenant creation
+    10→    10→* Multiple plants/factories
+    11→    11→* Multiple warehouses
+    12→    12→* Branches
+    13→    13→* User management
+    14→    14→* Roles & permissions
+    15→    15→* Department-wise access
+    16→    16→* Subscription plans
+    17→    17→* Feature/module permissions
+    18→    18→* Audit logs
+    19→    19→* Tenant data isolation
+    20→    20→* Backup/restore strategy
+    21→    21→* Super Admin panel
+    22→    22→
+    23→    23→**2. Masters**
+    24→    24→
+    25→    25→* Items / Raw Materials / Finished Goods / Consumables
+    26→    26→* Item categories
+    27→    27→* Units of measurement
+    28→    28→* HSN/SAC
+    29→    29→* GST rates
+    30→    30→* Brands
+    31→    31→* Customers
+    32→    32→* Suppliers
+    33→    33→* Employees
+    34→    34→* Departments
+    35→    35→* Machines
+    36→    36→* Work Centers
+    37→    37→* Warehouses
+    38→    38→* Storage locations/bins
+    39→    39→* Tax configuration
+    40→    40→* Payment terms
+    41→    41→* Currency
+    42→    42→* BOM
+    43→    43→* Routing
+    44→    44→* Operations
+    45→    45→* Cost centers
+    46→    46→
+    47→    47→**3. Sales**
+    48→    48→
+    49→    49→* Leads
+    50→    50→* Enquiries
+    51→    51→* Quotations
+    52→    52→* Sales Orders
+    53→    53→* Delivery Challan
+    54→    54→* Dispatch
+    55→    55→* Sales Invoice
+    56→    56→* Credit Note
+    57→    57→* Debit Note
+    58→    58→* Returns
+    59→    59→* Customer payments
+    60→    60→* Outstanding
+    61→    61→* Customer ledger
+    62→    62→
+    63→    63→**4. Purchase**
+    64→    64→
+    65→    65→* Purchase Requisition
+    66→    66→* RFQ
+    67→    67→* Supplier quotation
+    68→    68→* Purchase Order
+    69→    69→* Goods Receipt / GRN
+    70→    70→* Purchase Invoice
+    71→    71→* Purchase Return
+    72→    72→* Debit Note
+    73→    73→* Supplier payments
+    74→    74→* Supplier outstanding
+    75→    75→* Supplier ledger
+    76→    76→
+    77→    77→**5. Inventory**
+    78→    78→
+    79→    79→* Stock In
+    80→    80→* Stock Out
+    81→    81→* Stock Transfer
+    82→    82→* Opening Stock
+    83→    83→* Batch/Lot tracking
+    84→    84→* Serial number tracking
+    85→    85→* Expiry tracking where required
+    86→    86→* Warehouse stock
+    87→    87→* Bin/location stock
+    88→    88→* Stock adjustment
+    89→    89→* Material reservation
+    90→    90→* Stock valuation
+    91→    91→* Stock ledger
+    92→    92→* Minimum/reorder levels
+    93→    93→* Physical stock count
+    94→    94→* Inventory reconciliation
+    95→    95→
+    96→    96→**6. Manufacturing — सबसे important**
+    97→    97→
+    98→    98→* Production Planning
+    99→    99→* Production Order / Work Order
+   100→   100→* BOM
+   101→   101→* Multi-level BOM
+   102→   102→* Routing
+   103→   103→* Work Centers
+   104→   104→* Operations
+   105→   105→* Machine allocation
+   106→   106→* Material requirement calculation
+   107→   107→* Material issue to production
+   108→   108→* WIP tracking
+   109→   109→* Production completion
+   110→   110→* Finished Goods receipt
+   111→   111→* Scrap
+   112→   112→* By-products
+   113→   113→* Rework
+   114→   114→* Production rejection
+   115→   115→* Production costing
+   116→   116→* Planned vs actual consumption
+   117→   117→* Planned vs actual production
+   118→   118→* Production downtime
+   119→   119→* Machine maintenance linkage
+   120→   120→
+   121→   121→**7. MRP**
+   122→   122→
+   123→   123→* Demand planning
+   124→   124→* Sales Order → Production requirement
+   125→   125→* BOM explosion
+   126→   126→* Raw material requirement
+   127→   127→* Available stock calculation
+   128→   128→* Shortage calculation
+   129→   129→* Purchase recommendation
+   130→   130→* Production recommendation
+   131→   131→* Lead time
+   132→   132→* Safety stock
+   133→   133→* Reorder point
+   134→   134→
+   135→   135→**8. Quality Control**
+   136→   136→
+   137→   137→* Incoming QC
+   138→   138→* In-process QC
+   139→   139→* Final QC
+   140→   140→* Inspection plans
+   141→   141→* Quality parameters
+   142→   142→* Acceptance criteria
+   143→   143→* Rejection
+   144→   144→* NCR
+   145→   145→* CAPA
+   146→   146→* Quality reports
+   147→   147→* Supplier quality
+   148→   148→* Production quality history
+   149→   149→
+   150→   150→**9. GST / Indian Compliance**
+   151→   151→
+   152→   152→* GSTIN
+   153→   153→* CGST / SGST / IGST
+   154→   154→* HSN
+   155→   155→* GST tax calculation
+   156→   156→* Tax invoices
+   157→   157→* Credit/Debit Notes
+   158→   158→* E-Invoice integration
+   159→   159→* IRN
+   160→   160→* QR code
+   161→   161→* E-Way Bill
+   162→   162→* GST reports
+   163→   163→* GSTR-related reconciliation/reporting
+   164→   164→* TDS/TCS where applicable
+   165→   165→* State-wise tax handling
+   166→   166→
+   167→   167→**10. Finance / Accounts**
+   168→   168→
+   169→   169→* Chart of Accounts
+   170→   170→* Journal entries
+   171→   171→* General Ledger
+   172→   172→* Cash
+   173→   173→* Bank
+   174→   174→* Receivables
+   175→   175→* Payables
+   176→   176→* Payment/Receipt vouchers
+   177→   177→* Expenses
+   178→   178→* Cost centers
+   179→   179→* Trial Balance
+   180→   180→* P&L
+   181→   181→* Balance Sheet
+   182→   182→* Cash Flow
+   183→   183→* Tax reports
+   184→   184→* Bank reconciliation
+   185→   185→
+   186→   186→**11. HR / Payroll**
+   187→   187→Manufacturing ERP ke scope ke according optional module:
+   188→   188→
+   189→   189→* Employees
+   190→   190→* Departments
+   191→   191→* Shifts
+   192→   192→* Attendance
+   193→   193→* Leave
+   194→   194→* Overtime
+   195→   195→* Payroll
+   196→   196→* Salary structure
+   197→   197→* Payslips
+   198→   198→* Employee documents
+   199→   199→
+   200→   200→**12. Maintenance**
+   201→   201→
+   202→   202→* Machines/assets
+   203→   203→* Preventive maintenance
+   204→   204→* Breakdown maintenance
+   205→   205→* Maintenance schedule
+   206→   206→* Spare parts
+   207→   207→* Maintenance work orders
+   208→   208→* Machine downtime
+   209→   209→* Maintenance cost
+   210→   210→* AMC
+   211→   211→
+   212→   212→**13. Logistics**
+   213→   213→
+   214→   214→* Delivery
+   215→   215→* Dispatch
+   216→   216→* Transporter
+   217→   217→* Vehicle
+   218→   218→* LR/GR
+   219→   219→* E-Way Bill
+   220→   220→* Shipment tracking
+   221→   221→* Delivery status
+   222→   222→
+   223→   223→**14. Dashboards**
+   224→   224→Management dashboard:
+   225→   225→
+   226→   226→* Sales
+   227→   227→* Purchase
+   228→   228→* Production
+   229→   229→* Inventory
+   230→   230→* Receivables
+   231→   231→* Payables
+   232→   232→* Profit
+   233→   233→* Production efficiency
+   234→   234→* Rejection
+   235→   235→* Scrap
+   236→   236→* Machine downtime
+   237→   237→* Raw-material shortage
+   238→   238→
+   239→   239→Production dashboard:
+   240→   240→
+   241→   241→* Today's production
+   242→   242→* Target vs actual
+   243→   243→* WIP
+   244→   244→* Pending work orders
+   245→   245→* Material shortages
+   246→   246→* Rejections
+   247→   247→
+   248→   248→Inventory dashboard:
+   249→   249→
+   250→   250→* Current stock
+   251→   251→* Low stock
+   252→   252→* Dead stock
+   253→   253→* Stock valuation
+   254→   254→* Pending GRN
+   255→   255→* Pending material issues
+   256→   256→
+   257→   257→---
+   258→   258→
+   259→   259→# Sabse important: Workflow
+   260→   260→
+   261→   261→ERP ko individual forms ka collection mat banana.
+   262→   262→
+   263→   263→Actual business workflow aisa hona chahiye:
+   264→   264→
+   265→   265→```text
+   266→   266→Customer
+   267→   267→   ↓
+   268→   268→Enquiry
+   269→   269→   ↓
+   270→   270→Quotation
+   271→   271→   ↓
+   272→   272→Sales Order
+   273→   273→   ↓
+   274→   274→Production Planning
+   275→   275→   ↓
+   276→   276→MRP
+   277→   277→   ↓
+   278→   278→Raw Material Requirement
+   279→   279→   ↓
+   280→   280→Purchase Requisition
+   281→   281→   ↓
+   282→   282→RFQ
+   283→   283→   ↓
+   284→   284→Purchase Order
+   285→   285→   ↓
+   286→   286→GRN
+   287→   287→   ↓
+   288→   288→Incoming QC
+   289→   289→   ↓
+   290→   290→Raw Material Stock
+   291→   291→   ↓
+   292→   292→Material Issue
+   293→   293→   ↓
+   294→   294→Production / Work Order
+   295→   295→   ↓
+   296→   296→WIP
+   297→   297→   ↓
+   298→   298→In-Process QC
+   299→   299→   ↓
+   300→   300→Finished Goods
+   301→   301→   ↓
+   302→   302→Final QC
+   303→   303→   ↓
+   304→   304→Finished Goods Stock
+   305→   305→   ↓
+   306→   306→Delivery
+   307→   307→   ↓
+   308→   308→E-Invoice / GST Invoice
+   309→   309→   ↓
+   310→   310→E-Way Bill
+   311→   311→   ↓
+   312→   312→Customer
+   313→   313→   ↓
+   314→   314→Payment
+   315→   315→   ↓
+   316→   316→Accounts / Ledger
+   317→   317→```
+   318→   318→
+   319→   319→Is workflow ke saath **reverse flows** bhi hone chahiye:
+   320→   320→
+   321→   321→```text
+   322→   322→Purchase Return
+   323→   323→Sales Return
+   324→   324→Production Rejection
+   325→   325→Rework
+   326→   326→Scrap
+   327→   327→Credit Note
+   328→   328→Debit Note
+   329→   329→Stock Adjustment
+   330→   330→Material Return
+   331→   331→QC Rejection
+   332→   332→```
+   333→   333→
+   334→   334→---
+   335→   335→
+   336→   336→# SaaS architecture
+   337→   337→
+   338→   338→Main isko normal single-company ERP ki tarah nahi banaunga.
+   339→   339→
+   340→   340→Recommended:
+   341→   341→
+   342→   342→```text
+   343→   343→                    SaaS ERP
+   344→   344→                       │
+   345→   345→        ┌──────────────┴──────────────┐
+   346→   346→        │                             │
+   347→   347→   Super Admin                    Tenant
+   348→   348→                                      │
+   349→   349→                         ┌────────────┼────────────┐
+   350→   350→                         │            │            │
+   351→   351→                       Plant       Warehouse     Users
+   352→   352→                         │
+   353→   353→       ┌─────────────────┼──────────────────────┐
+   354→   354→       │                 │                      │
+   355→   355→    Sales            Purchase              Manufacturing
+   356→   356→       │                 │                      │
+   357→   357→    Invoice             PO                    BOM
+   358→   358→    Delivery            GRN                   MRP
+   359→   359→    Payment             QC                    Work Order
+   360→   360→                                           Production
+   361→   361→                                               │
+   362→   362→                                     ┌─────────┴─────────┐
+   363→   363→                                     │                   │
+   364→   364→                                  Quality             Inventory
+   365→   365→                                     │                   │
+   366→   366→                                     └─────────┬─────────┘
+   367→   367→                                               │
+   368→   368→                                            Finance
+   369→   369→                                               │
+   370→   370→                                     GST / Reports
+   371→   371→```
+   372→   372→
+   373→   373→### Multi-tenancy
+   374→   374→
+   375→   375→Database level par har important business record ke saath:
+   376→   376→
+   377→   377→```text
+   378→   378→tenant_id
+   379→   379→company_id
+   380→   380→plant_id
+   381→   381→created_by
+   382→   382→updated_by
+   383→   383→created_at
+   384→   384→updated_at
+   385→   385→```
+   386→   386→
+   387→   387→hona chahiye.
+   388→   388→
+   389→   389→Ek company ka data doosri company ko **kabhi access nahi hona chahiye**.
+   390→   390→
+   391→   391→---
+   392→   392→
+   393→   393→# Roles
+   394→   394→
+   395→   395→Generic `Admin/User` roles se kaam nahi chalega.
+   396→   396→
+   397→   397→Example:
+   398→   398→
+   399→   399→```text
+   400→   400→Super Admin
+   401→   401→Tenant Admin
+   402→   402→Management
+   403→   403→Plant Manager
+   404→   404→Production Manager
+   405→   405→Production Supervisor
+   406→   406→Operator
+   407→   407→Purchase Manager
+   408→   408→Purchase Executive
+   409→   409→Sales Manager
+   410→   410→Sales Executive
+   411→   411→Store Manager
+   412→   412→Store Operator
+   413→   413→Quality Manager
+   414→   414→QC Inspector
+   415→   415→Accounts Manager
+   416→   416→Accountant
+   417→   417→HR Manager
+   418→   418→Maintenance Manager
+   419→   419→Maintenance Technician
+   420→   420→Dispatch Manager
+   421→   421→Viewer
+   422→   422→```
+   423→   423→
+   424→   424→Aur permissions:
+   425→   425→
+   426→   426→```text
+   427→   427→View
+   428→   428→Create
+   429→   429→Edit
+   430→   430→Delete
+   431→   431→Approve
+   432→   432→Reject
+   433→   433→Cancel
+   434→   434→Print
+   435→   435→Export
+   436→   436→Post
+   437→   437→Reverse
+   438→   438→```
+   439→   439→
+   440→   440→Example:
+   441→   441→
+   442→   442→**Purchase Executive**
+   443→   443→
+   444→   444→* PO create → Yes
+   445→   445→* PO approve → No
+   446→   446→* PO cancel → No
+   447→   447→* Supplier payment → No
+   448→   448→
+   449→   449→**Purchase Manager**
+   450→   450→
+   451→   451→* PO create → Yes
+   452→   452→* PO approve → Yes
+   453→   453→* Payment → No
+   454→   454→
+   455→   455→**Accountant**
+   456→   456→
+   457→   457→* Invoice → Yes
+   458→   458→* Payment → Yes
+   459→   459→* Production order → View only
+   460→   460→
+   461→   461→Is type ka **RBAC + approval workflow** banana chahiye.
+   462→   462→
+   463→   463→---
+   464→   464→
+   465→   465→# Approval system
+   466→   466→
+   467→   467→Manufacturing ERP mein ye bahut important hai.
+   468→   468→
+   469→   469→Example:
+   470→   470→
+   471→   471→```text
+   472→   472→Purchase Request
+   473→   473→       ↓
+   474→   474→Department Head Approval
+   475→   475→       ↓
+   476→   476→Purchase Manager Approval
+   477→   477→       ↓
+   478→   478→Management Approval
+   479→   479→       ↓
+   480→   480→Purchase Order
+   481→   481→```
+   482→   482→
+   483→   483→Similarly:
+   484→   484→
+   485→   485→```text
+   486→   486→Sales Quotation
+   487→   487→      ↓
+   488→   488→Manager Approval
+   489→   489→      ↓
+   490→   490→Customer
+   491→   491→```
+   492→   492→
+   493→   493→```text
+   494→   494→Production Order
+   495→   495→      ↓
+   496→   496→Production Manager
+   497→   497→      ↓
+   498→   498→Work Order
+   499→   499→```
+   500→   500→
+   501→   501→Approval limits configurable rakho:
+   502→   502→
+   503→   503→```text
+   504→   504→₹0 – ₹50,000       → Manager
+   505→   505→₹50,001 – ₹5 Lakh   → Plant Head
+   506→   506→₹5 Lakh+            → Management
+   507→   507→```
+   508→   508→
+   509→   509→---
+   510→   510→
+   511→   511→# Manufacturing ka core database
+   512→   512→
+   513→   513→Ye part initially sahi design karna bahut important hai.
+   514→   514→
+   515→   515→### Example BOM
+   516→   516→
+   517→   517→```text
+   518→   518→Product:
+   519→   519→Motor Assembly
+   520→   520→
+   521→   521→├── Motor Housing × 1
+   522→   522→├── Rotor × 1
+   523→   523→├── Bearing × 2
+   524→   524→├── Copper Wire × 5kg
+   525→   525→└── Screws × 8
+   526→   526→```
+   527→   527→
+   528→   528→Lekin real ERP mein:
+   529→   529→
+   530→   530→```text
+   531→   531→BOM
+   532→   532→ ├── BOM Header
+   533→   533→ ├── BOM Versions
+   534→   534→ ├── BOM Items
+   535→   535→ ├── Scrap %
+   536→   536→ ├── Yield %
+   537→   537→ └── Effective Date
+   538→   538→```
+   539→   539→
+   540→   540→hona chahiye.
+   541→   541→
+   542→   542→### Routing
+   543→   543→
+   544→   544→```text
+   545→   545→Raw Material
+   546→   546→     ↓
+   547→   547→Cutting
+   548→   548→     ↓
+   549→   549→Machining
+   550→   550→     ↓
+   551→   551→Welding
+   552→   552→     ↓
+   553→   553→Painting
+   554→   554→     ↓
+   555→   555→Assembly
+   556→   556→     ↓
+   557→   557→Testing
+   558→   558→     ↓
+   559→   559→Finished Goods
+   560→   560→```
+   561→   561→
+   562→   562→Har operation ke saath:
+   563→   563→
+   564→   564→```text
+   565→   565→Work Center
+   566→   566→Machine
+   567→   567→Operator
+   568→   568→Setup Time
+   569→   569→Run Time
+   570→   570→Queue Time
+   571→   571→Labor Cost
+   572→   572→Machine Cost
+   573→   573→QC Required
+   574→   574→```
+   575→   575→
+   576→   576→---
+   577→   577→
+   578→   578→# Production tracking
+   579→   579→
+   580→   580→Operator ke liye simple UI:
+   581→   581→
+   582→   582→```text
+   583→   583→My Work Orders
+   584→   584→
+   585→   585→WO-10245
+   586→   586→Product: Motor Assembly
+   587→   587→Target: 100
+   588→   588→
+   589→   589→[Start]
+   590→   590→
+   591→   591→Produced: 60
+   592→   592→Rejected: 3
+   593→   593→Remaining: 40
+   594→   594→
+   595→   595→[Pause] [Complete]
+   596→   596→
+   597→   597→Reason:
+   598→   598→○ Material shortage
+   599→   599→○ Machine breakdown
+   600→   600→○ Quality issue
+   601→   601→○ Other
+   602→   602→```
+   603→   603→
+   604→   604→Supervisor ko:
+   605→   605→
+   606→   606→```text
+   607→   607→Production Dashboard
+   608→   608→
+   609→   609→Target       1,000
+   610→   610→Produced       820
+   611→   611→Rejection       25
+   612→   612→WIP             155
+   613→   613→Efficiency      XX%
+   614→   614→```
+   615→   615→
+   616→   616→dikhna chahiye.
+   617→   617→
+   618→   618→---
+   619→   619→
+   620→   620→# Document numbering
+   621→   621→
+   622→   622→Har tenant/company ke liye configurable numbering:
+   623→   623→
+   624→   624→```text
+   625→   625→INV-2026-000001
+   626→   626→PO-2026-000001
+   627→   627→SO-2026-000001
+   628→   628→GRN-2026-000001
+   629→   629→WO-2026-000001
+   630→   630→QC-2026-000001
+   631→   631→DN-2026-000001
+   632→   632→```
+   633→   633→
+   634→   634→Financial year change par configuration support honi chahiye.
+   635→   635→
+   636→   636→---
+   637→   637→
+   638→   638→# SaaS plans
+   639→   639→
+   640→   640→Baad mein monetization ke liye:
+   641→   641→
+   642→   642→### Starter
+   643→   643→
+   644→   644→* Sales
+   645→   645→* Purchase
+   646→   646→* Inventory
+   647→   647→* GST
+   648→   648→* Basic reports
+   649→   649→
+   650→   650→### Professional
+   651→   651→
+   652→   652→* Manufacturing
+   653→   653→* BOM
+   654→   654→* MRP
+   655→   655→* QC
+   656→   656→* Maintenance
+   657→   657→* Advanced reports
+   658→   658→
+   659→   659→### Enterprise
+   660→   660→
+   661→   661→* Multiple plants
+   662→   662→* Advanced MRP
+   663→   663→* Advanced approval
+   664→   664→* API
+   665→   665→* Custom workflows
+   666→   666→* Advanced analytics
+   667→   667→* SSO
+   668→   668→* Dedicated infrastructure
+   669→   669→
+   670→   670→**Lekin architecture aisa rakho ki modules feature flags se enable/disable ho saken.**
+   671→   671→
+   672→   672→---
+   673→   673→
+   674→   674→# Tech architecture
+   675→   675→
+   676→   676→Aap Node.js background mein ho, isliye:
+   677→   677→
+   678→   678→```text
+   679→   679→Frontend
+   680→   680→React + TypeScript
+   681→   681→        │
+   682→   682→        ↓
+   683→   683→API
+   684→   684→Node.js + TypeScript
+   685→   685→        │
+   686→   686→        ↓
+   687→   687→Service Layer
+   688→   688→        │
+   689→   689→        ↓
+   690→   690→Repository / Data Access
+   691→   691→        │
+   692→   692→        ↓
+   693→   693→MySQL
+   694→   694→```
+   695→   695→
+   696→   696→Supporting infrastructure:
+   697→   697→
+   698→   698→```text
+   699→   699→Redis
+   700→   700→   ↓
+   701→   701→Caching
+   702→   702→Queues
+   703→   703→Sessions
+   704→   704→Rate limiting
+   705→   705→
+   706→   706→Object Storage
+   707→   707→   ↓
+   708→   708→Invoices
+   709→   709→PO PDFs
+   710→   710→Attachments
+   711→   711→QC documents
+   712→   712→Employee documents
+   713→   713→
+   714→   714→Background Workers
+   715→   715→   ↓
+   716→   716→PDF generation
+   717→   717→Email
+   718→   718→Notifications
+   719→   719→GST integrations
+   720→   720→Reports
+   721→   721→Exports
+   722→   722→```
+   723→   723→
+   724→   724→### Important
+   725→   725→
+   726→   726→Start mein microservices mat banao.
+   727→   727→
+   728→   728→**Modular monolith** rakho:
+   729→   729→
+   730→   730→```text
+   731→   731→/modules
+   732→   732→
+   733→   733→auth
+   734→   734→tenants
+   735→   735→users
+   736→   736→roles
+   737→   737→masters
+   738→   738→sales
+   739→   739→purchase
+   740→   740→inventory
+   741→   741→manufacturing
+   742→   742→mrp
+   743→   743→quality
+   744→   744→maintenance
+   745→   745→finance
+   746→   746→gst
+   747→   747→hr
+   748→   748→logistics
+   749→   749→reports
+   750→   750→notifications
+   751→   751→```
+   752→   752→
+   753→   753→Baad mein high-load modules ko independently scale kar sakte ho.
+   754→   754→
+   755→   755→---
+   756→   756→
+   757→   757→# Frontend structure
+   758→   758→
+   759→   759→Main sidebar kuch is type ka rakhunga:
+   760→   760→
+   761→   761→```text
+   762→   762→Dashboard
+   763→   763→
+   764→   764→Masters
+   765→   765→  Items
+   766→   766→  Customers
+   767→   767→  Suppliers
+   768→   768→  Employees
+   769→   769→  Warehouses
+   770→   770→  Machines
+   771→   771→  BOM
+   772→   772→  Routing
+   773→   773→
+   774→   774→Sales
+   775→   775→  Enquiries
+   776→   776→  Quotations
+   777→   777→  Sales Orders
+   778→   778→  Deliveries
+   779→   779→  Invoices
+   780→   780→  Returns
+   781→   781→  Payments
+   782→   782→
+   783→   783→Purchase
+   784→   784→  Requisitions
+   785→   785→  RFQs
+   786→   786→  Purchase Orders
+   787→   787→  GRN
+   788→   788→  Purchase Invoices
+   789→   789→  Returns
+   790→   790→  Payments
+   791→   791→
+   792→   792→Inventory
+   793→   793→  Stock
+   794→   794→  Transfers
+   795→   795→  Adjustments
+   796→   796→  Batch / Serial
+   797→   797→  Stock Ledger
+   798→   798→  Stock Count
+   799→   799→
+   800→   800→Manufacturing
+   801→   801→  Production Planning
+   802→   802→  MRP
+   803→   803→  Work Orders
+   804→   804→  Material Issue
+   805→   805→  Production
+   806→   806→  WIP
+   807→   807→  Scrap / Rework
+   808→   808→
+   809→   809→Quality
+   810→   810→  Incoming QC
+   811→   811→  In-Process QC
+   812→   812→  Final QC
+   813→   813→  NCR / CAPA
+   814→   814→
+   815→   815→Maintenance
+   816→   816→  Machines
+   817→   817→  Maintenance
+   818→   818→  Breakdown
+   819→   819→  Preventive Maintenance
+   820→   820→
+   821→   821→Finance
+   822→   822→  Accounts
+   823→   823→  Receivables
+   824→   824→  Payables
+   825→   825→  Payments
+   826→   826→  Expenses
+   827→   827→  Ledger
+   828→   828→  Reports
+   829→   829→
+   830→   830→GST
+   831→   831→  E-Invoice
+   832→   832→  E-Way Bill
+   833→   833→  GST Reports
+   834→   834→
+   835→   835→Reports
+   836→   836→  Sales
+   837→   837→  Purchase
+   838→   838→  Inventory
+   839→   839→  Production
+   840→   840→  Quality
+   841→   841→  Finance
+   842→   842→  GST
+   843→   843→
+   844→   844→Administration
+   845→   845→  Users
+   846→   846→  Roles
+   847→   847→  Approvals
+   848→   848→  Company
+   849→   849→  Plants
+   850→   850→  Settings
+   851→   851→  Audit Logs
+   852→   852→```
+   853→   853→
+   854→   854→---
+   855→   855→
+   856→   856→# Aur ek important point
+   857→   857→
+   858→   858→**Sab features ek saath code karna galat approach hoga.**
+   859→   859→
+   860→   860→Pehle **ERP foundation + core manufacturing workflow** complete karo:
+   861→   861→
+   862→   862→### Phase 1
+   863→   863→
+   864→   864→```text
+   865→   865→SaaS
+   866→   866→Authentication
+   867→   867→Tenant
+   868→   868→Company
+   869→   869→Plant
+   870→   870→Users
+   871→   871→Roles
+   872→   872→Permissions
+   873→   873→Masters
+   874→   874→Audit Logs
+   875→   875→```
+   876→   876→
+   877→   877→### Phase 2
+   878→   878→
+   879→   879→```text
+   880→   880→Purchase
+   881→   881→Inventory
+   882→   882→Sales
+   883→   883→GST Invoice
+   884→   884→Payments
+   885→   885→```
+   886→   886→
+   887→   887→### Phase 3
+   888→   888→
+   889→   889→```text
+   890→   890→BOM
+   891→   891→Routing
+   892→   892→Work Centers
+   893→   893→Production
+   894→   894→WIP
+   895→   895→Scrap
+   896→   896→Rework
+   897→   897→QC
+   898→   898→```
+   899→   899→
+   900→   900→### Phase 4
+   901→   901→
+   902→   902→```text
+   903→   903→MRP
+   904→   904→Planning
+   905→   905→Costing
+   906→   906→Machine Maintenance
+   907→   907→Advanced QC
+   908→   908→```
+   909→   909→
+   910→   910→### Phase 5
+   911→   911→
+   912→   912→```text
+   913→   913→Accounting
+   914→   914→GST integrations
+   915→   915→E-Invoice
+   916→   916→E-Way Bill
+   917→   917→Advanced reports
+   918→   918→Analytics
+   919→   919→```
+   920→   920→
+   921→   921→### Phase 6
+   922→   922→
+   923→   923→```text
+   924→   924→Mobile/PWA
+   925→   925→Notifications
+   926→   926→API
+   927→   927→Integrations
+   928→   928→Subscription billing
+   929→   929→Enterprise features
+   930→   930→```
+   931→   931→
+   932→   932→---
+   933→   933→
+   934→   934→## Aapke AI coding tool ke liye enhanced master prompt
+   935→   935→
+   936→   936→Agar aap **Claude / Cursor / Claude Code / Z.ai** se ye ERP develop karwa rahe ho, to main prompt ko is tarah define karunga:
+   937→   937→
+   938→   938→You are a Principal Software Architect, Senior Full-Stack Engineer, Manufacturing ERP Domain Architect, Database Architect, Security Engineer, QA Engineer and SaaS Product Architect.
+   939→   939→
+   940→   940→I want to build a production-grade, multi-tenant SaaS ERP specifically for Indian manufacturing companies.
+   941→   941→
+   942→   942→IMPORTANT:
+   943→   943→Do NOT immediately start changing or generating code.
+   944→   944→
+   945→   945→FIRST:
+   946→   946→
+   947→   947→1. Inspect the entire existing project.
+   948→   948→2. Understand the current frontend architecture.
+   949→   949→3. Understand the backend architecture.
+   950→   950→4. Inspect the database schema and relationships.
+   951→   951→5. Inspect authentication and authorization.
+   952→   952→6. Inspect existing modules, forms, APIs, services and components.
+   953→   953→7. Identify what already exists.
+   954→   954→8. Identify duplicate, incomplete, broken or incorrectly designed functionality.
+   955→   955→9. Identify what can be reused.
+   956→   956→10. Identify architectural problems before making changes.
+   957→   957→
+   958→   958→Do NOT unnecessarily rewrite existing working functionality.
+   959→   959→
+   960→   960→The goal is to evolve the existing application into a scalable manufacturing ERP SaaS.
+   961→   961→
+   962→   962→==================================================
+   963→   963→
+   964→   964→1. PRODUCT ARCHITECTURE
+   965→   965→   ==================================================
+   966→   966→
+   967→   967→Build the system as a true multi-tenant SaaS.
+   968→   968→
+   969→   969→Hierarchy:
+   970→   970→
+   971→   971→Platform
+   972→   972→└── Tenant / Company
+   973→   973→├── Plants
+   974→   974→├── Warehouses
+   975→   975→├── Departments
+   976→   976→├── Users
+   977→   977→└── Business Data
+   978→   978→
+   979→   979→Every tenant's business data must be strictly isolated.
+   980→   980→
+   981→   981→Important entities should support:
+   982→   982→
+   983→   983→tenant_id
+   984→   984→company_id
+   985→   985→plant_id
+   986→   986→created_by
+   987→   987→updated_by
+   988→   988→created_at
+   989→   989→updated_at
+   990→   990→deleted_at where appropriate
+   991→   991→
+   992→   992→Never allow one tenant to access another tenant's data.
+   993→   993→
+   994→   994→Implement tenant isolation at API/service/database query level.
+   995→   995→
+   996→   996→==================================================
+   997→   997→2. AUTHENTICATION & RBAC
+   998→   998→========================
+   999→   999→
+  1000→  1000→Implement secure authentication and granular RBAC.
+  1001→  1001→
+  1002→  1002→Roles may include:
+  1003→  1003→
+  1004→  1004→Super Admin
+  1005→  1005→Tenant Admin
+  1006→  1006→Management
+  1007→  1007→Plant Manager
+  1008→  1008→Production Manager
+  1009→  1009→Production Supervisor
+  1010→  1010→Operator
+  1011→  1011→Purchase Manager
+  1012→  1012→Purchase Executive
+  1013→  1013→Sales Manager
+  1014→  1014→Sales Executive
+  1015→  1015→Store Manager
+  1016→  1016→Store Operator
+  1017→  1017→Quality Manager
+  1018→  1018→QC Inspector
+  1019→  1019→Account Manager
+  1020→  1020→Accountant
+  1021→  1021→HR Manager
+  1022→  1022→Maintenance Manager
+  1023→  1023→Maintenance Technician
+  1024→  1024→Dispatch Manager
+  1025→  1025→Viewer
+  1026→  1026→
+  1027→  1027→Permissions:
+  1028→  1028→
+  1029→  1029→view
+  1030→  1030→create
+  1031→  1031→edit
+  1032→  1032→delete
+  1033→  1033→approve
+  1034→  1034→reject
+  1035→  1035→cancel
+  1036→  1036→print
+  1037→  1037→export
+  1038→  1038→post
+  1039→  1039→reverse
+  1040→  1040→
+  1041→  1041→Permissions must be module/action based.
+  1042→  1042→
+  1043→  1043→Do not rely only on frontend permission checks.
+  1044→  1044→
+  1045→  1045→Authorization MUST also be enforced in backend APIs/services.
+  1046→  1046→
+  1047→  1047→==================================================
+  1048→  1048→3. CORE MASTER DATA
+  1049→  1049→===================
+  1050→  1050→
+  1051→  1051→Create properly normalized masters for:
+  1052→  1052→
+  1053→  1053→Items
+  1054→  1054→Raw Materials
+  1055→  1055→Finished Goods
+  1056→  1056→Semi-Finished Goods
+  1057→  1057→Consumables
+  1058→  1058→Item Categories
+  1059→  1059→Brands
+  1060→  1060→Units
+  1061→  1061→HSN/SAC
+  1062→  1062→GST Rates
+  1063→  1063→Customers
+  1064→  1064→Suppliers
+  1065→  1065→Employees
+  1066→  1066→Departments
+  1067→  1067→Plants
+  1068→  1068→Warehouses
+  1069→  1069→Bins/Locations
+  1070→  1070→Machines
+  1071→  1071→Work Centers
+  1072→  1072→Operations
+  1073→  1073→Cost Centers
+  1074→  1074→Payment Terms
+  1075→  1075→Tax Configuration
+  1076→  1076→Currencies
+  1077→  1077→
+  1078→  1078→Items must support:
+  1079→  1079→
+  1080→  1080→SKU
+  1081→  1081→Item Code
+  1082→  1082→Name
+  1083→  1083→Description
+  1084→  1084→Category
+  1085→  1085→UOM
+  1086→  1086→HSN
+  1087→  1087→GST Rate
+  1088→  1088→Batch Tracking
+  1089→  1089→Serial Tracking
+  1090→  1090→Expiry Tracking
+  1091→  1091→Reorder Level
+  1092→  1092→Minimum Stock
+  1093→  1093→Maximum Stock
+  1094→  1094→Purchase Price
+  1095→  1095→Selling Price
+  1096→  1096→Standard Cost
+  1097→  1097→Status
+  1098→  1098→
+  1099→  1099→==================================================
+  1100→  1100→4. SALES
+  1101→  1101→========
+  1102→  1102→
+  1103→  1103→Implement:
+  1104→  1104→
+  1105→  1105→Enquiry
+  1106→  1106→Quotation
+  1107→  1107→Sales Order
+  1108→  1108→Delivery Challan
+  1109→  1109→Dispatch
+  1110→  1110→Sales Invoice
+  1111→  1111→Credit Note
+  1112→  1112→Debit Note
+  1113→  1113→Sales Return
+  1114→  1114→Customer Payment
+  1115→  1115→Customer Outstanding
+  1116→  1116→Customer Ledger
+  1117→  1117→
+  1118→  1118→Workflow:
+  1119→  1119→
+  1120→  1120→Enquiry
+  1121→  1121→→ Quotation
+  1122→  1122→→ Sales Order
+  1123→  1123→→ Production/Stock
+  1124→  1124→→ Delivery
+  1125→  1125→→ Invoice
+  1126→  1126→→ Payment
+  1127→  1127→
+  1128→  1128→Support approval workflows where required.
+  1129→  1129→
+  1130→  1130→==================================================
+  1131→  1131→5. PURCHASE
+  1132→  1132→===========
+  1133→  1133→
+  1134→  1134→Implement:
+  1135→  1135→
+  1136→  1136→Purchase Requisition
+  1137→  1137→RFQ
+  1138→  1138→Supplier Quotation
+  1139→  1139→Purchase Order
+  1140→  1140→GRN
+  1141→  1141→Incoming QC
+  1142→  1142→Purchase Invoice
+  1143→  1143→Purchase Return
+  1144→  1144→Debit Note
+  1145→  1145→Supplier Payment
+  1146→  1146→Supplier Outstanding
+  1147→  1147→Supplier Ledger
+  1148→  1148→
+  1149→  1149→Workflow:
+  1150→  1150→
+  1151→  1151→Purchase Requisition
+  1152→  1152→→ Approval
+  1153→  1153→→ RFQ
+  1154→  1154→→ Supplier Quotation
+  1155→  1155→→ Purchase Order
+  1156→  1156→→ GRN
+  1157→  1157→→ QC
+  1158→  1158→→ Stock
+  1159→  1159→→ Purchase Invoice
+  1160→  1160→→ Payment
+  1161→  1161→
+  1162→  1162→==================================================
+  1163→  1163→6. INVENTORY
+  1164→  1164→============
+  1165→  1165→
+  1166→  1166→Implement:
+  1167→  1167→
+  1168→  1168→Opening Stock
+  1169→  1169→Stock In
+  1170→  1170→Stock Out
+  1171→  1171→Stock Transfer
+  1172→  1172→Stock Adjustment
+  1173→  1173→Stock Reservation
+  1174→  1174→Material Issue
+  1175→  1175→Material Return
+  1176→  1176→Stock Count
+  1177→  1177→Batch Tracking
+  1178→  1178→Serial Tracking
+  1179→  1179→Warehouse Stock
+  1180→  1180→Bin Stock
+  1181→  1181→Stock Ledger
+  1182→  1182→Inventory Valuation
+  1183→  1183→Reorder Levels
+  1184→  1184→
+  1185→  1185→Every stock transaction must maintain a proper immutable transaction history.
+  1186→  1186→
+  1187→  1187→Do not directly modify stock quantities without recording a stock transaction.
+  1188→  1188→
+  1189→  1189→Support stock reconciliation.
+  1190→  1190→
+  1191→  1191→==================================================
+  1192→  1192→7. MANUFACTURING
+  1193→  1193→================
+  1194→  1194→
+  1195→  1195→This is the core ERP module.
+  1196→  1196→
+  1197→  1197→Implement:
+  1198→  1198→
+  1199→  1199→Bill of Materials
+  1200→  1200→Multi-Level BOM
+  1201→  1201→BOM Versions
+  1202→  1202→BOM Effective Dates
+  1203→  1203→Routing
+  1204→  1204→Operations
+  1205→  1205→Work Centers
+  1206→  1206→Machines
+  1207→  1207→Production Planning
+  1208→  1208→Production Orders
+  1209→  1209→Work Orders
+  1210→  1210→Material Requirements
+  1211→  1211→Material Issue
+  1212→  1212→WIP
+  1213→  1213→Production Completion
+  1214→  1214→Finished Goods Receipt
+  1215→  1215→Scrap
+  1216→  1216→By-Products
+  1217→  1217→Rework
+  1218→  1218→Production Rejection
+  1219→  1219→Production Costing
+  1220→  1220→Actual vs Planned Consumption
+  1221→  1221→Actual vs Planned Production
+  1222→  1222→
+  1223→  1223→Example:
+  1224→  1224→
+  1225→  1225→Sales Order
+  1226→  1226→→ Production Requirement
+  1227→  1227→→ MRP
+  1228→  1228→→ Material Requirement
+  1229→  1229→→ Purchase/Stock
+  1230→  1230→→ Production Order
+  1231→  1231→→ Work Order
+  1232→  1232→→ Material Issue
+  1233→  1233→→ Operation
+  1234→  1234→→ WIP
+  1235→  1235→→ QC
+  1236→  1236→→ Finished Goods
+  1237→  1237→→ Stock
+  1238→  1238→
+  1239→  1239→==================================================
+  1240→  1240→8. MRP
+  1241→  1241→======
+  1242→  1242→
+  1243→  1243→Implement Material Requirements Planning.
+  1244→  1244→
+  1245→  1245→System should calculate:
+  1246→  1246→
+  1247→  1247→Required Quantity
+  1248→  1248→Available Stock
+  1249→  1249→Reserved Stock
+  1250→  1250→Expected Incoming Stock
+  1251→  1251→Shortage
+  1252→  1252→Net Requirement
+  1253→  1253→Suggested Purchase
+  1254→  1254→Suggested Production
+  1255→  1255→
+  1256→  1256→Consider:
+  1257→  1257→
+  1258→  1258→BOM
+  1259→  1259→Sales Orders
+  1260→  1260→Production Orders
+  1261→  1261→Current Inventory
+  1262→  1262→Open Purchase Orders
+  1263→  1263→Lead Times
+  1264→  1264→Safety Stock
+  1265→  1265→Reorder Points
+  1266→  1266→
+  1267→  1267→Never create duplicate purchase/production recommendations.
+  1268→  1268→
+  1269→  1269→==================================================
+  1270→  1270→9. QUALITY CONTROL
+  1271→  1271→==================
+  1272→  1272→
+  1273→  1273→Implement:
+  1274→  1274→
+  1275→  1275→Incoming QC
+  1276→  1276→In-Process QC
+  1277→  1277→Final QC
+  1278→  1278→Inspection Plans
+  1279→  1279→Quality Parameters
+  1280→  1280→Acceptance Criteria
+  1281→  1281→QC Results
+  1282→  1282→Pass
+  1283→  1283→Fail
+  1284→  1284→Partial Acceptance
+  1285→  1285→Rejection
+  1286→  1286→NCR
+  1287→  1287→CAPA
+  1288→  1288→Supplier Quality
+  1289→  1289→Production Quality History
+  1290→  1290→
+  1291→  1291→QC status must influence inventory availability where appropriate.
+  1292→  1292→
+  1293→  1293→==================================================
+  1294→  1294→10. MAINTENANCE
+  1295→  1295→===============
+  1296→  1296→
+  1297→  1297→Implement:
+  1298→  1298→
+  1299→  1299→Machines
+  1300→  1300→Assets
+  1301→  1301→Preventive Maintenance
+  1302→  1302→Breakdown Maintenance
+  1303→  1303→Maintenance Work Orders
+  1304→  1304→Maintenance Schedule
+  1305→  1305→Spare Parts
+  1306→  1306→Machine Downtime
+  1307→  1307→Maintenance Cost
+  1308→  1308→AMC
+  1309→  1309→
+  1310→  1310→Link maintenance events to production downtime where appropriate.
+  1311→  1311→
+  1312→  1312→==================================================
+  1313→  1313→11. GST / INDIAN COMPLIANCE
+  1314→  1314→===========================
+  1315→  1315→
+  1316→  1316→Support:
+  1317→  1317→
+  1318→  1318→GSTIN
+  1319→  1319→CGST
+  1320→  1320→SGST
+  1321→  1321→IGST
+  1322→  1322→HSN/SAC
+  1323→  1323→Tax Invoice
+  1324→  1324→Credit Note
+  1325→  1325→Debit Note
+  1326→  1326→E-Invoice
+  1327→  1327→IRN
+  1328→  1328→QR Code
+  1329→  1329→E-Way Bill
+  1330→  1330→GST Reports
+  1331→  1331→Tax Reconciliation
+  1332→  1332→
+  1333→  1333→Do not hardcode tax rates.
+  1334→  1334→
+  1335→  1335→Tax configuration must be configurable and versionable.
+  1336→  1336→
+  1337→  1337→External government integrations must be implemented through a dedicated integration layer.
+  1338→  1338→
+  1339→  1339→Never expose API credentials/secrets to the frontend.
+  1340→  1340→
+  1341→  1341→==================================================
+  1342→  1342→12. FINANCE
+  1343→  1343→===========
+  1344→  1344→
+  1345→  1345→Implement the foundation for:
+  1346→  1346→
+  1347→  1347→Chart of Accounts
+  1348→  1348→Journal Entries
+  1349→  1349→General Ledger
+  1350→  1350→Accounts Receivable
+  1351→  1351→Accounts Payable
+  1352→  1352→Cash
+  1353→  1353→Bank
+  1354→  1354→Payment
+  1355→  1355→Receipt
+  1356→  1356→Expenses
+  1357→  1357→Cost Centers
+  1358→  1358→Trial Balance
+  1359→  1359→Profit & Loss
+  1360→  1360→Balance Sheet
+  1361→  1361→Cash Flow
+  1362→  1362→Bank Reconciliation
+  1363→  1363→
+  1364→  1364→Every financial transaction must maintain auditability.
+  1365→  1365→
+  1366→  1366→==================================================
+  1367→  1367→13. DOCUMENT NUMBERING
+  1368→  1368→======================
+  1369→  1369→
+  1370→  1370→Support configurable numbering:
+  1371→  1371→
+  1372→  1372→INV-2026-000001
+  1373→  1373→PO-2026-000001
+  1374→  1374→SO-2026-000001
+  1375→  1375→GRN-2026-000001
+  1376→  1376→WO-2026-000001
+  1377→  1377→QC-2026-000001
+  1378→  1378→
+  1379→  1379→Support financial year based numbering.
+  1380→  1380→
+  1381→  1381→Prevent duplicate document numbers under concurrent requests.
+  1382→  1382→
+  1383→  1383→==================================================
+  1384→  1384→14. APPROVAL WORKFLOW ENGINE
+  1385→  1385→============================
+  1386→  1386→
+  1387→  1387→Create a reusable approval engine.
+  1388→  1388→
+  1389→  1389→It should support:
+  1390→  1390→
+  1391→  1391→Document Type
+  1392→  1392→Approval Level
+  1393→  1393→Approver
+  1394→  1394→Amount Threshold
+  1395→  1395→Department
+  1396→  1396→Plant
+  1397→  1397→Status
+  1398→  1398→Approve
+  1399→  1399→Reject
+  1400→  1400→Return
+  1401→  1401→Comments
+  1402→  1402→Approval History
+  1403→  1403→
+  1404→  1404→Example:
+  1405→  1405→
+  1406→  1406→Purchase Request
+  1407→  1407→→ Department Head
+  1408→  1408→→ Purchase Manager
+  1409→  1409→→ Management
+  1410→  1410→
+  1411→  1411→Do not hardcode approval logic into individual forms.
+  1412→  1412→
+  1413→  1413→==================================================
+  1414→  1414→15. AUDIT LOG
+  1415→  1415→=============
+  1416→  1416→
+  1417→  1417→Record important actions:
+  1418→  1418→
+  1419→  1419→Create
+  1420→  1420→Update
+  1421→  1421→Delete
+  1422→  1422→Approve
+  1423→  1423→Reject
+  1424→  1424→Cancel
+  1425→  1425→Post
+  1426→  1426→Reverse
+  1427→  1427→Login
+  1428→  1428→Logout
+  1429→  1429→Permission Change
+  1430→  1430→Configuration Change
+  1431→  1431→
+  1432→  1432→Audit logs must contain:
+  1433→  1433→
+  1434→  1434→User
+  1435→  1435→Tenant
+  1436→  1436→Timestamp
+  1437→  1437→Entity
+  1438→  1438→Entity ID
+  1439→  1439→Action
+  1440→  1440→Old Value
+  1441→  1441→New Value
+  1442→  1442→IP
+  1443→  1443→User Agent
+  1444→  1444→
+  1445→  1445→Sensitive information must not be unnecessarily logged.
+  1446→  1446→
+  1447→  1447→==================================================
+  1448→  1448→16. DASHBOARDS
+  1449→  1449→==============
+  1450→  1450→
+  1451→  1451→Management dashboard:
+  1452→  1452→
+  1453→  1453→Sales
+  1454→  1454→Purchase
+  1455→  1455→Production
+  1456→  1456→Inventory
+  1457→  1457→Receivables
+  1458→  1458→Payables
+  1459→  1459→Profit
+  1460→  1460→WIP
+  1461→  1461→Rejection
+  1462→  1462→Scrap
+  1463→  1463→Machine Downtime
+  1464→  1464→
+  1465→  1465→Production dashboard:
+  1466→  1466→
+  1467→  1467→Production Target
+  1468→  1468→Actual Production
+  1469→  1469→Pending Work Orders
+  1470→  1470→WIP
+  1471→  1471→Material Shortage
+  1472→  1472→Rejection
+  1473→  1473→Efficiency
+  1474→  1474→
+  1475→  1475→Inventory dashboard:
+  1476→  1476→
+  1477→  1477→Current Stock
+  1478→  1478→Low Stock
+  1479→  1479→Stock Valuation
+  1480→  1480→Dead Stock
+  1481→  1481→Reserved Stock
+  1482→  1482→Pending GRN
+  1483→  1483→Pending Material Issue
+  1484→  1484→
+  1485→  1485→==================================================
+  1486→  1486→17. REPORTING
+  1487→  1487→=============
+  1488→  1488→
+  1489→  1489→Reports must support:
+  1490→  1490→
+  1491→  1491→Filtering
+  1492→  1492→Date Range
+  1493→  1493→Plant
+  1494→  1494→Warehouse
+  1495→  1495→Department
+  1496→  1496→Customer
+  1497→  1497→Supplier
+  1498→  1498→Item
+  1499→  1499→Status
+  1500→  1500→
+  1501→  1501→Export:
+  1502→  1502→
+  1503→  1503→Excel
+  1504→  1504→CSV
+  1505→  1505→PDF
+  1506→  1506→
+  1507→  1507→Reports must respect tenant and role permissions.
+  1508→  1508→
+  1509→  1509→==================================================
+  1510→  1510→18. NOTIFICATIONS
+  1511→  1511→=================
+  1512→  1512→
+  1513→  1513→Create a centralized notification system.
+  1514→  1514→
+  1515→  1515→Support:
+  1516→  1516→
+  1517→  1517→In-App
+  1518→  1518→Email
+  1519→  1519→Optional WhatsApp/SMS integration
+  1520→  1520→
+  1521→  1521→Examples:
+  1522→  1522→
+  1523→  1523→Low Stock
+  1524→  1524→PO Pending Approval
+  1525→  1525→QC Rejection
+  1526→  1526→Production Delay
+  1527→  1527→Payment Due
+  1528→  1528→Invoice Generated
+  1529→  1529→Work Order Assigned
+  1530→  1530→Maintenance Due
+  1531→  1531→
+  1532→  1532→==================================================
+  1533→  1533→19. SECURITY
+  1534→  1534→============
+  1535→  1535→
+  1536→  1536→Follow production-grade security practices.
+  1537→  1537→
+  1538→  1538→Implement:
+  1539→  1539→
+  1540→  1540→Input Validation
+  1541→  1541→Authentication
+  1542→  1542→Authorization
+  1543→  1543→Rate Limiting
+  1544→  1544→CSRF protection where applicable
+  1545→  1545→Secure Cookies
+  1546→  1546→Password Hashing
+  1547→  1547→JWT/session security
+  1548→  1548→SQL Injection Protection
+  1549→  1549→XSS Protection
+  1550→  1550→File Upload Validation
+  1551→  1551→MIME Validation
+  1552→  1552→File Size Limits
+  1553→  1553→Secure File Storage
+  1554→  1554→Secrets via Environment Variables
+  1555→  1555→API Security
+  1556→  1556→Tenant Isolation
+  1557→  1557→Audit Logs
+  1558→  1558→
+  1559→  1559→Never trust frontend values for:
+  1560→  1560→
+  1561→  1561→tenant_id
+  1562→  1562→user_id
+  1563→  1563→role
+  1564→  1564→permissions
+  1565→  1565→price
+  1566→  1566→tax
+  1567→  1567→discount
+  1568→  1568→stock quantity
+  1569→  1569→approval status
+  1570→  1570→
+  1571→  1571→All critical values must be validated server-side.
+  1572→  1572→
+  1573→  1573→==================================================
+  1574→  1574→20. DATABASE
+  1575→  1575→============
+  1576→  1576→
+  1577→  1577→Use normalized relational design.
+  1578→  1578→
+  1579→  1579→Avoid:
+  1580→  1580→
+  1581→  1581→Duplicate business data
+  1582→  1582→Uncontrolled JSON blobs
+  1583→  1583→Circular dependencies
+  1584→  1584→Hardcoded IDs
+  1585→  1585→Hardcoded tenant IDs
+  1586→  1586→
+  1587→  1587→Use proper:
+  1588→  1588→
+  1589→  1589→Primary Keys
+  1590→  1590→Foreign Keys
+  1591→  1591→Indexes
+  1592→  1592→Unique Constraints
+  1593→  1593→Check Constraints where supported
+  1594→  1594→Transactions
+  1595→  1595→Soft Delete where appropriate
+  1596→  1596→
+  1597→  1597→Design indexes based on real query patterns.
+  1598→  1598→
+  1599→  1599→Use database transactions for critical operations such as:
+  1600→  1600→
+  1601→  1601→Stock transactions
+  1602→  1602→Invoice posting
+  1603→  1603→Production completion
+  1604→  1604→Material issue
+  1605→  1605→Payments
+  1606→  1606→Accounting entries
+  1607→  1607→
+  1608→  1608→==================================================
+  1609→  1609→21. API ARCHITECTURE
+  1610→  1610→====================
+  1611→  1611→
+  1612→  1612→Use:
+  1613→  1613→
+  1614→  1614→Controller
+  1615→  1615→→ Validation
+  1616→  1616→→ Service
+  1617→  1617→→ Repository/Data Access
+  1618→  1618→→ Database
+  1619→  1619→
+  1620→  1620→Do not put business logic inside controllers.
+  1621→  1621→
+  1622→  1622→Use centralized error handling.
+  1623→  1623→
+  1624→  1624→Return consistent API responses.
+  1625→  1625→
+  1626→  1626→Example:
+  1627→  1627→
+  1628→  1628→{
+  1629→  1629→"success": true,
+  1630→  1630→"data": {},
+  1631→  1631→"message": ""
+  1632→  1632→}
+  1633→  1633→
+  1634→  1634→and
+  1635→  1635→
+  1636→  1636→{
+  1637→  1637→"success": false,
+  1638→  1638→"error": {
+  1639→  1639→"code": "",
+  1640→  1640→"message": "",
+  1641→  1641→"details": {}
+  1642→  1642→}
+  1643→  1643→}
+  1644→  1644→
+  1645→  1645→==================================================
+  1646→  1646→22. FRONTEND UX
+  1647→  1647→===============
+  1648→  1648→
+  1649→  1649→The ERP must be easy for non-technical manufacturing users.
+  1650→  1650→
+  1651→  1651→Do not create unnecessarily complicated screens.
+  1652→  1652→
+  1653→  1653→Use:
+  1654→  1654→
+  1655→  1655→Clear forms
+  1656→  1656→Smart defaults
+  1657→  1657→Searchable dropdowns
+  1658→  1658→Keyboard navigation
+  1659→  1659→Bulk actions
+  1660→  1660→Filters
+  1661→  1661→Saved filters
+  1662→  1662→Pagination
+  1663→  1663→Sorting
+  1664→  1664→Responsive tables
+  1665→  1665→Confirmation dialogs
+  1666→  1666→Validation messages
+  1667→  1667→Empty states
+  1668→  1668→Loading states
+  1669→  1669→Error states
+  1670→  1670→Skeletons
+  1671→  1671→Print preview
+  1672→  1672→PDF export
+  1673→  1673→
+  1674→  1674→For production operators, create simplified task-oriented screens.
+  1675→  1675→
+  1676→  1676→For management, create data-rich dashboards.
+  1677→  1677→
+  1678→  1678→Desktop:
+  1679→  1679→Data dense.
+  1680→  1680→
+  1681→  1681→Tablet:
+  1682→  1682→Balanced.
+  1683→  1683→
+  1684→  1684→Mobile:
+  1685→  1685→Task focused.
+  1686→  1686→
+  1687→  1687→==================================================
+  1688→  1688→23. DOCUMENT MANAGEMENT
+  1689→  1689→=======================
+  1690→  1690→
+  1691→  1691→Documents should support:
+  1692→  1692→
+  1693→  1693→PDF
+  1694→  1694→Excel
+  1695→  1695→Images
+  1696→  1696→
+  1697→  1697→Examples:
+  1698→  1698→
+  1699→  1699→PO attachments
+  1700→  1700→Supplier documents
+  1701→  1701→Invoices
+  1702→  1702→QC reports
+  1703→  1703→Machine documents
+  1704→  1704→Employee documents
+  1705→  1705→
+  1706→  1706→Use secure object storage.
+  1707→  1707→
+  1708→  1708→Do not store large binary files directly in MySQL unless there is a specific architectural reason.
+  1709→  1709→
+  1710→  1710→==================================================
+  1711→  1711→24. SAAS BILLING
+  1712→  1712→================
+  1713→  1713→
+  1714→  1714→Design subscription architecture for:
+  1715→  1715→
+  1716→  1716→Plans
+  1717→  1717→Features
+  1718→  1718→Limits
+  1719→  1719→Users
+  1720→  1720→Plants
+  1721→  1721→Warehouses
+  1722→  1722→Storage
+  1723→  1723→Transactions
+  1724→  1724→Modules
+  1725→  1725→
+  1726→  1726→Support:
+  1727→  1727→
+  1728→  1728→Trial
+  1729→  1729→Active
+  1730→  1730→Past Due
+  1731→  1731→Suspended
+  1732→  1732→Cancelled
+  1733→  1733→
+  1734→  1734→Feature access must be configurable.
+  1735→  1735→
+  1736→  1736→Do not hardcode plan logic throughout the application.
+  1737→  1737→
+  1738→  1738→==================================================
+  1739→  1739→25. SUPER ADMIN
+  1740→  1740→===============
+  1741→  1741→
+  1742→  1742→Create a separate SaaS administration area.
+  1743→  1743→
+  1744→  1744→Super Admin can manage:
+  1745→  1745→
+  1746→  1746→Tenants
+  1747→  1747→Subscriptions
+  1748→  1748→Plans
+  1749→  1749→Features
+  1750→  1750→Users
+  1751→  1751→Usage
+  1752→  1752→System Health
+  1753→  1753→Audit Logs
+  1754→  1754→Support
+  1755→  1755→Feature Flags
+  1756→  1756→Tenant Status
+  1757→  1757→
+  1758→  1758→Super Admin must not accidentally bypass tenant boundaries through normal tenant APIs.
+  1759→  1759→
+  1760→  1760→==================================================
+  1761→  1761→26. OBSERVABILITY
+  1762→  1762→=================
+  1763→  1763→
+  1764→  1764→Implement:
+  1765→  1765→
+  1766→  1766→Structured Logging
+  1767→  1767→Error Tracking
+  1768→  1768→Request IDs
+  1769→  1769→Performance Monitoring
+  1770→  1770→Background Job Monitoring
+  1771→  1771→Database Query Monitoring
+  1772→  1772→Health Checks
+  1773→  1773→
+  1774→  1774→Track:
+  1775→  1775→
+  1776→  1776→API latency
+  1777→  1777→Error rate
+  1778→  1778→Queue failures
+  1779→  1779→Database failures
+  1780→  1780→Integration failures
+  1781→  1781→
+  1782→  1782→==================================================
+  1783→  1783→27. TESTING
+  1784→  1784→===========
+  1785→  1785→
+  1786→  1786→Do not only test UI.
+  1787→  1787→
+  1788→  1788→Implement:
+  1789→  1789→
+  1790→  1790→Unit Tests
+  1791→  1791→Integration Tests
+  1792→  1792→API Tests
+  1793→  1793→Database Tests
+  1794→  1794→Permission Tests
+  1795→  1795→Tenant Isolation Tests
+  1796→  1796→Workflow Tests
+  1797→  1797→E2E Tests
+  1798→  1798→
+  1799→  1799→Critical E2E flows:
+  1800→  1800→
+  1801→  1801→Login
+  1802→  1802→Create Customer
+  1803→  1803→Create Item
+  1804→  1804→Create Supplier
+  1805→  1805→Create PO
+  1806→  1806→Approve PO
+  1807→  1807→Create GRN
+  1808→  1808→QC
+  1809→  1809→Stock Update
+  1810→  1810→Create BOM
+  1811→  1811→Create Production Order
+  1812→  1812→Material Issue
+  1813→  1813→Production Completion
+  1814→  1814→QC
+  1815→  1815→Finished Goods
+  1816→  1816→Sales Order
+  1817→  1817→Delivery
+  1818→  1818→Invoice
+  1819→  1819→Payment
+  1820→  1820→
+  1821→  1821→Test unauthorized access.
+  1822→  1822→
+  1823→  1823→Test cross-tenant access attempts.
+  1824→  1824→
+  1825→  1825→Test concurrent transactions.
+  1826→  1826→
+  1827→  1827→==================================================
+  1828→  1828→28. DATA INTEGRITY
+  1829→  1829→==================
+  1830→  1830→
+  1831→  1831→Never allow:
+  1832→  1832→
+  1833→  1833→Negative stock where business rules prohibit it
+  1834→  1834→Duplicate invoice numbers
+  1835→  1835→Duplicate PO numbers
+  1836→  1836→Invoice without required customer data
+  1837→  1837→Production completion beyond allowed quantity
+  1838→  1838→Material issue beyond available quantity
+  1839→  1839→Cross-tenant records
+  1840→  1840→Unauthorized approval
+  1841→  1841→Unauthorized modification of posted documents
+  1842→  1842→
+  1843→  1843→Posted financial documents should generally be immutable.
+  1844→  1844→
+  1845→  1845→Use reversal/correction mechanisms instead of silently modifying posted transactions.
+  1846→  1846→
+  1847→  1847→==================================================
+  1848→  1848→29. DEVELOPMENT PROCESS
+  1849→  1849→=======================
+  1850→  1850→
+  1851→  1851→Before coding:
+  1852→  1852→
+  1853→  1853→1. Audit existing code.
+  1854→  1854→2. Create architecture map.
+  1855→  1855→3. Create module dependency map.
+  1856→  1856→4. Create database ERD.
+  1857→  1857→5. Identify reusable code.
+  1858→  1858→6. Identify breaking changes.
+  1859→  1859→7. Create migration plan.
+  1860→  1860→8. Create implementation phases.
+  1861→  1861→9. Implement one module at a time.
+  1862→  1862→10. Run tests after every major change.
+  1863→  1863→
+  1864→  1864→Never make a large uncontrolled rewrite.
+  1865→  1865→
+  1866→  1866→==================================================
+  1867→  1867→30. CRITICAL RULE
+  1868→  1868→=================
+  1869→  1869→
+  1870→  1870→You are not just building CRUD screens.
+  1871→  1871→
+  1872→  1872→Build the actual manufacturing business workflow.
+  1873→  1873→
+  1874→  1874→Whenever creating a feature, ask:
+  1875→  1875→
+  1876→  1876→Who creates it?
+  1877→  1877→Who approves it?
+  1878→  1878→What happens after approval?
+  1879→  1879→What inventory changes?
+  1880→  1880→What accounting impact occurs?
+  1881→  1881→What documents are generated?
+  1882→  1882→What audit record is created?
+  1883→  1883→Who can edit it?
+  1884→  1884→When does it become immutable?
+  1885→  1885→What happens if it is rejected?
+  1886→  1886→What happens if it is cancelled?
+  1887→  1887→What happens if it is returned/reversed?
+  1888→  1888→What reports depend on it?
+  1889→  1889→
+  1890→  1890→Do not mark a module complete merely because the form works.
+  1891→  1891→
+  1892→  1892→A module is complete only when:
+  1893→  1893→
+  1894→  1894→UI
+  1895→  1895→
+  1896→  1896→* API
+  1897→  1897→* Database
+  1898→  1898→* Validation
+  1899→  1899→* Permissions
+  1900→  1900→* Business Logic
+  1901→  1901→* Workflow
+  1902→  1902→* Audit Trail
+  1903→  1903→* Error Handling
+  1904→  1904→* Reports
+  1905→  1905→* Tests
+  1906→  1906→
+  1907→  1907→are working together.
+  1908→  1908→
+  1909→  1909→==================================================
+  1910→  1910→31. FIRST TASK
+  1911→  1911→==============
+  1912→  1912→
+  1913→  1913→DO NOT WRITE CODE YET.
+  1914→  1914→
+  1915→  1915→First perform a complete audit of the existing project.
+  1916→  1916→
+  1917→  1917→Return:
+  1918→  1918→
+  1919→  1919→1. Current architecture
+  1920→  1920→2. Existing modules
+  1921→  1921→3. Existing database tables
+  1922→  1922→4. Existing APIs
+  1923→  1923→5. Existing authentication
+  1924→  1924→6. Existing RBAC
+  1925→  1925→7. Existing reusable components
+  1926→  1926→8. Missing ERP modules
+  1927→  1927→9. Manufacturing-specific missing functionality
+  1928→  1928→10. Database design problems
+  1929→  1929→11. Security problems
+  1930→  1930→12. UX problems
+  1931→  1931→13. Performance problems
+  1932→  1932→14. Scalability problems
+  1933→  1933→15. Recommended architecture
+  1934→  1934→16. Module dependency map
+  1935→  1935→17. Recommended implementation order
+  1936→  1936→18. Database migration strategy
+  1937→  1937→19. Testing strategy
+  1938→  1938→20. Risks and breaking changes
+  1939→  1939→
+  1940→  1940→After the audit, WAIT for approval before making major architectural changes.
+  1941→  1941→
+  1942→  1942→Do not install packages, modify files, run destructive commands, or change the database without explicit permission.
+  1943→  1943→
+  1944→  1944→When permission is given, make changes incrementally and verify every change.
+  1945→  1945→
+  1946→  1946→**Meri recommendation:** is prompt ko directly codebase par run karne se pehle **existing project audit** karwao. Manufacturing ERP bahut bada system hai; pehle architecture/ERD aur module dependency map lock karna zaroori hai. Uske baad hum **Phase 1 → Phase 2 → Manufacturing core → MRP → Finance/GST** systematically build kar sakte hain.
+  1947→  1947→

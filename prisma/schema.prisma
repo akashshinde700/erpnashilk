@@ -1,0 +1,778 @@
+// ============================================================
+// ManuFlow ERP — Multi-tenant Manufacturing SaaS ERP
+// SQLite / Prisma schema (String-based status constants, no enums on sqlite)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------- Tenant / Org ----------------
+
+model Company {
+  id           String   @id @default(cuid())
+  name         String
+  gstin        String?
+  pan          String?
+  addressLine  String?
+  city         String?
+  state        String?
+  stateCode    String? // GST state code e.g. "27" MH, "24" GJ
+  phone        String?
+  email        String?
+  logoText     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items        Item[]
+  customers    Customer[]
+  suppliers    Supplier[]
+  warehouses   Warehouse[]
+  machines     Machine[]
+  users        User[]
+  plants       Plant[]
+}
+
+model Plant {
+  id        String   @id @default(cuid())
+  companyId String
+  code      String
+  name      String
+  address   String?
+  city      String?
+  createdAt DateTime @default(now())
+
+  company   Company  @relation(fields: [companyId], references: [id])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  email     String
+  phone     String?
+  role      String   @default("VIEWER") // SUPER_ADMIN|TENANT_ADMIN|MANAGEMENT|PLANT_MANAGER|PRODUCTION_MANAGER|PRODUCTION_SUPERVISOR|OPERATOR|PURCHASE_MANAGER|PURCHASE_EXECUTIVE|SALES_MANAGER|SALES_EXECUTIVE|STORE_MANAGER|STORE_OPERATOR|QUALITY_MANAGER|QC_INSPECTOR|ACCOUNTS_MANAGER|ACCOUNTANT|HR_MANAGER|MAINTENANCE_MANAGER|MAINTENANCE_TECHNICIAN|DISPATCH_MANAGER|VIEWER
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, email])
+}
+
+// ---------------- Masters ----------------
+
+model Item {
+  id            String   @id @default(cuid())
+  companyId     String
+  code          String
+  name          String
+  type          String   @default("RAW") // RAW|SEMI|FINISHED|CONSUMABLE|SERVICE
+  category      String?
+  uom           String   @default("NOS")
+  hsn           String?
+  gstRate       Float    @default(18)
+  batchTracked  Boolean  @default(false)
+  reorderLevel  Float    @default(0)
+  minStock      Float    @default(0)
+  maxStock      Float?
+  purchasePrice Float    @default(0)
+  sellingPrice  Float    @default(0)
+  standardCost  Float    @default(0)
+  description   String?
+  status        String   @default("ACTIVE") // ACTIVE|INACTIVE
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company       Company  @relation(fields: [companyId], references: [id])
+  balances      StockBalance[]
+  ledger        StockLedger[]
+
+  @@unique([companyId, code])
+  @@index([companyId, type])
+}
+
+model Customer {
+  id               String   @id @default(cuid())
+  companyId        String
+  code             String
+  name             String
+  gstin            String?
+  contactPerson    String?
+  phone            String?
+  email            String?
+  addressLine      String?
+  city             String?
+  state            String?
+  stateCode        String? // for IGST/CGST-SGST decision
+  paymentTermsDays Int      @default(30)
+  creditLimit      Float    @default(0)
+  status           String   @default("ACTIVE")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company          Company  @relation(fields: [companyId], references: [id])
+  salesOrders      SalesOrder[]
+  salesInvoices    SalesInvoice[]
+  quotations       Quotation[]
+
+  @@unique([companyId, code])
+}
+
+model Supplier {
+  id               String   @id @default(cuid())
+  companyId        String
+  code             String
+  name             String
+  gstin            String?
+  contactPerson    String?
+  phone            String?
+  email            String?
+  addressLine      String?
+  city             String?
+  state            String?
+  stateCode        String?
+  paymentTermsDays Int      @default(30)
+  status           String   @default("ACTIVE")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company          Company  @relation(fields: [companyId], references: [id])
+  purchaseOrders   PurchaseOrder[]
+  purchaseInvoices PurchaseInvoice[]
+
+  @@unique([companyId, code])
+}
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  companyId String
+  code      String
+  name      String
+  type      String   @default("GENERAL") // RM|FG|GENERAL|SCRAP
+  location  String?
+  createdAt DateTime @default(now())
+
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+}
+
+model Machine {
+  id             String   @id @default(cuid())
+  companyId      String
+  code           String
+  name           String
+  workCenter     String?
+  capacityPerDay Float    @default(0)
+  status         String   @default("RUNNING") // RUNNING|IDLE|MAINTENANCE|BREAKDOWN
+  hourlyRate     Float    @default(0)
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company        Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+}
+
+// ---------------- BOM / Routing ----------------
+
+model Bom {
+  id           String   @id @default(cuid())
+  companyId    String
+  code         String
+  outputItemId String
+  outputQty    Float    @default(1)
+  version      String   @default("V1")
+  scrapPct     Float    @default(0)
+  status       String   @default("ACTIVE") // DRAFT|ACTIVE|RETIRED
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items        BomItem[]
+
+  @@unique([companyId, code])
+}
+
+model BomItem {
+  id       String @id @default(cuid())
+  bomId    String
+  itemId   String
+  qty      Float
+  scrapPct Float  @default(0)
+
+  bom      Bom    @relation(fields: [bomId], references: [id], onDelete: Cascade)
+}
+
+// ---------------- Sales ----------------
+
+model Enquiry {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String
+  customerId  String
+  date        DateTime
+  contactName String?
+  source      String?  // WALK_IN|PHONE|WEB|REFERRAL
+  notes       String?
+  status      String   @default("OPEN") // OPEN|QUOTED|WON|LOST|CLOSED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       EnquiryItem[]
+  quotations  Quotation[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model EnquiryItem {
+  id        String  @id @default(cuid())
+  enquiryId String
+  itemId    String
+  qty       Float
+  notes     String?
+
+  enquiry   Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+}
+
+model Quotation {
+  id            String    @id @default(cuid())
+  companyId     String
+  number        String
+  enquiryId     String?
+  customerId    String
+  date          DateTime
+  validUntil    DateTime?
+  status        String    @default("DRAFT") // DRAFT|SENT|APPROVED|REJECTED|CONVERTED|CANCELLED
+  subtotal      Float     @default(0)
+  discountTotal Float     @default(0)
+  cgst          Float     @default(0)
+  sgst          Float     @default(0)
+  igst          Float     @default(0)
+  grandTotal    Float     @default(0)
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  customer      Customer  @relation(fields: [customerId], references: [id])
+  enquiry       Enquiry?  @relation(fields: [enquiryId], references: [id])
+  items         QuotationItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model QuotationItem {
+  id          String    @id @default(cuid())
+  quotationId String
+  itemId      String
+  qty         Float
+  rate        Float
+  discountPct Float     @default(0)
+  gstRate     Float     @default(18)
+  lineTotal   Float     @default(0)
+
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+model SalesOrder {
+  id             String    @id @default(cuid())
+  companyId      String
+  number         String
+  quotationId    String?
+  customerId     String
+  orderDate      DateTime
+  deliveryDate   DateTime?
+  status         String    @default("DRAFT") // DRAFT|CONFIRMED|IN_PRODUCTION|READY|PARTIALLY_DISPATCHED|DISPATCHED|COMPLETED|CANCELLED
+  subtotal       Float     @default(0)
+  discountTotal  Float     @default(0)
+  cgst           Float     @default(0)
+  sgst           Float     @default(0)
+  igst           Float     @default(0)
+  grandTotal     Float     @default(0)
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  customer       Customer  @relation(fields: [customerId], references: [id])
+  items          SalesOrderItem[]
+  workOrders     WorkOrder[]
+  deliveries     DeliveryChallan[]
+  invoices       SalesInvoice[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model SalesOrderItem {
+  id            String      @id @default(cuid())
+  salesOrderId  String
+  itemId        String
+  qty           Float
+  rate          Float
+  discountPct   Float       @default(0)
+  gstRate       Float       @default(18)
+  lineTotal     Float       @default(0)
+  dispatchedQty Float       @default(0)
+  invoicedQty   Float       @default(0)
+
+  salesOrder    SalesOrder  @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+}
+
+model DeliveryChallan {
+  id            String      @id @default(cuid())
+  companyId     String
+  number        String
+  salesOrderId  String
+  warehouseId   String
+  date          DateTime
+  vehicleNo     String?
+  transporter   String?
+  ewayBillNo    String?
+  status        String      @default("DRAFT") // DRAFT|DISPATCHED|CANCELLED
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  salesOrder    SalesOrder  @relation(fields: [salesOrderId], references: [id])
+  items         DeliveryChallanItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model DeliveryChallanItem {
+  id              String          @id @default(cuid())
+  challanId       String
+  salesOrderItemId String?
+  itemId          String
+  qty             Float
+
+  challan         DeliveryChallan @relation(fields: [challanId], references: [id], onDelete: Cascade)
+}
+
+model SalesInvoice {
+  id            String    @id @default(cuid())
+  companyId     String
+  number        String
+  salesOrderId  String?
+  challanId     String?
+  customerId    String
+  date          DateTime
+  dueDate       DateTime?
+  placeOfSupply String?
+  isInterState  Boolean   @default(false)
+  subtotal      Float     @default(0)
+  discountTotal Float     @default(0)
+  cgst          Float     @default(0)
+  sgst          Float     @default(0)
+  igst          Float     @default(0)
+  grandTotal    Float     @default(0)
+  paidAmount    Float     @default(0)
+  status        String    @default("UNPAID") // UNPAID|PARTIALLY_PAID|PAID|CANCELLED
+  irn           String?
+  ewayBillNo    String?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  customer      Customer  @relation(fields: [customerId], references: [id])
+  salesOrder    SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  items         SalesInvoiceItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model SalesInvoiceItem {
+  id        String       @id @default(cuid())
+  invoiceId String
+  itemId    String
+  hsn       String?
+  qty       Float
+  rate      Float
+  discountPct Float      @default(0)
+  gstRate   Float        @default(18)
+  lineTotal Float        @default(0)
+
+  invoice   SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// ---------------- Purchase ----------------
+
+model PurchaseRequisition {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String
+  date        DateTime
+  requiredBy  DateTime?
+  department  String?
+  raisedBy    String?
+  status      String   @default("PENDING") // PENDING|APPROVED|REJECTED|CONVERTED|CLOSED
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       PurchaseRequisitionItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model PurchaseRequisitionItem {
+  id        String              @id @default(cuid())
+  prId      String
+  itemId    String
+  qty       Float
+  notes     String?
+
+  pr        PurchaseRequisition @relation(fields: [prId], references: [id], onDelete: Cascade)
+}
+
+model PurchaseOrder {
+  id             String    @id @default(cuid())
+  companyId      String
+  number         String
+  prId           String?
+  supplierId     String
+  orderDate      DateTime
+  expectedDate   DateTime?
+  status         String    @default("PENDING_APPROVAL") // DRAFT|PENDING_APPROVAL|APPROVED|PARTIALLY_RECEIVED|RECEIVED|INVOICED|CANCELLED
+  subtotal       Float     @default(0)
+  discountTotal  Float     @default(0)
+  cgst           Float     @default(0)
+  sgst           Float     @default(0)
+  igst           Float     @default(0)
+  grandTotal     Float     @default(0)
+  approvedBy     String?
+  approvedAt     DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  supplier       Supplier  @relation(fields: [supplierId], references: [id])
+  items          PurchaseOrderItem[]
+  grns           Grn[]
+  invoices       PurchaseInvoice[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model PurchaseOrderItem {
+  id          String        @id @default(cuid())
+  poId        String
+  itemId      String
+  qty         Float
+  rate        Float
+  gstRate     Float         @default(18)
+  lineTotal   Float         @default(0)
+  receivedQty Float         @default(0)
+
+  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+}
+
+model Grn {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String
+  poId        String
+  warehouseId String
+  date        DateTime
+  supplierInvNo String?
+  status      String   @default("PENDING_QC") // PENDING_QC|PARTIALLY_ACCEPTED|POSTED|CANCELLED
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  po          PurchaseOrder @relation(fields: [poId], references: [id])
+  items       GrnItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model GrnItem {
+  id          String @id @default(cuid())
+  grnId       String
+  poItemId    String?
+  itemId      String
+  orderedQty  Float
+  receivedQty Float
+  acceptedQty Float  @default(0)
+  rejectedQty Float  @default(0)
+  qcStatus    String @default("PENDING") // PENDING|PASSED|FAILED|PARTIAL
+
+  grn         Grn    @relation(fields: [grnId], references: [id], onDelete: Cascade)
+}
+
+model PurchaseInvoice {
+  id            String    @id @default(cuid())
+  companyId     String
+  number        String
+  poId          String?
+  grnId         String?
+  supplierId    String
+  date          DateTime
+  supplierInvNo String?
+  isInterState  Boolean   @default(false)
+  subtotal      Float     @default(0)
+  discountTotal Float     @default(0)
+  cgst          Float     @default(0)
+  sgst          Float     @default(0)
+  igst          Float     @default(0)
+  grandTotal    Float     @default(0)
+  paidAmount    Float     @default(0)
+  status        String    @default("UNPAID") // UNPAID|PARTIALLY_PAID|PAID|CANCELLED
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+  po            PurchaseOrder? @relation(fields: [poId], references: [id])
+  items         PurchaseInvoiceItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model PurchaseInvoiceItem {
+  id        String          @id @default(cuid())
+  invoiceId String
+  itemId    String
+  hsn       String?
+  qty       Float
+  rate      Float
+  gstRate   Float           @default(18)
+  lineTotal Float           @default(0)
+
+  invoice   PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// ---------------- Payments / Finance ----------------
+
+model Payment {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String
+  type        String // RECEIPT (from customer) | PAYMENT (to supplier)
+  partyType   String   @default("CUSTOMER") // CUSTOMER|SUPPLIER
+  customerId  String?
+  supplierId  String?
+  invoiceType String?  // SALES|PURCHASE
+  invoiceId   String?
+  amount      Float
+  mode        String   @default("NEFT") // CASH|BANK|UPI|CHEQUE|NEFT|RTGS
+  date        DateTime
+  reference   String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, number])
+  @@index([companyId, type])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String
+  date        DateTime
+  category    String   @default("GENERAL") // UTILITIES|FREIGHT|RENT|SALARY|MAINTENANCE|TOOLING|OTHER
+  description String
+  amount      Float
+  paymentMode String   @default("CASH")
+  paidTo      String?
+  gstAmount   Float    @default(0)
+  status      String   @default("POSTED") // DRAFT|POSTED|CANCELLED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, number])
+  @@index([companyId, category])
+}
+
+// ---------------- Manufacturing ----------------
+
+model WorkOrder {
+  id            String    @id @default(cuid())
+  companyId     String
+  number        String
+  itemId        String
+  bomId         String?
+  salesOrderId  String?
+  warehouseId   String
+  plannedQty    Float
+  producedQty   Float     @default(0)
+  rejectedQty   Float     @default(0)
+  scrapQty      Float     @default(0)
+  status        String    @default("PLANNED") // PLANNED|RELEASED|IN_PROGRESS|COMPLETED|CANCELLED
+  startDate     DateTime
+  dueDate       DateTime?
+  priority      String    @default("NORMAL") // NORMAL|HIGH|URGENT
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  salesOrder    SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  issues        MaterialIssue[]
+  entries       ProductionEntry[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model MaterialIssue {
+  id          String    @id @default(cuid())
+  companyId   String
+  number      String
+  workOrderId String
+  date        DateTime
+  status      String    @default("POSTED") // DRAFT|POSTED|CANCELLED
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+  items       MaterialIssueItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+model MaterialIssueItem {
+  id          String        @id @default(cuid())
+  issueId     String
+  itemId      String
+  requiredQty Float
+  issuedQty   Float
+
+  issue       MaterialIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+}
+
+model ProductionEntry {
+  id          String    @id @default(cuid())
+  companyId   String
+  workOrderId String
+  date        DateTime
+  producedQty Float
+  rejectedQty Float     @default(0)
+  scrapQty    Float     @default(0)
+  operator    String?
+  downtimeMins Int      @default(0)
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+}
+
+// ---------------- Quality ----------------
+
+model QcInspection {
+  id          String   @id @default(cuid())
+  companyId   String
+  number      String
+  type        String // INCOMING|IN_PROCESS|FINAL
+  refType     String // GRN|WORK_ORDER
+  refId       String
+  refNumber   String?
+  itemId      String
+  qtyChecked  Float
+  qtyAccepted Float    @default(0)
+  qtyRejected Float    @default(0)
+  parameters  String? // JSON: [{name, expected, actual, ok}]
+  status      String   @default("PENDING") // PENDING|PASSED|FAILED|PARTIAL
+  inspector   String?
+  date        DateTime
+  remarks     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+}
+
+// ---------------- Inventory ----------------
+
+model StockLedger {
+  id           String   @id @default(cuid())
+  companyId    String
+  date         DateTime
+  itemId       String
+  warehouseId  String
+  type         String // OPENING|GRN_IN|ISSUE_OUT|PRODUCTION_IN|DISPATCH_OUT|TRANSFER_IN|TRANSFER_OUT|ADJUST_IN|ADJUST_OUT|RETURN_IN|QC_REJECT|SALES_RETURN
+  qtyIn        Float    @default(0)
+  qtyOut       Float    @default(0)
+  rate         Float    @default(0)
+  refType      String?  // GRN|MATERIAL_ISSUE|WORK_ORDER|DELIVERY|TRANSFER|ADJUSTMENT|OPENING
+  refId        String?
+  refNumber    String?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  item         Item     @relation(fields: [itemId], references: [id])
+
+  @@index([companyId, itemId])
+  @@index([companyId, date])
+}
+
+model StockBalance {
+  id          String @id @default(cuid())
+  companyId   String
+  itemId      String
+  warehouseId String
+  qty         Float  @default(0)
+  avgRate     Float  @default(0)
+
+  item        Item   @relation(fields: [itemId], references: [id])
+
+  @@unique([itemId, warehouseId])
+  @@index([companyId, itemId])
+}
+
+// ---------------- System / Ops ----------------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  companyId String
+  userName  String?
+  action    String // CREATE|UPDATE|DELETE|APPROVE|REJECT|POST|COMPLETE|CANCEL|LOGIN|CONFIG
+  entity    String
+  entityId  String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@index([companyId, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  companyId String
+  title     String
+  message   String?
+  level     String   @default("INFO") // INFO|WARNING|CRITICAL
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([companyId, read])
+}
+
+model NumberSeq {
+  id            String @id @default(cuid())
+  companyId     String
+  docType       String // SO|PO|INV|PINV|GRN|WO|QC|PR|ENQ|QT|DN|MI|RCPT|PYMT|EXP|TRF|ADJ
+  prefix        String
+  financialYear String
+  nextNumber    Int    @default(1)
+
+  @@unique([companyId, docType, financialYear])
+}

@@ -1,0 +1,373 @@
+'use client'
+
+import * as React from 'react'
+import {
+  AlertTriangle,
+  Boxes,
+  ClipboardList,
+  CreditCard,
+  Factory,
+  HandCoins,
+  IndianRupee,
+  RefreshCw,
+  ShoppingCart,
+} from 'lucide-react'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
+import { fmtDate, fmtDateTime, fmtMoney, fmtNum } from '@/lib/erp-constants'
+import { useList } from '@/lib/use-api'
+import { Money, SectionCard, StatCard, StatusBadge } from '@/components/erp/kit'
+
+// ---------- API shapes (contract: GET /api/dashboard?companyId=) ----------
+
+interface RecentSalesOrder {
+  id: string
+  number?: string
+  date?: string
+  orderDate?: string
+  status?: string
+  grandTotal?: number
+  customer?: { name?: string } | null
+}
+
+interface PendingApproval {
+  id: string
+  type?: string // 'PR' | 'PO' or full doc type name
+  number?: string
+  date?: string
+  amount?: number
+  grandTotal?: number
+}
+
+interface LowStockRow {
+  id?: string
+  item?: { code?: string; name?: string; uom?: string } | null
+  onHand?: number
+  qty?: number
+  reorderLevel?: number
+}
+
+interface NotificationRow {
+  id: string
+  title?: string
+  message?: string
+  level?: string // INFO | WARNING | CRITICAL | SUCCESS
+  createdAt?: string
+  read?: boolean
+}
+
+interface DashboardData {
+  kpis?: {
+    salesThisMonth?: number
+    purchasesThisMonth?: number
+    receivables?: number
+    payables?: number
+    stockValue?: number
+    openOrders?: number
+    openSalesOrders?: number
+    wipQty?: number
+    lowStockCount?: number
+  }
+  charts?: {
+    salesTrend?: { month: string; value: number }[]
+    productionTrend?: { month: string; value?: number; qty?: number }[]
+  }
+  lists?: {
+    recentSalesOrders?: RecentSalesOrder[]
+    pendingApprovals?: PendingApproval[]
+    lowStock?: LowStockRow[]
+    notifications?: NotificationRow[]
+  }
+}
+
+// ---------- palette / helpers ----------
+
+const EMERALD = '#059669'
+const TEAL = '#0d9488'
+const AMBER = '#f59e0b'
+
+const TONE = {
+  emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+  violet: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
+  sky: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+  rose: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
+  amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+}
+
+function compact(n: number): string {
+  const abs = Math.abs(n)
+  if (abs >= 10000000) return `${(n / 10000000).toFixed(1)}Cr`
+  if (abs >= 100000) return `${(n / 100000).toFixed(1)}L`
+  if (abs >= 1000) return `${(n / 1000).toFixed(1)}K`
+  return `${Math.round(n)}`
+}
+
+function shortApprovalType(t?: string): string {
+  const s = (t || '').toUpperCase()
+  if (s === 'PR' || s.startsWith('PURCHASE_REQUISITION') || s.startsWith('REQUISITION')) return 'PR'
+  if (s === 'PO' || s.startsWith('PURCHASE_ORDER') || s.startsWith('ORDER')) return 'PO'
+  return s.slice(0, 2) || '—'
+}
+
+function levelDotCls(level?: string): string {
+  switch ((level || '').toUpperCase()) {
+    case 'CRITICAL':
+      return 'bg-red-500'
+    case 'WARNING':
+      return 'bg-amber-500'
+    case 'INFO':
+      return 'bg-sky-500'
+    case 'SUCCESS':
+      return 'bg-emerald-500'
+    default:
+      return 'bg-zinc-400'
+  }
+}
+
+const EmptyList = ({ text }: { text: string }) => (
+  <p className="py-10 text-center text-sm text-muted-foreground">{text}</p>
+)
+
+// ---------- module ----------
+
+export default function DashboardModule({ companyId }: { companyId: string }) {
+  const { data, loading, error, refetch } = useList<DashboardData>(`/api/dashboard?companyId=${companyId}`)
+
+  const k = data?.kpis
+  const lists = data?.lists
+  const salesTrend = data?.charts?.salesTrend ?? []
+  const productionTrend = (data?.charts?.productionTrend ?? []).map((r) => ({ month: r.month, qty: r.qty ?? r.value ?? 0 }))
+  const recentOrders = lists?.recentSalesOrders ?? []
+  const approvals = lists?.pendingApprovals ?? []
+  const lowStock = lists?.lowStock ?? []
+  const notifications = lists?.notifications ?? []
+
+  const stats: { title: string; value: string; icon: React.ReactNode; cls: string }[] = [
+    { title: 'Sales This Month', value: fmtMoney(k?.salesThisMonth), icon: <IndianRupee className="h-4 w-4" />, cls: TONE.emerald },
+    { title: 'Purchases This Month', value: fmtMoney(k?.purchasesThisMonth), icon: <ShoppingCart className="h-4 w-4" />, cls: TONE.violet },
+    { title: 'Receivables', value: fmtMoney(k?.receivables), icon: <HandCoins className="h-4 w-4" />, cls: TONE.sky },
+    { title: 'Payables', value: fmtMoney(k?.payables), icon: <CreditCard className="h-4 w-4" />, cls: TONE.rose },
+    { title: 'Stock Value', value: fmtMoney(k?.stockValue), icon: <Boxes className="h-4 w-4" />, cls: TONE.amber },
+    { title: 'Open Sales Orders', value: fmtNum(k?.openSalesOrders ?? k?.openOrders), icon: <ClipboardList className="h-4 w-4" />, cls: TONE.sky },
+    { title: 'WIP Qty', value: fmtNum(k?.wipQty), icon: <Factory className="h-4 w-4" />, cls: TONE.violet },
+    { title: 'Low Stock Items', value: fmtNum(k?.lowStockCount), icon: <AlertTriangle className="h-4 w-4" />, cls: TONE.rose },
+  ]
+
+  if (error && !data) {
+    return (
+      <SectionCard>
+        <div className="flex flex-col items-center gap-3 py-12 text-center">
+          <AlertTriangle className="h-8 w-8 text-amber-500" />
+          <p className="max-w-md text-sm text-muted-foreground">{error}</p>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            <RefreshCw className="h-4 w-4 mr-1.5" /> Retry
+          </Button>
+        </div>
+      </SectionCard>
+    )
+  }
+
+  if (loading && !data) {
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={`kpi-${i}`} className="h-[86px] rounded-xl" />
+          ))}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-[320px] rounded-xl" />
+          <Skeleton className="h-[320px] rounded-xl" />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Skeleton className="h-[280px] rounded-xl" />
+          <Skeleton className="h-[280px] rounded-xl" />
+          <Skeleton className="h-[280px] rounded-xl" />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {error && data && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300">
+          <span className="truncate">{error}</span>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            <RefreshCw className="h-4 w-4 mr-1.5" /> Retry
+          </Button>
+        </div>
+      )}
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {stats.map((s) => (
+          <StatCard key={s.title} title={s.title} value={s.value} icon={s.icon} toneClass={s.cls} />
+        ))}
+      </div>
+
+      {/* Charts */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SectionCard title="Sales Trend (6 months)">
+          {salesTrend.length > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={salesTrend} margin={{ top: 8, right: 8, left: -4, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={48}
+                  tickFormatter={(v) => compact(Number(v))}
+                />
+                <Tooltip cursor={{ fill: 'rgba(5, 150, 105, 0.08)' }} formatter={(v) => fmtMoney(Number(v))} />
+                <Bar dataKey="value" name="Sales" fill={EMERALD} radius={[4, 4, 0, 0]} maxBarSize={42} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">No sales data yet</div>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Production Output (6 months)">
+          {productionTrend.length > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={productionTrend} margin={{ top: 8, right: 8, left: -4, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="mfl-prod-fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={TEAL} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={TEAL} stopOpacity={0.03} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={48}
+                  tickFormatter={(v) => compact(Number(v))}
+                />
+                <Tooltip cursor={{ stroke: AMBER, strokeDasharray: '3 3' }} formatter={(v) => `${fmtNum(Number(v))} qty`} />
+                <Area type="monotone" dataKey="qty" name="Output" stroke={TEAL} strokeWidth={2} fill="url(#mfl-prod-fill)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">No production data yet</div>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Lists */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <SectionCard title="Recent Sales Orders">
+          {recentOrders.length === 0 ? (
+            <EmptyList text="No sales orders yet" />
+          ) : (
+            <div>
+              {recentOrders.slice(0, 6).map((o) => (
+                <div key={o.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{o.number ?? '—'}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {o.customer?.name ?? '—'} · {fmtDate(o.orderDate ?? o.date)}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <Money value={o.grandTotal} className="text-sm font-medium" />
+                    <div className="mt-0.5">
+                      <StatusBadge status={o.status} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          title="Pending Approvals"
+          actions={
+            approvals.length > 0 ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                {approvals.length} waiting
+              </span>
+            ) : undefined
+          }
+        >
+          {approvals.length === 0 ? (
+            <EmptyList text="Nothing pending approval" />
+          ) : (
+            <div>
+              {approvals.slice(0, 6).map((a) => (
+                <div key={a.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                      {shortApprovalType(a.type)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{a.number ?? '—'}</p>
+                      <p className="text-xs text-muted-foreground">{fmtDate(a.date)}</p>
+                    </div>
+                  </div>
+                  <Money value={a.grandTotal ?? a.amount} className="shrink-0 text-sm font-medium" />
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+
+        <div className="space-y-4">
+          <SectionCard title="Low Stock">
+            {lowStock.length === 0 ? (
+              <EmptyList text="All items above reorder level" />
+            ) : (
+              <div>
+                {lowStock.slice(0, 5).map((r) => {
+                  const onHand = r.onHand ?? r.qty ?? 0
+                  return (
+                    <div key={r.item?.code || r.id || r.item?.name || Math.random()} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{r.item?.name ?? '—'}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {r.item?.code ?? ''} · reorder at {fmtNum(r.reorderLevel)}
+                        </p>
+                      </div>
+                      <span className={cn('shrink-0 text-sm font-semibold tabular-nums', onHand <= 0 ? 'text-red-600' : 'text-amber-600')}>
+                        {fmtNum(onHand)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </SectionCard>
+
+          <SectionCard title="Notifications">
+            {notifications.length === 0 ? (
+              <EmptyList text="No notifications" />
+            ) : (
+              <div>
+                {notifications.slice(0, 5).map((n) => (
+                  <div key={n.id} className="flex items-start gap-2.5 border-b py-2 last:border-0">
+                    <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', levelDotCls(n.level))} />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{n.title ?? '—'}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {n.message ? `${n.message} · ` : ''}
+                        {fmtDateTime(n.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+        </div>
+      </div>
+    </div>
+  )
+}

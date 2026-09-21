@@ -1,0 +1,1946 @@
+Haan. Agar aap **manufacturing companies ke liye SaaS ERP** banana chahte ho, to sirf Invoice + Purchase Order banana enough nahi hoga. Aapko **Lead/Quotation → Sales → Purchase → Inventory → Production → Quality → Dispatch → Finance → GST → Reports** ka end-to-end flow banana chahiye.
+
+Aapke existing projects ki tarah main ise **modular, scalable, multi-tenant SaaS** architecture ke hisaab se design karunga.
+
+### Senior Engineer ke perspective se recommended scope
+
+**1. SaaS / Multi-Tenant**
+
+* Company/Tenant creation
+* Multiple plants/factories
+* Multiple warehouses
+* Branches
+* User management
+* Roles & permissions
+* Department-wise access
+* Subscription plans
+* Feature/module permissions
+* Audit logs
+* Tenant data isolation
+* Backup/restore strategy
+* Super Admin panel
+
+**2. Masters**
+
+* Items / Raw Materials / Finished Goods / Consumables
+* Item categories
+* Units of measurement
+* HSN/SAC
+* GST rates
+* Brands
+* Customers
+* Suppliers
+* Employees
+* Departments
+* Machines
+* Work Centers
+* Warehouses
+* Storage locations/bins
+* Tax configuration
+* Payment terms
+* Currency
+* BOM
+* Routing
+* Operations
+* Cost centers
+
+**3. Sales**
+
+* Leads
+* Enquiries
+* Quotations
+* Sales Orders
+* Delivery Challan
+* Dispatch
+* Sales Invoice
+* Credit Note
+* Debit Note
+* Returns
+* Customer payments
+* Outstanding
+* Customer ledger
+
+**4. Purchase**
+
+* Purchase Requisition
+* RFQ
+* Supplier quotation
+* Purchase Order
+* Goods Receipt / GRN
+* Purchase Invoice
+* Purchase Return
+* Debit Note
+* Supplier payments
+* Supplier outstanding
+* Supplier ledger
+
+**5. Inventory**
+
+* Stock In
+* Stock Out
+* Stock Transfer
+* Opening Stock
+* Batch/Lot tracking
+* Serial number tracking
+* Expiry tracking where required
+* Warehouse stock
+* Bin/location stock
+* Stock adjustment
+* Material reservation
+* Stock valuation
+* Stock ledger
+* Minimum/reorder levels
+* Physical stock count
+* Inventory reconciliation
+
+**6. Manufacturing — सबसे important**
+
+* Production Planning
+* Production Order / Work Order
+* BOM
+* Multi-level BOM
+* Routing
+* Work Centers
+* Operations
+* Machine allocation
+* Material requirement calculation
+* Material issue to production
+* WIP tracking
+* Production completion
+* Finished Goods receipt
+* Scrap
+* By-products
+* Rework
+* Production rejection
+* Production costing
+* Planned vs actual consumption
+* Planned vs actual production
+* Production downtime
+* Machine maintenance linkage
+
+**7. MRP**
+
+* Demand planning
+* Sales Order → Production requirement
+* BOM explosion
+* Raw material requirement
+* Available stock calculation
+* Shortage calculation
+* Purchase recommendation
+* Production recommendation
+* Lead time
+* Safety stock
+* Reorder point
+
+**8. Quality Control**
+
+* Incoming QC
+* In-process QC
+* Final QC
+* Inspection plans
+* Quality parameters
+* Acceptance criteria
+* Rejection
+* NCR
+* CAPA
+* Quality reports
+* Supplier quality
+* Production quality history
+
+**9. GST / Indian Compliance**
+
+* GSTIN
+* CGST / SGST / IGST
+* HSN
+* GST tax calculation
+* Tax invoices
+* Credit/Debit Notes
+* E-Invoice integration
+* IRN
+* QR code
+* E-Way Bill
+* GST reports
+* GSTR-related reconciliation/reporting
+* TDS/TCS where applicable
+* State-wise tax handling
+
+**10. Finance / Accounts**
+
+* Chart of Accounts
+* Journal entries
+* General Ledger
+* Cash
+* Bank
+* Receivables
+* Payables
+* Payment/Receipt vouchers
+* Expenses
+* Cost centers
+* Trial Balance
+* P&L
+* Balance Sheet
+* Cash Flow
+* Tax reports
+* Bank reconciliation
+
+**11. HR / Payroll**
+Manufacturing ERP ke scope ke according optional module:
+
+* Employees
+* Departments
+* Shifts
+* Attendance
+* Leave
+* Overtime
+* Payroll
+* Salary structure
+* Payslips
+* Employee documents
+
+**12. Maintenance**
+
+* Machines/assets
+* Preventive maintenance
+* Breakdown maintenance
+* Maintenance schedule
+* Spare parts
+* Maintenance work orders
+* Machine downtime
+* Maintenance cost
+* AMC
+
+**13. Logistics**
+
+* Delivery
+* Dispatch
+* Transporter
+* Vehicle
+* LR/GR
+* E-Way Bill
+* Shipment tracking
+* Delivery status
+
+**14. Dashboards**
+Management dashboard:
+
+* Sales
+* Purchase
+* Production
+* Inventory
+* Receivables
+* Payables
+* Profit
+* Production efficiency
+* Rejection
+* Scrap
+* Machine downtime
+* Raw-material shortage
+
+Production dashboard:
+
+* Today's production
+* Target vs actual
+* WIP
+* Pending work orders
+* Material shortages
+* Rejections
+
+Inventory dashboard:
+
+* Current stock
+* Low stock
+* Dead stock
+* Stock valuation
+* Pending GRN
+* Pending material issues
+
+---
+
+# Sabse important: Workflow
+
+ERP ko individual forms ka collection mat banana.
+
+Actual business workflow aisa hona chahiye:
+
+```text
+Customer
+   ↓
+Enquiry
+   ↓
+Quotation
+   ↓
+Sales Order
+   ↓
+Production Planning
+   ↓
+MRP
+   ↓
+Raw Material Requirement
+   ↓
+Purchase Requisition
+   ↓
+RFQ
+   ↓
+Purchase Order
+   ↓
+GRN
+   ↓
+Incoming QC
+   ↓
+Raw Material Stock
+   ↓
+Material Issue
+   ↓
+Production / Work Order
+   ↓
+WIP
+   ↓
+In-Process QC
+   ↓
+Finished Goods
+   ↓
+Final QC
+   ↓
+Finished Goods Stock
+   ↓
+Delivery
+   ↓
+E-Invoice / GST Invoice
+   ↓
+E-Way Bill
+   ↓
+Customer
+   ↓
+Payment
+   ↓
+Accounts / Ledger
+```
+
+Is workflow ke saath **reverse flows** bhi hone chahiye:
+
+```text
+Purchase Return
+Sales Return
+Production Rejection
+Rework
+Scrap
+Credit Note
+Debit Note
+Stock Adjustment
+Material Return
+QC Rejection
+```
+
+---
+
+# SaaS architecture
+
+Main isko normal single-company ERP ki tarah nahi banaunga.
+
+Recommended:
+
+```text
+                    SaaS ERP
+                       │
+        ┌──────────────┴──────────────┐
+        │                             │
+   Super Admin                    Tenant
+                                      │
+                         ┌────────────┼────────────┐
+                         │            │            │
+                       Plant       Warehouse     Users
+                         │
+       ┌─────────────────┼──────────────────────┐
+       │                 │                      │
+    Sales            Purchase              Manufacturing
+       │                 │                      │
+    Invoice             PO                    BOM
+    Delivery            GRN                   MRP
+    Payment             QC                    Work Order
+                                           Production
+                                               │
+                                     ┌─────────┴─────────┐
+                                     │                   │
+                                  Quality             Inventory
+                                     │                   │
+                                     └─────────┬─────────┘
+                                               │
+                                            Finance
+                                               │
+                                     GST / Reports
+```
+
+### Multi-tenancy
+
+Database level par har important business record ke saath:
+
+```text
+tenant_id
+company_id
+plant_id
+created_by
+updated_by
+created_at
+updated_at
+```
+
+hona chahiye.
+
+Ek company ka data doosri company ko **kabhi access nahi hona chahiye**.
+
+---
+
+# Roles
+
+Generic `Admin/User` roles se kaam nahi chalega.
+
+Example:
+
+```text
+Super Admin
+Tenant Admin
+Management
+Plant Manager
+Production Manager
+Production Supervisor
+Operator
+Purchase Manager
+Purchase Executive
+Sales Manager
+Sales Executive
+Store Manager
+Store Operator
+Quality Manager
+QC Inspector
+Accounts Manager
+Accountant
+HR Manager
+Maintenance Manager
+Maintenance Technician
+Dispatch Manager
+Viewer
+```
+
+Aur permissions:
+
+```text
+View
+Create
+Edit
+Delete
+Approve
+Reject
+Cancel
+Print
+Export
+Post
+Reverse
+```
+
+Example:
+
+**Purchase Executive**
+
+* PO create → Yes
+* PO approve → No
+* PO cancel → No
+* Supplier payment → No
+
+**Purchase Manager**
+
+* PO create → Yes
+* PO approve → Yes
+* Payment → No
+
+**Accountant**
+
+* Invoice → Yes
+* Payment → Yes
+* Production order → View only
+
+Is type ka **RBAC + approval workflow** banana chahiye.
+
+---
+
+# Approval system
+
+Manufacturing ERP mein ye bahut important hai.
+
+Example:
+
+```text
+Purchase Request
+       ↓
+Department Head Approval
+       ↓
+Purchase Manager Approval
+       ↓
+Management Approval
+       ↓
+Purchase Order
+```
+
+Similarly:
+
+```text
+Sales Quotation
+      ↓
+Manager Approval
+      ↓
+Customer
+```
+
+```text
+Production Order
+      ↓
+Production Manager
+      ↓
+Work Order
+```
+
+Approval limits configurable rakho:
+
+```text
+₹0 – ₹50,000       → Manager
+₹50,001 – ₹5 Lakh   → Plant Head
+₹5 Lakh+            → Management
+```
+
+---
+
+# Manufacturing ka core database
+
+Ye part initially sahi design karna bahut important hai.
+
+### Example BOM
+
+```text
+Product:
+Motor Assembly
+
+├── Motor Housing × 1
+├── Rotor × 1
+├── Bearing × 2
+├── Copper Wire × 5kg
+└── Screws × 8
+```
+
+Lekin real ERP mein:
+
+```text
+BOM
+ ├── BOM Header
+ ├── BOM Versions
+ ├── BOM Items
+ ├── Scrap %
+ ├── Yield %
+ └── Effective Date
+```
+
+hona chahiye.
+
+### Routing
+
+```text
+Raw Material
+     ↓
+Cutting
+     ↓
+Machining
+     ↓
+Welding
+     ↓
+Painting
+     ↓
+Assembly
+     ↓
+Testing
+     ↓
+Finished Goods
+```
+
+Har operation ke saath:
+
+```text
+Work Center
+Machine
+Operator
+Setup Time
+Run Time
+Queue Time
+Labor Cost
+Machine Cost
+QC Required
+```
+
+---
+
+# Production tracking
+
+Operator ke liye simple UI:
+
+```text
+My Work Orders
+
+WO-10245
+Product: Motor Assembly
+Target: 100
+
+[Start]
+
+Produced: 60
+Rejected: 3
+Remaining: 40
+
+[Pause] [Complete]
+
+Reason:
+○ Material shortage
+○ Machine breakdown
+○ Quality issue
+○ Other
+```
+
+Supervisor ko:
+
+```text
+Production Dashboard
+
+Target       1,000
+Produced       820
+Rejection       25
+WIP             155
+Efficiency      XX%
+```
+
+dikhna chahiye.
+
+---
+
+# Document numbering
+
+Har tenant/company ke liye configurable numbering:
+
+```text
+INV-2026-000001
+PO-2026-000001
+SO-2026-000001
+GRN-2026-000001
+WO-2026-000001
+QC-2026-000001
+DN-2026-000001
+```
+
+Financial year change par configuration support honi chahiye.
+
+---
+
+# SaaS plans
+
+Baad mein monetization ke liye:
+
+### Starter
+
+* Sales
+* Purchase
+* Inventory
+* GST
+* Basic reports
+
+### Professional
+
+* Manufacturing
+* BOM
+* MRP
+* QC
+* Maintenance
+* Advanced reports
+
+### Enterprise
+
+* Multiple plants
+* Advanced MRP
+* Advanced approval
+* API
+* Custom workflows
+* Advanced analytics
+* SSO
+* Dedicated infrastructure
+
+**Lekin architecture aisa rakho ki modules feature flags se enable/disable ho saken.**
+
+---
+
+# Tech architecture
+
+Aap Node.js background mein ho, isliye:
+
+```text
+Frontend
+React + TypeScript
+        │
+        ↓
+API
+Node.js + TypeScript
+        │
+        ↓
+Service Layer
+        │
+        ↓
+Repository / Data Access
+        │
+        ↓
+MySQL
+```
+
+Supporting infrastructure:
+
+```text
+Redis
+   ↓
+Caching
+Queues
+Sessions
+Rate limiting
+
+Object Storage
+   ↓
+Invoices
+PO PDFs
+Attachments
+QC documents
+Employee documents
+
+Background Workers
+   ↓
+PDF generation
+Email
+Notifications
+GST integrations
+Reports
+Exports
+```
+
+### Important
+
+Start mein microservices mat banao.
+
+**Modular monolith** rakho:
+
+```text
+/modules
+
+auth
+tenants
+users
+roles
+masters
+sales
+purchase
+inventory
+manufacturing
+mrp
+quality
+maintenance
+finance
+gst
+hr
+logistics
+reports
+notifications
+```
+
+Baad mein high-load modules ko independently scale kar sakte ho.
+
+---
+
+# Frontend structure
+
+Main sidebar kuch is type ka rakhunga:
+
+```text
+Dashboard
+
+Masters
+  Items
+  Customers
+  Suppliers
+  Employees
+  Warehouses
+  Machines
+  BOM
+  Routing
+
+Sales
+  Enquiries
+  Quotations
+  Sales Orders
+  Deliveries
+  Invoices
+  Returns
+  Payments
+
+Purchase
+  Requisitions
+  RFQs
+  Purchase Orders
+  GRN
+  Purchase Invoices
+  Returns
+  Payments
+
+Inventory
+  Stock
+  Transfers
+  Adjustments
+  Batch / Serial
+  Stock Ledger
+  Stock Count
+
+Manufacturing
+  Production Planning
+  MRP
+  Work Orders
+  Material Issue
+  Production
+  WIP
+  Scrap / Rework
+
+Quality
+  Incoming QC
+  In-Process QC
+  Final QC
+  NCR / CAPA
+
+Maintenance
+  Machines
+  Maintenance
+  Breakdown
+  Preventive Maintenance
+
+Finance
+  Accounts
+  Receivables
+  Payables
+  Payments
+  Expenses
+  Ledger
+  Reports
+
+GST
+  E-Invoice
+  E-Way Bill
+  GST Reports
+
+Reports
+  Sales
+  Purchase
+  Inventory
+  Production
+  Quality
+  Finance
+  GST
+
+Administration
+  Users
+  Roles
+  Approvals
+  Company
+  Plants
+  Settings
+  Audit Logs
+```
+
+---
+
+# Aur ek important point
+
+**Sab features ek saath code karna galat approach hoga.**
+
+Pehle **ERP foundation + core manufacturing workflow** complete karo:
+
+### Phase 1
+
+```text
+SaaS
+Authentication
+Tenant
+Company
+Plant
+Users
+Roles
+Permissions
+Masters
+Audit Logs
+```
+
+### Phase 2
+
+```text
+Purchase
+Inventory
+Sales
+GST Invoice
+Payments
+```
+
+### Phase 3
+
+```text
+BOM
+Routing
+Work Centers
+Production
+WIP
+Scrap
+Rework
+QC
+```
+
+### Phase 4
+
+```text
+MRP
+Planning
+Costing
+Machine Maintenance
+Advanced QC
+```
+
+### Phase 5
+
+```text
+Accounting
+GST integrations
+E-Invoice
+E-Way Bill
+Advanced reports
+Analytics
+```
+
+### Phase 6
+
+```text
+Mobile/PWA
+Notifications
+API
+Integrations
+Subscription billing
+Enterprise features
+```
+
+---
+
+## Aapke AI coding tool ke liye enhanced master prompt
+
+Agar aap **Claude / Cursor / Claude Code / Z.ai** se ye ERP develop karwa rahe ho, to main prompt ko is tarah define karunga:
+
+You are a Principal Software Architect, Senior Full-Stack Engineer, Manufacturing ERP Domain Architect, Database Architect, Security Engineer, QA Engineer and SaaS Product Architect.
+
+I want to build a production-grade, multi-tenant SaaS ERP specifically for Indian manufacturing companies.
+
+IMPORTANT:
+Do NOT immediately start changing or generating code.
+
+FIRST:
+
+1. Inspect the entire existing project.
+2. Understand the current frontend architecture.
+3. Understand the backend architecture.
+4. Inspect the database schema and relationships.
+5. Inspect authentication and authorization.
+6. Inspect existing modules, forms, APIs, services and components.
+7. Identify what already exists.
+8. Identify duplicate, incomplete, broken or incorrectly designed functionality.
+9. Identify what can be reused.
+10. Identify architectural problems before making changes.
+
+Do NOT unnecessarily rewrite existing working functionality.
+
+The goal is to evolve the existing application into a scalable manufacturing ERP SaaS.
+
+==================================================
+
+1. PRODUCT ARCHITECTURE
+   ==================================================
+
+Build the system as a true multi-tenant SaaS.
+
+Hierarchy:
+
+Platform
+└── Tenant / Company
+├── Plants
+├── Warehouses
+├── Departments
+├── Users
+└── Business Data
+
+Every tenant's business data must be strictly isolated.
+
+Important entities should support:
+
+tenant_id
+company_id
+plant_id
+created_by
+updated_by
+created_at
+updated_at
+deleted_at where appropriate
+
+Never allow one tenant to access another tenant's data.
+
+Implement tenant isolation at API/service/database query level.
+
+==================================================
+2. AUTHENTICATION & RBAC
+========================
+
+Implement secure authentication and granular RBAC.
+
+Roles may include:
+
+Super Admin
+Tenant Admin
+Management
+Plant Manager
+Production Manager
+Production Supervisor
+Operator
+Purchase Manager
+Purchase Executive
+Sales Manager
+Sales Executive
+Store Manager
+Store Operator
+Quality Manager
+QC Inspector
+Account Manager
+Accountant
+HR Manager
+Maintenance Manager
+Maintenance Technician
+Dispatch Manager
+Viewer
+
+Permissions:
+
+view
+create
+edit
+delete
+approve
+reject
+cancel
+print
+export
+post
+reverse
+
+Permissions must be module/action based.
+
+Do not rely only on frontend permission checks.
+
+Authorization MUST also be enforced in backend APIs/services.
+
+==================================================
+3. CORE MASTER DATA
+===================
+
+Create properly normalized masters for:
+
+Items
+Raw Materials
+Finished Goods
+Semi-Finished Goods
+Consumables
+Item Categories
+Brands
+Units
+HSN/SAC
+GST Rates
+Customers
+Suppliers
+Employees
+Departments
+Plants
+Warehouses
+Bins/Locations
+Machines
+Work Centers
+Operations
+Cost Centers
+Payment Terms
+Tax Configuration
+Currencies
+
+Items must support:
+
+SKU
+Item Code
+Name
+Description
+Category
+UOM
+HSN
+GST Rate
+Batch Tracking
+Serial Tracking
+Expiry Tracking
+Reorder Level
+Minimum Stock
+Maximum Stock
+Purchase Price
+Selling Price
+Standard Cost
+Status
+
+==================================================
+4. SALES
+========
+
+Implement:
+
+Enquiry
+Quotation
+Sales Order
+Delivery Challan
+Dispatch
+Sales Invoice
+Credit Note
+Debit Note
+Sales Return
+Customer Payment
+Customer Outstanding
+Customer Ledger
+
+Workflow:
+
+Enquiry
+→ Quotation
+→ Sales Order
+→ Production/Stock
+→ Delivery
+→ Invoice
+→ Payment
+
+Support approval workflows where required.
+
+==================================================
+5. PURCHASE
+===========
+
+Implement:
+
+Purchase Requisition
+RFQ
+Supplier Quotation
+Purchase Order
+GRN
+Incoming QC
+Purchase Invoice
+Purchase Return
+Debit Note
+Supplier Payment
+Supplier Outstanding
+Supplier Ledger
+
+Workflow:
+
+Purchase Requisition
+→ Approval
+→ RFQ
+→ Supplier Quotation
+→ Purchase Order
+→ GRN
+→ QC
+→ Stock
+→ Purchase Invoice
+→ Payment
+
+==================================================
+6. INVENTORY
+============
+
+Implement:
+
+Opening Stock
+Stock In
+Stock Out
+Stock Transfer
+Stock Adjustment
+Stock Reservation
+Material Issue
+Material Return
+Stock Count
+Batch Tracking
+Serial Tracking
+Warehouse Stock
+Bin Stock
+Stock Ledger
+Inventory Valuation
+Reorder Levels
+
+Every stock transaction must maintain a proper immutable transaction history.
+
+Do not directly modify stock quantities without recording a stock transaction.
+
+Support stock reconciliation.
+
+==================================================
+7. MANUFACTURING
+================
+
+This is the core ERP module.
+
+Implement:
+
+Bill of Materials
+Multi-Level BOM
+BOM Versions
+BOM Effective Dates
+Routing
+Operations
+Work Centers
+Machines
+Production Planning
+Production Orders
+Work Orders
+Material Requirements
+Material Issue
+WIP
+Production Completion
+Finished Goods Receipt
+Scrap
+By-Products
+Rework
+Production Rejection
+Production Costing
+Actual vs Planned Consumption
+Actual vs Planned Production
+
+Example:
+
+Sales Order
+→ Production Requirement
+→ MRP
+→ Material Requirement
+→ Purchase/Stock
+→ Production Order
+→ Work Order
+→ Material Issue
+→ Operation
+→ WIP
+→ QC
+→ Finished Goods
+→ Stock
+
+==================================================
+8. MRP
+======
+
+Implement Material Requirements Planning.
+
+System should calculate:
+
+Required Quantity
+Available Stock
+Reserved Stock
+Expected Incoming Stock
+Shortage
+Net Requirement
+Suggested Purchase
+Suggested Production
+
+Consider:
+
+BOM
+Sales Orders
+Production Orders
+Current Inventory
+Open Purchase Orders
+Lead Times
+Safety Stock
+Reorder Points
+
+Never create duplicate purchase/production recommendations.
+
+==================================================
+9. QUALITY CONTROL
+==================
+
+Implement:
+
+Incoming QC
+In-Process QC
+Final QC
+Inspection Plans
+Quality Parameters
+Acceptance Criteria
+QC Results
+Pass
+Fail
+Partial Acceptance
+Rejection
+NCR
+CAPA
+Supplier Quality
+Production Quality History
+
+QC status must influence inventory availability where appropriate.
+
+==================================================
+10. MAINTENANCE
+===============
+
+Implement:
+
+Machines
+Assets
+Preventive Maintenance
+Breakdown Maintenance
+Maintenance Work Orders
+Maintenance Schedule
+Spare Parts
+Machine Downtime
+Maintenance Cost
+AMC
+
+Link maintenance events to production downtime where appropriate.
+
+==================================================
+11. GST / INDIAN COMPLIANCE
+===========================
+
+Support:
+
+GSTIN
+CGST
+SGST
+IGST
+HSN/SAC
+Tax Invoice
+Credit Note
+Debit Note
+E-Invoice
+IRN
+QR Code
+E-Way Bill
+GST Reports
+Tax Reconciliation
+
+Do not hardcode tax rates.
+
+Tax configuration must be configurable and versionable.
+
+External government integrations must be implemented through a dedicated integration layer.
+
+Never expose API credentials/secrets to the frontend.
+
+==================================================
+12. FINANCE
+===========
+
+Implement the foundation for:
+
+Chart of Accounts
+Journal Entries
+General Ledger
+Accounts Receivable
+Accounts Payable
+Cash
+Bank
+Payment
+Receipt
+Expenses
+Cost Centers
+Trial Balance
+Profit & Loss
+Balance Sheet
+Cash Flow
+Bank Reconciliation
+
+Every financial transaction must maintain auditability.
+
+==================================================
+13. DOCUMENT NUMBERING
+======================
+
+Support configurable numbering:
+
+INV-2026-000001
+PO-2026-000001
+SO-2026-000001
+GRN-2026-000001
+WO-2026-000001
+QC-2026-000001
+
+Support financial year based numbering.
+
+Prevent duplicate document numbers under concurrent requests.
+
+==================================================
+14. APPROVAL WORKFLOW ENGINE
+============================
+
+Create a reusable approval engine.
+
+It should support:
+
+Document Type
+Approval Level
+Approver
+Amount Threshold
+Department
+Plant
+Status
+Approve
+Reject
+Return
+Comments
+Approval History
+
+Example:
+
+Purchase Request
+→ Department Head
+→ Purchase Manager
+→ Management
+
+Do not hardcode approval logic into individual forms.
+
+==================================================
+15. AUDIT LOG
+=============
+
+Record important actions:
+
+Create
+Update
+Delete
+Approve
+Reject
+Cancel
+Post
+Reverse
+Login
+Logout
+Permission Change
+Configuration Change
+
+Audit logs must contain:
+
+User
+Tenant
+Timestamp
+Entity
+Entity ID
+Action
+Old Value
+New Value
+IP
+User Agent
+
+Sensitive information must not be unnecessarily logged.
+
+==================================================
+16. DASHBOARDS
+==============
+
+Management dashboard:
+
+Sales
+Purchase
+Production
+Inventory
+Receivables
+Payables
+Profit
+WIP
+Rejection
+Scrap
+Machine Downtime
+
+Production dashboard:
+
+Production Target
+Actual Production
+Pending Work Orders
+WIP
+Material Shortage
+Rejection
+Efficiency
+
+Inventory dashboard:
+
+Current Stock
+Low Stock
+Stock Valuation
+Dead Stock
+Reserved Stock
+Pending GRN
+Pending Material Issue
+
+==================================================
+17. REPORTING
+=============
+
+Reports must support:
+
+Filtering
+Date Range
+Plant
+Warehouse
+Department
+Customer
+Supplier
+Item
+Status
+
+Export:
+
+Excel
+CSV
+PDF
+
+Reports must respect tenant and role permissions.
+
+==================================================
+18. NOTIFICATIONS
+=================
+
+Create a centralized notification system.
+
+Support:
+
+In-App
+Email
+Optional WhatsApp/SMS integration
+
+Examples:
+
+Low Stock
+PO Pending Approval
+QC Rejection
+Production Delay
+Payment Due
+Invoice Generated
+Work Order Assigned
+Maintenance Due
+
+==================================================
+19. SECURITY
+============
+
+Follow production-grade security practices.
+
+Implement:
+
+Input Validation
+Authentication
+Authorization
+Rate Limiting
+CSRF protection where applicable
+Secure Cookies
+Password Hashing
+JWT/session security
+SQL Injection Protection
+XSS Protection
+File Upload Validation
+MIME Validation
+File Size Limits
+Secure File Storage
+Secrets via Environment Variables
+API Security
+Tenant Isolation
+Audit Logs
+
+Never trust frontend values for:
+
+tenant_id
+user_id
+role
+permissions
+price
+tax
+discount
+stock quantity
+approval status
+
+All critical values must be validated server-side.
+
+==================================================
+20. DATABASE
+============
+
+Use normalized relational design.
+
+Avoid:
+
+Duplicate business data
+Uncontrolled JSON blobs
+Circular dependencies
+Hardcoded IDs
+Hardcoded tenant IDs
+
+Use proper:
+
+Primary Keys
+Foreign Keys
+Indexes
+Unique Constraints
+Check Constraints where supported
+Transactions
+Soft Delete where appropriate
+
+Design indexes based on real query patterns.
+
+Use database transactions for critical operations such as:
+
+Stock transactions
+Invoice posting
+Production completion
+Material issue
+Payments
+Accounting entries
+
+==================================================
+21. API ARCHITECTURE
+====================
+
+Use:
+
+Controller
+→ Validation
+→ Service
+→ Repository/Data Access
+→ Database
+
+Do not put business logic inside controllers.
+
+Use centralized error handling.
+
+Return consistent API responses.
+
+Example:
+
+{
+"success": true,
+"data": {},
+"message": ""
+}
+
+and
+
+{
+"success": false,
+"error": {
+"code": "",
+"message": "",
+"details": {}
+}
+}
+
+==================================================
+22. FRONTEND UX
+===============
+
+The ERP must be easy for non-technical manufacturing users.
+
+Do not create unnecessarily complicated screens.
+
+Use:
+
+Clear forms
+Smart defaults
+Searchable dropdowns
+Keyboard navigation
+Bulk actions
+Filters
+Saved filters
+Pagination
+Sorting
+Responsive tables
+Confirmation dialogs
+Validation messages
+Empty states
+Loading states
+Error states
+Skeletons
+Print preview
+PDF export
+
+For production operators, create simplified task-oriented screens.
+
+For management, create data-rich dashboards.
+
+Desktop:
+Data dense.
+
+Tablet:
+Balanced.
+
+Mobile:
+Task focused.
+
+==================================================
+23. DOCUMENT MANAGEMENT
+=======================
+
+Documents should support:
+
+PDF
+Excel
+Images
+
+Examples:
+
+PO attachments
+Supplier documents
+Invoices
+QC reports
+Machine documents
+Employee documents
+
+Use secure object storage.
+
+Do not store large binary files directly in MySQL unless there is a specific architectural reason.
+
+==================================================
+24. SAAS BILLING
+================
+
+Design subscription architecture for:
+
+Plans
+Features
+Limits
+Users
+Plants
+Warehouses
+Storage
+Transactions
+Modules
+
+Support:
+
+Trial
+Active
+Past Due
+Suspended
+Cancelled
+
+Feature access must be configurable.
+
+Do not hardcode plan logic throughout the application.
+
+==================================================
+25. SUPER ADMIN
+===============
+
+Create a separate SaaS administration area.
+
+Super Admin can manage:
+
+Tenants
+Subscriptions
+Plans
+Features
+Users
+Usage
+System Health
+Audit Logs
+Support
+Feature Flags
+Tenant Status
+
+Super Admin must not accidentally bypass tenant boundaries through normal tenant APIs.
+
+==================================================
+26. OBSERVABILITY
+=================
+
+Implement:
+
+Structured Logging
+Error Tracking
+Request IDs
+Performance Monitoring
+Background Job Monitoring
+Database Query Monitoring
+Health Checks
+
+Track:
+
+API latency
+Error rate
+Queue failures
+Database failures
+Integration failures
+
+==================================================
+27. TESTING
+===========
+
+Do not only test UI.
+
+Implement:
+
+Unit Tests
+Integration Tests
+API Tests
+Database Tests
+Permission Tests
+Tenant Isolation Tests
+Workflow Tests
+E2E Tests
+
+Critical E2E flows:
+
+Login
+Create Customer
+Create Item
+Create Supplier
+Create PO
+Approve PO
+Create GRN
+QC
+Stock Update
+Create BOM
+Create Production Order
+Material Issue
+Production Completion
+QC
+Finished Goods
+Sales Order
+Delivery
+Invoice
+Payment
+
+Test unauthorized access.
+
+Test cross-tenant access attempts.
+
+Test concurrent transactions.
+
+==================================================
+28. DATA INTEGRITY
+==================
+
+Never allow:
+
+Negative stock where business rules prohibit it
+Duplicate invoice numbers
+Duplicate PO numbers
+Invoice without required customer data
+Production completion beyond allowed quantity
+Material issue beyond available quantity
+Cross-tenant records
+Unauthorized approval
+Unauthorized modification of posted documents
+
+Posted financial documents should generally be immutable.
+
+Use reversal/correction mechanisms instead of silently modifying posted transactions.
+
+==================================================
+29. DEVELOPMENT PROCESS
+=======================
+
+Before coding:
+
+1. Audit existing code.
+2. Create architecture map.
+3. Create module dependency map.
+4. Create database ERD.
+5. Identify reusable code.
+6. Identify breaking changes.
+7. Create migration plan.
+8. Create implementation phases.
+9. Implement one module at a time.
+10. Run tests after every major change.
+
+Never make a large uncontrolled rewrite.
+
+==================================================
+30. CRITICAL RULE
+=================
+
+You are not just building CRUD screens.
+
+Build the actual manufacturing business workflow.
+
+Whenever creating a feature, ask:
+
+Who creates it?
+Who approves it?
+What happens after approval?
+What inventory changes?
+What accounting impact occurs?
+What documents are generated?
+What audit record is created?
+Who can edit it?
+When does it become immutable?
+What happens if it is rejected?
+What happens if it is cancelled?
+What happens if it is returned/reversed?
+What reports depend on it?
+
+Do not mark a module complete merely because the form works.
+
+A module is complete only when:
+
+UI
+
+* API
+* Database
+* Validation
+* Permissions
+* Business Logic
+* Workflow
+* Audit Trail
+* Error Handling
+* Reports
+* Tests
+
+are working together.
+
+==================================================
+31. FIRST TASK
+==============
+
+DO NOT WRITE CODE YET.
+
+First perform a complete audit of the existing project.
+
+Return:
+
+1. Current architecture
+2. Existing modules
+3. Existing database tables
+4. Existing APIs
+5. Existing authentication
+6. Existing RBAC
+7. Existing reusable components
+8. Missing ERP modules
+9. Manufacturing-specific missing functionality
+10. Database design problems
+11. Security problems
+12. UX problems
+13. Performance problems
+14. Scalability problems
+15. Recommended architecture
+16. Module dependency map
+17. Recommended implementation order
+18. Database migration strategy
+19. Testing strategy
+20. Risks and breaking changes
+
+After the audit, WAIT for approval before making major architectural changes.
+
+Do not install packages, modify files, run destructive commands, or change the database without explicit permission.
+
+When permission is given, make changes incrementally and verify every change.
+
+**Meri recommendation:** is prompt ko directly codebase par run karne se pehle **existing project audit** karwao. Manufacturing ERP bahut bada system hai; pehle architecture/ERD aur module dependency map lock karna zaroori hai. Uske baad hum **Phase 1 → Phase 2 → Manufacturing core → MRP → Finance/GST** systematically build kar sakte hain.
