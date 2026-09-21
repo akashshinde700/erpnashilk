@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, ok } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite } from '@/lib/erp-helpers'
 
 const EDITABLE = ['name', 'gstin', 'pan', 'addressLine', 'city', 'state', 'stateCode', 'phone', 'email', 'logoText'] as const
 type EditableField = (typeof EDITABLE)[number]
@@ -33,6 +33,7 @@ export async function GET(req: Request) {
 // PATCH /api/settings { companyId, ...editable fields, userName? } → update profile + CONFIG audit
 export async function PATCH(req: Request) {
   try {
+    requireWrite(req, 'settings')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body?.companyId)
 

@@ -5,10 +5,26 @@ import type { ApiResponse } from '@/lib/erp-constants'
 
 // ============ Low-level api client ============
 
+/** Attach session identity headers for server-side RBAC (middleware + requireWrite). */
+function identityHeaders(): Record<string, string> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem('erp_user')
+    if (!raw) return {}
+    const s = JSON.parse(raw) as { user?: { id?: string; name?: string; role?: string } }
+    const u = s.user
+    const h: Record<string, string> = {}
+    if (u?.id) h['x-erp-user-id'] = u.id
+    if (u?.name) h['x-erp-user-name'] = encodeURIComponent(u.name)
+    if (u?.role) h['x-erp-role'] = u.role
+    return h
+  } catch { return {} }
+}
+
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...identityHeaders(), ...(init?.headers || {}) },
   })
   const json = (await res.json()) as ApiResponse<T>
   if (!json.success) throw new Error(json.error?.message || `Request failed (${res.status})`)

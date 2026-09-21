@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // Enquiry carries a plain customerId + item lines without Prisma relations — resolve via JS mapping
 async function withRelations<T extends { customerId: string; items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -56,6 +56,7 @@ export async function GET(req: Request) {
 // POST /api/enquiries  { companyId, customerId, date?, contactName?, source?, notes?, items: [{itemId, qty, notes?}] }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'enquiries')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
 
 const MACHINE_STATUSES = ['RUNNING', 'IDLE', 'MAINTENANCE', 'BREAKDOWN']
 
@@ -35,6 +35,7 @@ export async function GET(req: Request) {
 // ============================== POST /api/machines ==============================
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'machines')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
     const code = String(body.code || '').trim()

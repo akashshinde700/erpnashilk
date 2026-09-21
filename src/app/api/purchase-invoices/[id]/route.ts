@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, logAudit, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -44,6 +44,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // ============================== PATCH /api/purchase-invoices/[id] — action=cancel ==============================
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'purchase-invoices')
     const { id } = await params
     const body = await req.json()
     const companyId = await companyRequired(req, body.companyId)

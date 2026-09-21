@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
 
 const WAREHOUSE_TYPES = ['RM', 'FG', 'GENERAL', 'SCRAP']
 
@@ -28,6 +28,7 @@ export async function GET(req: Request) {
 // ============================== POST /api/warehouses ==============================
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'warehouses')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
     const code = String(body.code || '').trim()

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // GET /api/stock-transfers?companyId= — TRANSFER_OUT ledger rows (UI pairs with TRANSFER_IN)
 export async function GET(req: Request) {
@@ -36,6 +36,7 @@ export async function GET(req: Request) {
 // POST /api/stock-transfers  { fromWarehouseId, toWarehouseId, date?, notes?, userName?, lines: [{itemId, qty}] }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'stock-transfers')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
     const { fromWarehouseId, toWarehouseId, date, notes, userName, lines } = body

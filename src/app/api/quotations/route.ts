@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 interface QtLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
@@ -76,6 +76,7 @@ export async function GET(req: Request) {
 // POST /api/quotations  { companyId, enquiryId?, customerId, date?, validUntil?, notes?, items: [{itemId, qty, rate, discountPct, gstRate}] }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'quotations')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 

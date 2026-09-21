@@ -1,10 +1,11 @@
 'use client'
 
 import * as React from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
+import ImportDialog from '@/components/erp/import-dialog'
 import {
   ConfirmAction,
   DataTable,
@@ -80,6 +81,7 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
   const rows = data?.items ?? []
 
   const [open, setOpen] = React.useState(false)
+  const [importOpen, setImportOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<CustomerRow | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [form, setForm] = React.useState<FormState>(emptyForm)
@@ -203,9 +205,14 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         title="Customers"
         description="Customer master with GST and credit terms"
         actions={
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Customer
-          </Button>
+          <>
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4 mr-1.5" /> Import CSV
+            </Button>
+            <Button size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4 mr-1.5" /> New Customer
+            </Button>
+          </>
         }
       />
 
@@ -279,6 +286,20 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
           </Field>
         </div>
       </FormDialog>
+
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        companyId={companyId}
+        apiPath="/api/customers/import"
+        entityLabel="customers"
+        templateHeaders={['name', 'gstin', 'city', 'state', 'stateCode', 'phone', 'email', 'addressLine']}
+        templateSample={[
+          ['Precision Tools Pvt Ltd', '27ABCDE1234F1Z5', 'Pune', 'Maharashtra', '27', '9876543210', 'sales@precisiontools.in', 'Plot 14, MIDC Bhosari'],
+          ['Vadodara Bearings', '', 'Vadodara', 'Gujarat', '24', '', 'orders@vdbearings.com', 'GIDC Makarpura'],
+        ]}
+        onImported={() => void refetch()}
+      />
     </div>
   )
 }

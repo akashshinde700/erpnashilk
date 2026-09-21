@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, r2,
+  ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, r2, requireWrite,
 } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
@@ -54,6 +54,7 @@ export async function GET(req: Request) {
 // ============================== POST /api/qc-inspections (manual) ==============================
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'qc-inspections')
     const body = await req.json()
     const companyId = await companyRequired(req, body.companyId)
     const type = String(body.type || '')

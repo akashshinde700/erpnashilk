@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // SalesOrderItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -45,6 +45,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 //  - otherwise: edit fields/lines (DRAFT only, lines replaced, totals recomputed)
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'sales-orders')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
@@ -176,6 +177,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // DELETE /api/sales-orders/[id]?companyId=  — only when DRAFT
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'sales-orders')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body?.companyId)

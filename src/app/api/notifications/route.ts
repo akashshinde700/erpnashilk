@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, ok } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, getActor, handleError, ok } from '@/lib/erp-helpers'
 
 // GET /api/notifications?companyId=&unread=1 → { items, unreadCount } (createdAt desc, latest 30)
 export async function GET(req: Request) {
@@ -22,6 +22,7 @@ export async function GET(req: Request) {
 // PATCH /api/notifications { companyId, all: true } → mark all as read
 export async function PATCH(req: Request) {
   try {
+    if (!getActor(req)) throw new ApiError('Unauthorized — sign in to continue', 401)
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body?.companyId)
     if (!body?.all) throw new ApiError('Send { all: true } to mark all notifications as read', 400)

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, postStock, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, postStock, logAudit } from '@/lib/erp-helpers'
 
 function num(v: unknown, def = 0, field = 'value'): number {
   if (v === undefined || v === null || v === '') return def
@@ -35,6 +35,7 @@ export async function GET(req: Request) {
 // ============================== POST /api/items ==============================
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'items')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
     const code = String(body.code || '').trim()

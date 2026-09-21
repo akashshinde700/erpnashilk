@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // Status machine: OPEN → QUOTED | WON | LOST | CLOSED
 const NEXT_STATUSES = ['QUOTED', 'WON', 'LOST', 'CLOSED']
@@ -45,6 +45,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // PATCH /api/enquiries/[id]  { companyId, fields.../items? } OR { status }
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'enquiries')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
@@ -120,6 +121,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // DELETE /api/enquiries/[id]?companyId=  — only when OPEN
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'enquiries')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body?.companyId)

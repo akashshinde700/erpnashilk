@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, fail, handleError, logAudit, ok } from '@/lib/erp-helpers'
+import { requireWrite, ApiError, fail, handleError, logAudit, ok } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -30,6 +30,7 @@ export async function GET(_req: Request, { params }: Ctx) {
 // PATCH /api/companies/[id] — tenant admin profile update (no companyId needed — id IS the tenant)
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    requireWrite(req, 'companies')
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const existing = await db.company.findUnique({ where: { id }, select: { id: true } })

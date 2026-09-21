@@ -265,6 +265,16 @@ export default function ErpApp() {
     })
   }
 
+  // Module navigation events (dashboard quick actions, future widgets)
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail
+      if (typeof key === 'string' && findModule(key)) goToModule(key)
+    }
+    window.addEventListener('erp:goto', handler)
+    return () => window.removeEventListener('erp:goto', handler)
+  }, [goToModule])
+
   function toggleFav(key: string) {
     setFavs((prev) => {
       const nx = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]

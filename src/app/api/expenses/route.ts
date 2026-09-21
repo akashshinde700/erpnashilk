@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2 } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2, requireWrite } from '@/lib/erp-helpers'
 
 // GET /api/expenses?companyId=&q=&category= → { items, total } (date desc)
 export async function GET(req: Request) {
@@ -33,6 +33,7 @@ export async function GET(req: Request) {
 // POST /api/expenses { companyId, date, category, description, amount>0, paymentMode, paidTo?, gstAmount?, userName? }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'expenses')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body?.companyId)
 

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 
 // GET /api/stock-adjustments?companyId= — ADJUST_IN / ADJUST_OUT ledger rows
@@ -40,6 +40,7 @@ export async function GET(req: Request) {
 // POST /api/stock-adjustments  { warehouseId, date?, reason?, userName?, lines: [{itemId, qty, reason?}] }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'stock-adjustments')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
     const { warehouseId, date, reason, userName, lines } = body

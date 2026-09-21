@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { fail, handleError, logAudit, ok } from '@/lib/erp-helpers'
+import { getActor, fail, handleError, logAudit, ok } from '@/lib/erp-helpers'
 import { hashPassword, verifyPassword } from '@/lib/password'
 
 // POST /api/auth/change-password { userId, currentPassword, newPassword, userName? }
@@ -16,6 +16,12 @@ export async function POST(req: Request) {
     }
     if (newPassword.trim().length < 6) {
       return fail('New password must be at least 6 characters', 400)
+    }
+
+    // Self-service guard: a signed-in actor may only change their own password.
+    const actor = getActor(req)
+    if (actor && actor.userId !== userId) {
+      return fail('You can only change your own password', 403)
     }
 
     const user = await db.user.findUnique({ where: { id: userId } })

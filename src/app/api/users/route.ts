@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
 import { ROLES } from '@/lib/erp-constants'
 
 // ============================== GET /api/users?q=&role=&active= ==============================
@@ -29,6 +29,7 @@ export async function GET(req: Request) {
 // ============================== POST /api/users ==============================
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'users')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
     const name = String(body.name || '').trim()

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, logAudit, ApiError } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, logAudit, ApiError, requireWrite } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -63,6 +63,7 @@ export async function GET(req: Request, { params }: Ctx) {
 // PATCH /api/work-orders/[id]  { companyId, action: 'release' | 'cancel', userName? }
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    requireWrite(req, 'work-orders')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
     const { id } = await params
@@ -114,6 +115,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/work-orders/[id]?companyId= — allowed only while PLANNED
 export async function DELETE(req: Request, { params }: Ctx) {
   try {
+    requireWrite(req, 'work-orders')
     const companyId = await companyRequired(req)
     const { id } = await params
 

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 
 // WorkOrder has no item relation in the schema — join in JS.
@@ -43,6 +43,7 @@ export async function GET(req: Request) {
 // POST /api/production-entries  { workOrderId, producedQty, rejectedQty?, scrapQty?, operator?, downtimeMins?, notes?, userName? }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'production-entries')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
     const { workOrderId, operator, notes, userName } = body

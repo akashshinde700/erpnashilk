@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, requireWrite } from '@/lib/erp-helpers'
 
 // WorkOrder has no direct relations to item/bom/warehouse in the schema — join in JS.
 async function attachWorkOrderRelations(rows: any[]) {
@@ -60,6 +60,7 @@ export async function GET(req: Request) {
 // POST /api/work-orders  { itemId, bomId?, salesOrderId?, warehouseId, plannedQty, startDate, dueDate?, priority?, notes?, userName? }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'work-orders')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 

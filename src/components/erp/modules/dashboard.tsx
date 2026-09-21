@@ -3,20 +3,27 @@
 import * as React from 'react'
 import {
   AlertTriangle,
+  BarChart3,
   Boxes,
   ClipboardList,
   CreditCard,
   Factory,
+  FileText,
   HandCoins,
   IndianRupee,
+  Layers3,
+  PackageCheck,
+  Percent,
   RefreshCw,
   ShoppingCart,
+  SlidersHorizontal,
+  Wallet,
 } from 'lucide-react'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { fmtDate, fmtDateTime, fmtMoney, fmtNum } from '@/lib/erp-constants'
+import { canAccessModule, fmtDate, fmtDateTime, fmtMoney, fmtNum } from '@/lib/erp-constants'
 import { useList } from '@/lib/use-api'
 import { Money, SectionCard, StatCard, StatusBadge } from '@/components/erp/kit'
 
@@ -130,6 +137,51 @@ const EmptyList = ({ text }: { text: string }) => (
   <p className="py-10 text-center text-sm text-muted-foreground">{text}</p>
 )
 
+// ---------- quick actions (role-filtered, navigate via erp:goto) ----------
+
+const QUICK_ACTIONS: { key: string; label: string; icon: React.ReactNode }[] = [
+  { key: 'sales-orders', label: 'New Sales Order', icon: <ShoppingCart className="h-4 w-4" /> },
+  { key: 'quotations', label: 'New Quotation', icon: <FileText className="h-4 w-4" /> },
+  { key: 'purchase-orders', label: 'New Purchase Order', icon: <PackageCheck className="h-4 w-4" /> },
+  { key: 'payments', label: 'Record Payment', icon: <Wallet className="h-4 w-4" /> },
+  { key: 'work-orders', label: 'New Work Order', icon: <Factory className="h-4 w-4" /> },
+  { key: 'qc-inspections', label: 'QC Inspection', icon: <ClipboardList className="h-4 w-4" /> },
+  { key: 'stock-adjustments', label: 'Stock Adjustment', icon: <SlidersHorizontal className="h-4 w-4" /> },
+  { key: 'mrp', label: 'Run MRP', icon: <Layers3 className="h-4 w-4" /> },
+  { key: 'stock', label: 'Check Stock', icon: <Boxes className="h-4 w-4" /> },
+  { key: 'gst-report', label: 'GST Report', icon: <Percent className="h-4 w-4" /> },
+  { key: 'reports', label: 'Reports', icon: <BarChart3 className="h-4 w-4" /> },
+  { key: 'expenses', label: 'Add Expense', icon: <CreditCard className="h-4 w-4" /> },
+]
+
+function QuickActions() {
+  const role = React.useMemo(() => {
+    try {
+      const raw = window.localStorage.getItem('erp_user')
+      return raw ? (JSON.parse(raw) as { user?: { role?: string } }).user?.role || '' : ''
+    } catch { return '' }
+  }, [])
+  const actions = QUICK_ACTIONS.filter((a) => canAccessModule(role, a.key))
+  if (!actions.length) return null
+  return (
+    <SectionCard title="Quick actions">
+      <p className="text-xs text-muted-foreground -mt-1 mb-2">One-click jump to the most-used workflows</p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {actions.map((a) => (
+          <button
+            key={a.key}
+            onClick={() => window.dispatchEvent(new CustomEvent('erp:goto', { detail: a.key }))}
+            className="flex flex-col items-center gap-1.5 rounded-lg border bg-card px-2 py-3 text-center transition-colors hover:border-emerald-300 hover:bg-emerald-50 dark:hover:border-emerald-800 dark:hover:bg-emerald-950/40"
+          >
+            <span className="rounded-md bg-emerald-100 p-1.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{a.icon}</span>
+            <span className="text-[11px] font-medium leading-tight">{a.label}</span>
+          </button>
+        ))}
+      </div>
+    </SectionCard>
+  )
+}
+
 // ---------- module ----------
 
 export default function DashboardModule({ companyId }: { companyId: string }) {
@@ -207,6 +259,9 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
           <StatCard key={s.title} title={s.title} value={s.value} icon={s.icon} toneClass={s.cls} />
         ))}
       </div>
+
+      {/* Quick actions */}
+      <QuickActions />
 
       {/* Charts */}
       <div className="grid gap-4 lg:grid-cols-2">

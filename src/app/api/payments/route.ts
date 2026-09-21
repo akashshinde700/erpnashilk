@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 
 // GET /api/payments?companyId=&type=RECEIPT|PAYMENT&customerId=&supplierId=&invoiceId=&q=
@@ -58,6 +58,7 @@ export async function GET(req: Request) {
 //   invoiceId, amount, mode?, date?, reference?, notes?, userName? }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'payments')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 

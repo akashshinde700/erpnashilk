@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 
 interface SoLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
@@ -69,6 +69,7 @@ export async function GET(req: Request) {
 // POST /api/sales-orders  { companyId, quotationId?, customerId, orderDate?, deliveryDate?, notes?, items: [...], status? ('DRAFT'|'CONFIRMED', default CONFIRMED) }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'sales-orders')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 

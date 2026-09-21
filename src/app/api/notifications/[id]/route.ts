@@ -1,11 +1,12 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, ok } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, getActor, handleError, ok } from '@/lib/erp-helpers'
 
 type Params = { params: Promise<{ id: string }> }
 
 // PATCH /api/notifications/[id] { companyId, read?: boolean } → mark read (default) / unread
 export async function PATCH(req: Request, { params }: Params) {
   try {
+    if (!getActor(req)) throw new ApiError('Unauthorized — sign in to continue', 401)
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body?.companyId)

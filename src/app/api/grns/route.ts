@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, r2,
+  ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, r2, requireWrite,
 } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 
@@ -66,6 +66,7 @@ export async function GET(req: Request) {
 // ============================== POST /api/grns ==============================
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'grns')
     const body = await req.json()
     const companyId = await companyRequired(req, body.companyId)
     if (!body.poId) throw new ApiError('poId is required', 400)

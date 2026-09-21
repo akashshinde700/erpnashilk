@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // DeliveryChallanItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -45,6 +45,7 @@ export async function GET(req: Request) {
 // POST /api/deliveries  { companyId, salesOrderId, warehouseId, date?, vehicleNo?, transporter?, notes?, lines: [{salesOrderItemId, itemId?, qty}] }
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'deliveries')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 

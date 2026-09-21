@@ -1,12 +1,13 @@
 'use client'
 
 import * as React from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ITEM_TYPES, ITEM_TYPE_LABEL, UOMS } from '@/lib/erp-constants'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
+import ImportDialog from '@/components/erp/import-dialog'
 import {
   ConfirmAction,
   DataTable,
@@ -97,6 +98,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
   const rows = data?.items ?? []
 
   const [open, setOpen] = React.useState(false)
+  const [importOpen, setImportOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<ItemRow | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [form, setForm] = React.useState<FormState>(emptyForm)
@@ -241,9 +243,14 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         title="Items"
         description="Materials, finished goods and services master"
         actions={
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Item
-          </Button>
+          <>
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4 mr-1.5" /> Import CSV
+            </Button>
+            <Button size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4 mr-1.5" /> New Item
+            </Button>
+          </>
         }
       />
 
@@ -355,6 +362,20 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
           )}
         </div>
       </FormDialog>
+
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        companyId={companyId}
+        apiPath="/api/items/import"
+        entityLabel="items"
+        templateHeaders={['code', 'name', 'type', 'uom', 'standardCost', 'sellPrice', 'reorderLevel', 'openingStock']}
+        templateSample={[
+          ['RM-STEEL-1', 'Steel Rod 10mm', 'RAW', 'KG', '120', '185', '50', '100'],
+          ['FG-MOTOR-2', 'Motor Assembly 5HP', 'FINISHED', 'NOS', '9500', '12500', '10', '5'],
+        ]}
+        onImported={() => void refetch()}
+      />
     </div>
   )
 }

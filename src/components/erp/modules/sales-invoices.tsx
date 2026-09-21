@@ -10,6 +10,7 @@ import {
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { PAYMENT_MODES, fmtMoney } from '@/lib/erp-constants'
+import { amountInWords } from '@/lib/number-to-words'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
 interface ItemRow { id: string; code?: string | null; name?: string | null; sellingPrice?: number | null; gstRate?: number | null; hsn?: string | null }
@@ -17,12 +18,12 @@ interface InvItem { id: string; itemId: string; hsn?: string | null; qty: number
 interface InvoiceRow {
   id: string; number: string; date: string; dueDate?: string | null; placeOfSupply?: string | null
   customerId?: string | null; status: string; subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number
-  grandTotal: number; paidAmount: number; irn?: string | null; notes?: string | null
+  grandTotal: number; paidAmount: number; irn?: string | null; ewayBillNo?: string | null; notes?: string | null
   salesOrderId?: string | null; salesOrder?: { number?: string | null } | null
-  customer?: { name?: string | null; gstin?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; addressLine?: string | null } | null
+  customer?: { name?: string | null; gstin?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; addressLine?: string | null } | null
   items?: InvItem[] | null
 }
-interface CompanyRow { id: string; name?: string | null; gstin?: string | null; addressLine?: string | null; city?: string | null; state?: string | null }
+interface CompanyRow { id: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null }
 interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
@@ -40,6 +41,13 @@ function computeTotals(lines: DraftLine[]) {
   return { subtotal: r2(subtotal), discount: r2(discount), cgst: r2(gst / 2), sgst: r2(gst / 2), grand: r2(subtotal - discount + gst) }
 }
 function emptyLine(): DraftLine { return { itemId: '', qty: 1, rate: 0, discountPct: 0, gstRate: 18 } }
+
+// Escape a value for interpolation into the print-window HTML.
+const esc = (v?: string | null) =>
+  (v ?? '').replace(/[&<>"]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'))
+// Join non-empty address parts with ', ' (raw — wrap the result in esc() before injecting).
+const joinAddr = (...parts: (string | null | undefined)[]) =>
+  parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
 
 export default function SalesInvoicesModule({ companyId }: { companyId: string }) {
   const list = useList<{ items: InvoiceRow[] }>(`/api/sales-invoices?companyId=${companyId}`)
@@ -142,51 +150,147 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
   }
 
   async function printInvoice(row: InvoiceRow) {
+    // Prefer the detail endpoint — it returns the full customer (phone/email/address),
+    // items with UOM and the seller company (PAN/state code) needed on a GST tax invoice.
+    let inv: InvoiceRow = row
     let seller: CompanyRow | undefined
     try {
-      const companies = await apiGet<{ items: CompanyRow[] }>('/api/companies')
-      seller = (companies.items ?? []).find((c) => c.id === companyId)
-    } catch { /* fall back to placeholder */ }
-    const lines2 = row.items ?? []
-    const interState = (row.igst || 0) > 0
+      const detail = await apiGet<InvoiceRow & { company?: CompanyRow }>(`/api/sales-invoices/${row.id}?companyId=${companyId}`)
+      if (detail) {
+        inv = { ...row, ...detail, customer: detail.customer ?? row.customer, items: detail.items ?? row.items }
+        seller = detail.company
+      }
+    } catch { /* fall back to the list row */ }
+    if (!seller) {
+      try {
+        const companies = await apiGet<{ companies?: CompanyRow[]; items?: CompanyRow[] }>('/api/companies')
+        seller = (companies.companies ?? companies.items ?? []).find((c) => c.id === companyId)
+      } catch { /* fall back to placeholders below */ }
+    }
+
+    const cust = inv.customer
+    const lines2 = inv.items ?? []
+    const interState = (inv.igst || 0) > 0
+    const sellerName = seller?.name || 'Acme Precision Manufacturing Pvt Ltd'
+    // PAN = characters 3-12 of the GSTIN (when PAN itself is not stored)
+    const sellerPan = seller?.pan || (seller?.gstin && seller.gstin.length >= 12 ? seller.gstin.slice(2, 12) : '')
+    const sellerStateCode = seller?.stateCode || (seller?.gstin ? seller.gstin.slice(0, 2) : '')
+    const buyerStateCode = cust?.stateCode || (cust?.gstin ? cust.gstin.slice(0, 2) : '')
+    const buyerContact = [cust?.phone, cust?.email].filter((x): x is string => !!x && x.trim() !== '').join(' · ')
+    const qtySum = r2(lines2.reduce((s, it) => s + (it.qty || 0), 0))
+    const taxableSum = r2(lines2.reduce((s, it) => s + (it.lineTotal || 0), 0))
+    const balance = r2((inv.grandTotal || 0) - (inv.paidAmount || 0))
+
     const html = `
-      <div class="head">
-        <div><h1>${seller?.name || 'Acme Precision Manufacturing Pvt Ltd'}</h1>
-          <div class="muted">${seller?.addressLine || ''}${seller?.city ? ', ' + seller.city : ''}${seller?.state ? ', ' + seller.state : ''}</div>
-          <div class="muted">${seller?.gstin ? 'GSTIN: ' + seller.gstin : ''}</div></div>
-        <div style="text-align:right">
-          <h1 style="font-size:16px">TAX INVOICE</h1>
-          <div class="muted">No: ${row.number}</div>
-          <div class="muted">Date: ${new Date(row.date).toLocaleDateString('en-IN')}</div>
-          ${row.dueDate ? `<div class="muted">Due: ${new Date(row.dueDate).toLocaleDateString('en-IN')}</div>` : ''}
-          ${row.irn ? `<div class="muted">IRN: ${row.irn}</div>` : ''}
-          <span class="badge">${row.status}</span></div>
-      </div>
-      <table style="margin-top:10px"><tr>
-        <td><strong>Buyer (Billed to)</strong><br/>${row.customer?.name || '—'}<br/>
-          <span class="muted">${row.customer?.addressLine || ''}${row.customer?.city ? ', ' + row.customer.city : ''}</span><br/>
-          <span class="muted">${row.customer?.gstin ? 'GSTIN: ' + row.customer.gstin : ''} ${row.placeOfSupply ? '· Place of supply: ' + row.placeOfSupply : ''}</span></td>
-        <td><strong>Against SO:</strong> ${row.salesOrder?.number || '—'}</td>
-      </tr></table>
-      <table>
-        <thead><tr><th>#</th><th>Item</th><th>HSN</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Taxable</th><th class="num">GST %</th><th class="num">Amount</th></tr></thead>
-        <tbody>${lines2.map((it, i) => {
-          const gross = it.qty * it.rate
-          const taxable = gross - gross * ((it.discountPct || 0) / 100)
-          return `<tr><td>${i + 1}</td><td>${it.item?.name || it.itemId}</td><td>${it.hsn || '—'}</td><td class="num">${it.qty}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${fmtMoney(taxable)}</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`
-        }).join('')}</tbody>
-      </table>
-      <table class="totals" style="width:300px;margin-left:auto">
-        <tr><td>Subtotal</td><td class="num">${fmtMoney(row.subtotal)}</td></tr>
-        <tr><td>Discount</td><td class="num">- ${fmtMoney(row.discountTotal)}</td></tr>
-        ${interState
-          ? `<tr><td>IGST</td><td class="num">${fmtMoney(row.igst)}</td></tr>`
-          : `<tr><td>CGST</td><td class="num">${fmtMoney(row.cgst)}</td></tr><tr><td>SGST</td><td class="num">${fmtMoney(row.sgst)}</td></tr>`}
-        <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(row.grandTotal)}</td></tr>
-        <tr><td>Paid</td><td class="num">${fmtMoney(row.paidAmount)}</td></tr>
-      </table>
-      ${row.notes ? `<p class="muted">Notes: ${row.notes}</p>` : ''}
-      <p class="muted">Subject to jurisdiction. Goods once sold will not be taken back. E&OE.</p>`
+      <style>
+        .gst-inv { border: 1.5px solid #333; }
+        .gst-inv table { margin-top: 0; }
+        .gst-inv th, .gst-inv td { border-color: #444; }
+        .gst-inv .grid td { vertical-align: top; padding: 8px 10px; }
+        .gst-inv .bare td { border: none; padding: 5px 10px; vertical-align: top; }
+        .gst-inv .sec { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+        .gst-inv .title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: 4px; padding: 7px 10px; border-bottom: 1.5px solid #333; }
+        .gst-inv .words { font-weight: 700; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+        .gst-inv .bankbox { border: 1px solid #444; padding: 8px 10px; font-size: 11px; line-height: 1.7; }
+        .gst-inv .terms { font-size: 10.5px; line-height: 1.7; color: #444; }
+        .gst-inv .signline { border-top: 1px solid #333; margin-top: 72px; padding-top: 5px; font-size: 11px; text-align: center; }
+        .gst-inv .footer { border-top: 1.5px solid #333; padding: 6px 10px; font-size: 10px; color: #444; text-align: center; line-height: 1.6; }
+        .gst-inv .grand td { font-size: 15px; }
+      </style>
+      <div class="gst-inv">
+        <div class="title">TAX INVOICE</div>
+        <div class="head" style="padding:10px 12px">
+          <div>
+            <h1 style="font-size:17px">${esc(sellerName)}</h1>
+            <div class="muted">${esc(joinAddr(seller?.addressLine, seller?.city, seller?.state)) || '&nbsp;'}</div>
+            <div class="muted">${seller?.gstin ? `GSTIN: ${esc(seller.gstin)}` : ''}${sellerPan ? ` &nbsp;·&nbsp; PAN: ${esc(sellerPan)}` : ''}</div>
+            <div class="muted">${esc(joinAddr(seller?.phone, seller?.email))}</div>
+            <div class="muted">${esc(joinAddr(seller?.state, sellerStateCode ? `State Code: ${sellerStateCode}` : ''))}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px"><strong>Invoice No: ${esc(inv.number)}</strong></div>
+            <div class="muted">Date: ${new Date(inv.date).toLocaleDateString('en-IN')}</div>
+            ${inv.dueDate ? `<div class="muted">Due: ${new Date(inv.dueDate).toLocaleDateString('en-IN')}</div>` : ''}
+            ${inv.irn ? `<div class="muted" style="max-width:280px;word-break:break-all">IRN: ${esc(inv.irn)}</div>` : ''}
+            ${inv.ewayBillNo ? `<div class="muted">E-Way Bill No: ${esc(inv.ewayBillNo)}</div>` : ''}
+            <span class="badge">${esc(inv.status)}</span>
+          </div>
+        </div>
+        <table class="grid"><tr>
+          <td style="width:58%">
+            <div class="sec">Buyer (Bill To)</div>
+            <strong style="font-size:13px">${esc(cust?.name || '—')}</strong>
+            ${cust?.contactPerson ? `<div class="muted">Attn: ${esc(cust.contactPerson)}</div>` : ''}
+            <div class="muted">${esc(joinAddr(cust?.addressLine, cust?.city)) || '&nbsp;'}</div>
+            <div class="muted">${cust?.gstin ? `GSTIN: ${esc(cust.gstin)}` : ''}</div>
+            <div class="muted">${esc(joinAddr(cust?.state, buyerStateCode ? `State Code: ${buyerStateCode}` : ''))}</div>
+            ${buyerContact ? `<div class="muted">${esc(buyerContact)}</div>` : ''}
+            ${inv.placeOfSupply ? `<div class="muted">Place of Supply: ${esc(inv.placeOfSupply)}</div>` : ''}
+          </td>
+          <td style="width:42%">
+            <div class="sec">Invoice Details</div>
+            <table class="bare">
+              <tr><td class="muted">Against Sales Order</td><td style="text-align:right"><strong>${esc(inv.salesOrder?.number || '—')}</strong></td></tr>
+              <tr><td class="muted">Supply Type</td><td style="text-align:right">${interState ? 'Inter-State (IGST)' : 'Intra-State (CGST + SGST)'}</td></tr>
+              <tr><td class="muted">Payment Due</td><td style="text-align:right">${inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('en-IN') : '—'}</td></tr>
+              <tr><td class="muted">E-Invoice (IRN)</td><td style="text-align:right">${inv.irn ? 'Registered' : '—'}</td></tr>
+            </table>
+          </td>
+        </tr></table>
+        <table>
+          <thead><tr><th style="width:26px">#</th><th>Item</th><th style="width:70px">HSN</th><th class="num" style="width:70px">Qty</th><th class="num" style="width:85px">Rate</th><th class="num" style="width:52px">Disc %</th><th class="num" style="width:90px">Taxable</th><th class="num" style="width:52px">GST %</th><th class="num" style="width:95px">Amount</th></tr></thead>
+          <tbody>${lines2.map((it, i) => {
+            const gross = it.qty * it.rate
+            const taxable = gross - gross * ((it.discountPct || 0) / 100)
+            return `<tr><td>${i + 1}</td><td>${esc(it.item?.name || it.itemId)}${it.item?.code ? ` <span class="muted">(${esc(it.item.code)})</span>` : ''}</td><td>${esc(it.hsn || '—')}</td><td class="num">${it.qty}${it.item?.uom ? ` ${esc(it.item.uom)}` : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.discountPct || 0}</td><td class="num">${fmtMoney(taxable)}</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`
+          }).join('')}</tbody>
+          <tfoot><tr style="background:#f4f4f5;font-weight:600"><td colspan="3" style="text-align:right">Total</td><td class="num">${qtySum}</td><td></td><td></td><td class="num">${fmtMoney(taxableSum)}</td><td></td><td class="num">${fmtMoney(taxableSum)}</td></tr></tfoot>
+        </table>
+        <table class="grid"><tr>
+          <td style="width:55%">
+            <div class="sec">Bank Details</div>
+            <div class="bankbox">
+              <strong>${esc(sellerName)}</strong><br/>
+              A/C No.: As per records<br/>
+              IFSC: As per records &nbsp;·&nbsp; UPI: As per records
+            </div>
+          </td>
+          <td style="width:45%">
+            <table class="totals" style="width:100%">
+              <tr><td>Subtotal</td><td class="num">${fmtMoney(inv.subtotal)}</td></tr>
+              <tr><td>Discount</td><td class="num">- ${fmtMoney(inv.discountTotal)}</td></tr>
+              ${interState
+                ? `<tr><td>IGST</td><td class="num">${fmtMoney(inv.igst)}</td></tr>`
+                : `<tr><td>CGST</td><td class="num">${fmtMoney(inv.cgst)}</td></tr><tr><td>SGST</td><td class="num">${fmtMoney(inv.sgst)}</td></tr>`}
+              <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(inv.grandTotal)}</td></tr>
+              <tr><td>Paid</td><td class="num">${fmtMoney(inv.paidAmount)}</td></tr>
+              <tr><td>Balance Due</td><td class="num">${fmtMoney(balance)}</td></tr>
+            </table>
+            <div style="margin-top:6px;font-size:13px"><strong>Total Invoice Value: ${fmtMoney(inv.grandTotal)}</strong></div>
+            <div class="words">Amount in words: Rupees ${amountInWords(inv.grandTotal)} Only</div>
+          </td>
+        </tr></table>
+        ${inv.notes ? `<div class="muted" style="padding:6px 10px;border-top:1px solid #444">Notes: ${esc(inv.notes)}</div>` : ''}
+        <table class="bare"><tr>
+          <td style="width:58%">
+            <div class="sec">Terms &amp; Conditions</div>
+            <div class="terms">
+              1. Subject to ${seller?.city ? esc(seller.city) + ' ' : ''}jurisdiction.<br/>
+              2. Interest @18% p.a. will be charged on overdue payments.<br/>
+              3. Delivery subject to realisation of payment.<br/>
+              4. Goods once sold will not be taken back. E&amp;OE.
+            </div>
+          </td>
+          <td style="width:42%;text-align:right">
+            <div style="font-weight:700;font-size:12px;text-align:left">For ${esc(sellerName)}</div>
+            <div class="signline">Authorised Signatory</div>
+          </td>
+        </tr></table>
+        <div class="footer">
+          This is a computer-generated GST tax invoice.<br/>
+          <strong>Declaration:</strong> We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
+        </div>
+      </div>`
     printHtml(`Tax Invoice ${row.number}`, html)
   }
 

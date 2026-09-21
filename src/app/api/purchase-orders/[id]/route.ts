@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, computeGst, isInterState, logAudit, ApiError, r2,
+  ok, handleError, companyRequired, computeGst, isInterState, logAudit, ApiError, r2, requireWrite,
 } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
@@ -69,6 +69,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // ============================== PATCH /api/purchase-orders/[id] ==============================
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'purchase-orders')
     const { id } = await params
     const body = await req.json()
     const companyId = await companyRequired(req, body.companyId)
@@ -222,6 +223,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // ============================== DELETE /api/purchase-orders/[id] ==============================
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'purchase-orders')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as { companyId?: string; userName?: string })
     const companyId = await companyRequired(req, body.companyId)

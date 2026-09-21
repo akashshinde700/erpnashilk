@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 // GET /api/payments/[id]?companyId=
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -34,6 +34,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // DELETE /api/payments/[id]?companyId=  — void a payment: reverse invoice paidAmount/status, delete record
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'payments')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body?.companyId)

@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
 import { ROLES } from '@/lib/erp-constants'
 
 // ============================== GET /api/users/[id] ==============================
@@ -19,6 +19,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // ============================== PATCH /api/users/[id] — name/role/phone/active ==============================
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'users')
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
@@ -56,6 +57,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // ============================== DELETE /api/users/[id] ==============================
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireWrite(req, 'users')
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)

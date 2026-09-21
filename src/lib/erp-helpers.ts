@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { canAccessModule } from '@/lib/erp-constants'
 
 // ============ Consistent API responses ============
 
@@ -34,6 +35,45 @@ export class ApiError extends Error {
     super(message)
     this.status = status
   }
+}
+
+// ============ Request identity + server-side role guard ============
+// The client api() helper (use-api.ts) attaches x-erp-user-id / x-erp-user-name /
+// x-erp-role headers from the stored session. Middleware rejects anonymous calls;
+// requireWrite() additionally enforces role-based WRITE access per module.
+
+export interface RequestActor {
+  userId: string
+  userName: string
+  role: string
+}
+
+export function getActor(req: Request): RequestActor | null {
+  const userId = req.headers.get('x-erp-user-id') || ''
+  const role = req.headers.get('x-erp-role') || ''
+  if (!userId || !role) return null
+  const rawName = req.headers.get('x-erp-user-name') || ''
+  let userName = rawName
+  try { userName = rawName ? decodeURIComponent(rawName) : 'system' } catch { /* keep raw */ }
+  return { userId, userName, role }
+}
+
+/** Entities only Tenant Admin / Management / Super Admin may modify. */
+const WRITE_ADMIN_ONLY = new Set(['users', 'companies', 'company-setup', 'settings'])
+
+/**
+ * Enforce role-based write access for a mutating endpoint.
+ * moduleKey is the registry module key (e.g. 'items', 'sales-orders').
+ * Throws 401 (no identity) / 403 (role lacks access) — caught by handleError().
+ */
+export function requireWrite(req: Request, moduleKey: string): RequestActor {
+  const actor = getActor(req)
+  if (!actor) throw new ApiError('Unauthorized — sign in to continue', 401)
+  const allowed = WRITE_ADMIN_ONLY.has(moduleKey)
+    ? ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN'].includes(actor.role)
+    : canAccessModule(actor.role, moduleKey)
+  if (!allowed) throw new ApiError(`Your role is not allowed to modify ${moduleKey}`, 403)
+  return actor
 }
 
 export function handleError(e: unknown) {

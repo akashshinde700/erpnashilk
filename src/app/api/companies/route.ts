@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, handleError, logAudit, ok } from '@/lib/erp-helpers'
+import { requireWrite, ApiError, handleError, logAudit, ok } from '@/lib/erp-helpers'
 import { DEMO_PASSWORD, hashPassword } from '@/lib/password'
 
 const clean = (v: unknown): string | null => {
@@ -56,6 +56,7 @@ export async function GET() {
 // POST /api/companies — create a tenant (company + 3 default warehouses + optional TENANT_ADMIN user)
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'companies')
     const body = await req.json().catch(() => ({}))
     const name = clean(body?.name)
     if (!name) throw new ApiError('Company name is required', 400)

@@ -1,11 +1,12 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, ok, r2 } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, handleError, logAudit, ok, r2, requireWrite } from '@/lib/erp-helpers'
 
 type Params = { params: Promise<{ id: string }> }
 
 // PATCH /api/expenses/[id] { companyId, ...editable fields, userName? }
 export async function PATCH(req: Request, { params }: Params) {
   try {
+    requireWrite(req, 'expenses')
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body?.companyId)
@@ -55,6 +56,7 @@ export async function PATCH(req: Request, { params }: Params) {
 // DELETE /api/expenses/[id]?companyId= (companyId may also arrive in a JSON body)
 export async function DELETE(req: Request, { params }: Params) {
   try {
+    requireWrite(req, 'expenses')
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body?.companyId)

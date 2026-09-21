@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 interface InvLine { soItemId: string | null; itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
@@ -51,6 +51,7 @@ export async function GET(req: Request) {
 // - salesOrderId without lines → auto-build lines from SO items with remaining (qty - invoicedQty)
 export async function POST(req: Request) {
   try {
+    requireWrite(req, 'sales-invoices')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 
