@@ -11,7 +11,7 @@ type HelperTx = Prisma.TransactionClient & Parameters<typeof logAudit>[0]
 async function attachItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
   const ids = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const items = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
+    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, hsn: true } })
     : []
   const map = new Map(items.map((i) => [i.id, i]))
   return docs.map((d) => ({ ...d, items: d.items.map((i) => ({ ...i, item: map.get(i.itemId) || null })) }))
@@ -59,7 +59,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const { id } = await params
     const companyId = await companyRequired(req)
     const po = await findPo(id, companyId)
-    const [row] = await attachItemInfo(companyId, [po])
+    // Purchaser (our company) block for the PO print — PurchaseOrder has no company
+    // relation in the schema, so fetch + attach via JS (mirrors sales-invoices detail).
+    const company = await db.company.findUnique({
+      where: { id: companyId },
+      select: { name: true, gstin: true, pan: true, addressLine: true, city: true, state: true, stateCode: true, phone: true, email: true },
+    })
+    const [row] = await attachItemInfo(companyId, [{ ...po, company }])
     return ok(row)
   } catch (e) {
     return handleError(e)

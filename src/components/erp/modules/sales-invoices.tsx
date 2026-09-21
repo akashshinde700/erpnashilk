@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { BadgeIndianRupee, Plus, Printer, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
+  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { PAYMENT_MODES, fmtMoney } from '@/lib/erp-constants'
@@ -23,7 +23,7 @@ interface InvoiceRow {
   customer?: { name?: string | null; gstin?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; addressLine?: string | null } | null
   items?: InvItem[] | null
 }
-interface CompanyRow { id: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null }
+interface CompanyRow { id: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null; bankAccountName?: string | null; bankAccountNumber?: string | null; bankIfsc?: string | null; bankUpiId?: string | null }
 interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
@@ -50,6 +50,7 @@ const joinAddr = (...parts: (string | null | undefined)[]) =>
   parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
 
 export default function SalesInvoicesModule({ companyId }: { companyId: string }) {
+  const highlightId = useRowHighlight('sales-invoices')
   const list = useList<{ items: InvoiceRow[] }>(`/api/sales-invoices?companyId=${companyId}`)
   const customers = useList<{ items: PartyRow[] }>(`/api/customers?companyId=${companyId}`)
   const items = useList<{ items: ItemRow[] }>(`/api/items?companyId=${companyId}`)
@@ -181,6 +182,20 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     const taxableSum = r2(lines2.reduce((s, it) => s + (it.lineTotal || 0), 0))
     const balance = r2((inv.grandTotal || 0) - (inv.paidAmount || 0))
 
+    // Bank details box — real rows when any bank field is stored on the company,
+    // otherwise keep the 'As per records' placeholder so the box is never empty.
+    const bankName = (seller?.bankAccountName || '').trim()
+    const bankAcctNo = (seller?.bankAccountNumber || '').trim()
+    const bankIfsc = (seller?.bankIfsc || '').trim().toUpperCase()
+    const bankUpi = (seller?.bankUpiId || '').trim()
+    const hasBankDetails = !!(bankName || bankAcctNo || bankIfsc || bankUpi)
+    const bankRowsHtml = [
+      `A/C Name: ${esc(bankName || sellerName)}`,
+      bankAcctNo ? `A/C No.: ${esc(bankAcctNo)}` : '',
+      bankIfsc ? `IFSC: ${esc(bankIfsc)}` : '',
+      bankUpi ? `UPI: ${esc(bankUpi)}` : '',
+    ].filter(Boolean).join('<br/>')
+
     const html = `
       <style>
         .gst-inv { border: 1.5px solid #333; }
@@ -250,9 +265,9 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           <td style="width:55%">
             <div class="sec">Bank Details</div>
             <div class="bankbox">
-              <strong>${esc(sellerName)}</strong><br/>
-              A/C No.: As per records<br/>
-              IFSC: As per records &nbsp;·&nbsp; UPI: As per records
+              ${hasBankDetails
+                ? bankRowsHtml
+                : `<strong>${esc(sellerName)}</strong><br/>A/C No.: As per records<br/>IFSC: As per records &nbsp;·&nbsp; UPI: As per records`}
             </div>
           </td>
           <td style="width:45%">
@@ -334,7 +349,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
         description="GST tax invoices, payments received and e-invoicing"
         actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Invoice</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search invoices…" />
+      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search invoices…" highlightId={highlightId} />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide title="New Sales Invoice" submitLabel="Create Invoice"

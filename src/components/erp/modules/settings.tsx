@@ -20,12 +20,17 @@ interface CompanyProfile {
   phone?: string | null
   email?: string | null
   logoText?: string | null
+  bankAccountName?: string | null
+  bankAccountNumber?: string | null
+  bankIfsc?: string | null
+  bankUpiId?: string | null
 }
 
 type ProfileForm = { [K in keyof Omit<CompanyProfile, 'id'>]: string }
 
 const EMPTY_PROFILE: ProfileForm = {
   name: '', gstin: '', pan: '', addressLine: '', city: '', state: '', stateCode: '', phone: '', email: '', logoText: '',
+  bankAccountName: '', bankAccountNumber: '', bankIfsc: '', bankUpiId: '',
 }
 
 interface SeqRow {
@@ -68,6 +73,10 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
         phone: d.phone || '',
         email: d.email || '',
         logoText: d.logoText || '',
+        bankAccountName: d.bankAccountName || '',
+        bankAccountNumber: d.bankAccountNumber || '',
+        bankIfsc: d.bankIfsc || '',
+        bankUpiId: d.bankUpiId || '',
       })
     }
   }, [settings.data])
@@ -198,6 +207,51 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
           </div>
           <p className="text-xs text-muted-foreground mt-4">
             State code drives the GST split — same-state parties get CGST + SGST, other states get IGST.
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Bank Details"
+          actions={
+            <Button size="sm" onClick={() => void saveProfile()} disabled={saving}>
+              <Save className="h-4 w-4 mr-1.5" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          }
+        >
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="Account Holder Name">
+              <TextInput
+                value={form.bankAccountName}
+                onChange={(e) => setForm((f) => ({ ...f, bankAccountName: e.target.value }))}
+                placeholder="Acme Precision Industries Pvt Ltd"
+              />
+            </Field>
+            <Field label="Account Number">
+              <TextInput
+                inputMode="numeric"
+                value={form.bankAccountNumber}
+                onChange={(e) => setForm((f) => ({ ...f, bankAccountNumber: e.target.value }))}
+                placeholder="50200076543210"
+              />
+            </Field>
+            <Field label="IFSC Code">
+              <TextInput
+                value={form.bankIfsc}
+                onChange={(e) => setForm((f) => ({ ...f, bankIfsc: e.target.value.toUpperCase() }))}
+                placeholder="HDFC0001234"
+              />
+            </Field>
+            <Field label="UPI ID">
+              <TextInput
+                value={form.bankUpiId}
+                onChange={(e) => setForm((f) => ({ ...f, bankUpiId: e.target.value }))}
+                placeholder="acmeprecision@hdfcbank"
+              />
+            </Field>
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">
+            Shown on printed GST invoices.
           </p>
         </SectionCard>
 

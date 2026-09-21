@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite } from '@/lib/erp-helpers'
 
-const EDITABLE = ['name', 'gstin', 'pan', 'addressLine', 'city', 'state', 'stateCode', 'phone', 'email', 'logoText'] as const
+const EDITABLE = ['name', 'gstin', 'pan', 'addressLine', 'city', 'state', 'stateCode', 'phone', 'email', 'logoText', 'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankUpiId'] as const
 type EditableField = (typeof EDITABLE)[number]
 
 const PROFILE_SELECT = {
@@ -16,6 +16,10 @@ const PROFILE_SELECT = {
   phone: true,
   email: true,
   logoText: true,
+  bankAccountName: true,
+  bankAccountNumber: true,
+  bankIfsc: true,
+  bankUpiId: true,
 } as const
 
 // GET /api/settings?companyId= → company profile (singleton for tenant)

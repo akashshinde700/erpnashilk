@@ -1,18 +1,33 @@
 import { db } from '@/lib/db'
 import { ApiError, companyRequired, getActor, handleError, ok } from '@/lib/erp-helpers'
 
-// GET /api/notifications?companyId=&unread=1 → { items, unreadCount } (createdAt desc, latest 30)
+// GET /api/notifications?companyId=&status=all|unread|read (&unread=1 legacy) &q=&take=
+// → { items, unreadCount } (createdAt desc, take default 50 · cap 200; unreadCount always = unread total for the company).
+// q is a case-insensitive contains on title/message, filtered JS-side (SQLite has no case-insensitive contains).
 export async function GET(req: Request) {
   try {
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
-    const unreadOnly = searchParams.get('unread') === '1'
+    const statusParam = (searchParams.get('status') || '').toLowerCase()
+    const status = statusParam === 'unread' || statusParam === 'read'
+      ? statusParam
+      : searchParams.get('unread') === '1' ? 'unread' : 'all' // legacy unread=1 still honored
+    const q = (searchParams.get('q') || '').trim().toLowerCase()
+    const parsed = Number.parseInt(searchParams.get('take') || '', 10)
+    const take = Math.min(Number.isFinite(parsed) && parsed > 0 ? parsed : 50, 200)
+
     const unreadCount = await db.notification.count({ where: { companyId, read: false } })
-    const items = await db.notification.findMany({
-      where: { companyId, ...(unreadOnly ? { read: false } : {}) },
+    const rows = await db.notification.findMany({
+      where: { companyId, ...(status === 'all' ? {} : { read: status === 'read' }) },
       orderBy: { createdAt: 'desc' },
-      take: 30,
+      // when searching, fetch a broader window first, then filter in JS and slice
+      take: q ? 1000 : take,
     })
+    const items = q
+      ? rows
+          .filter((r) => [r.title, r.message].some((v) => !!v && v.toLowerCase().includes(q)))
+          .slice(0, take)
+      : rows
     return ok({ items, unreadCount })
   } catch (e) {
     return handleError(e)

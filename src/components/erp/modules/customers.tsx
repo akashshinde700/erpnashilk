@@ -17,6 +17,7 @@ import {
   SelectInput,
   StatusBadge,
   TextInput,
+  useRowHighlight,
 } from '@/components/erp/kit'
 import type { Column } from '@/components/erp/kit'
 
@@ -77,6 +78,7 @@ const emptyForm: FormState = {
 }
 
 export default function CustomersModule({ companyId }: { companyId: string }) {
+  const highlightId = useRowHighlight('customers')
   const { data, loading, refetch } = useList<CustomersResponse>(`/api/customers?companyId=${companyId}`)
   const rows = data?.items ?? []
 
@@ -220,6 +222,7 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         columns={columns}
         rows={rows}
         loading={loading}
+        highlightId={highlightId}
         searchPlaceholder="Search customers…"
         emptyText="No customers yet"
         csvExport={{

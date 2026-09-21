@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Package, Users, Truck, Building2, Wrench, Layers3, UserCog,
   ClipboardList, FileText, ShoppingCart, Boxes, Warehouse, ArrowLeftRight, SlidersHorizontal,
   Factory, ClipboardCheck, Award, ReceiptIndianRupee, Wallet, Landmark, Percent,
-  ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck, BarChart3,
+  ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck, BarChart3, Bell,
 } from 'lucide-react'
 
 import DashboardModule from '@/components/erp/modules/dashboard'
@@ -40,6 +40,7 @@ import ReceivablesModule from '@/components/erp/modules/receivables'
 import PayablesModule from '@/components/erp/modules/payables'
 import GstReportModule from '@/components/erp/modules/gst-report'
 import AuditLogModule from '@/components/erp/modules/audit-log'
+import NotificationsModule from '@/components/erp/modules/notifications'
 import SettingsModule from '@/components/erp/modules/settings'
 import ReportsModule from '@/components/erp/modules/reports'
 import CompanySetupModule from '@/components/erp/modules/company-setup'
@@ -100,6 +101,7 @@ export const MODULES: ErpModuleDef[] = [
   // Admin
   { key: 'company-setup', label: 'Company Setup', icon: Building2, group: 'Admin', description: 'Create & manage tenant companies', component: CompanySetupModule },
   { key: 'audit-log', label: 'Audit Log', icon: ScrollText, group: 'Admin', component: AuditLogModule },
+  { key: 'notifications', label: 'Notifications', icon: Bell, group: 'Admin', description: 'View, filter & manage all notifications', component: NotificationsModule },
   { key: 'settings', label: 'Settings', icon: Settings, group: 'Admin', description: 'Company profile, numbering, notifications', component: SettingsModule },
 ]
 

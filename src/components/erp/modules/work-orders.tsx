@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   ConfirmAction, DataTable, DateCell, Field, FormDialog, NumberInput, PageHeader, Qty, SelectInput, StatCard,
-  StatusBadge, TextInput, type Column,
+  StatusBadge, TextInput, type Column, useRowHighlight,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtDate, fmtNum } from '@/lib/erp-constants'
@@ -40,6 +40,7 @@ interface WoRow {
 interface WoDetail extends WoRow { bom?: { id: string; code?: string; items?: BomComponent[] } | null }
 
 export default function WorkOrdersModule({ companyId }: { companyId: string }) {
+  const highlightId = useRowHighlight('work-orders')
   const list = useList<{ items?: WoRow[] } | WoRow[]>(`/api/work-orders?companyId=${companyId}`)
   const items = useList<{ items?: ItemRow[] } | ItemRow[]>(`/api/items?companyId=${companyId}`)
   const boms = useList<{ items?: BomRow[] } | BomRow[]>(`/api/boms?companyId=${companyId}`)
@@ -195,7 +196,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
         <StatCard title="Total Planned Qty" value={fmtNum(stats.totalQty)} sub="Across all WOs" />
       </div>
 
-      <DataTable columns={columns} rows={woRows} loading={list.loading} searchPlaceholder="Search work orders…" />
+      <DataTable columns={columns} rows={woRows} loading={list.loading} searchPlaceholder="Search work orders…" highlightId={highlightId} />
 
       {/* ---- Create dialog ---- */}
       <FormDialog

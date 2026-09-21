@@ -257,6 +257,8 @@ export default function ErpApp() {
   function goToModule(key: string) {
     setActiveKey(key)
     setPaletteOpen(false)
+    setPaletteQuery('') // programmatic close bypasses onOpenChange — clear stale query/results
+    setSearchResults([])
     setNavOpen(false)
     setRecents((prev) => {
       const nx = [key, ...prev.filter((k) => k !== key)].slice(0, 6)
@@ -625,9 +627,19 @@ export default function ErpApp() {
             <PopoverContent align="end" className="w-80 p-0">
               <div className="flex items-center justify-between px-3 py-2 border-b">
                 <p className="text-sm font-medium">Notifications</p>
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void markAllRead()}>
-                  <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-teal-700 hover:text-teal-800 hover:bg-teal-50"
+                    onClick={() => { setNotifOpen(false); goToModule('notifications') }}
+                  >
+                    View all
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void markAllRead()}>
+                    <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
+                  </Button>
+                </div>
               </div>
               <ScrollArea className="max-h-80">
                 {(notifications.data?.items || []).length === 0 ? (
@@ -734,10 +746,10 @@ export default function ErpApp() {
         <CommandInput value={paletteQuery} onValueChange={setPaletteQuery} placeholder="Search modules, items, customers, orders…" />
         <CommandList>
           {searching && <div className="py-6 text-center text-sm text-muted-foreground">Searching…</div>}
-          {!searching && paletteQuery.trim().length >= 2 && searchResults.length === 0 && (
-            <CommandEmpty>No results found.</CommandEmpty>
-          )}
-          {paletteQuery.trim().length < 2 && (
+          {!searching && <CommandEmpty>No results found.</CommandEmpty>}
+          {/* Favorites / Recents / Modules / Actions — always rendered; cmdk filters by query,
+              so typing a module name (e.g. “settings”) still jumps straight to it. */}
+          {(
             <>
               {favModules.length > 0 && (
                 <CommandGroup heading="Favorites">
@@ -795,7 +807,18 @@ export default function ErpApp() {
                 <CommandSeparator />
                 <CommandGroup heading={mod ? `${mod.label}` : moduleKey}>
                   {rows.map((r) => (
-                    <CommandItem key={`${r.type}-${r.id}`} value={`${r.type}-${r.id}-${r.label}`} onSelect={() => goToModule(r.module)}>
+                    <CommandItem
+                      key={`${r.type}-${r.id}`}
+                      value={`${r.type}-${r.id}-${r.label}`}
+                      onSelect={() => {
+                        // deep-link: target module scrolls to + highlights this record's row
+                        try {
+                          window.sessionStorage.setItem('erp_deep_link', JSON.stringify({ module: r.module, id: r.id, ts: Date.now() }))
+                          window.dispatchEvent(new CustomEvent('erp:deep-link', { detail: { module: r.module, id: r.id } }))
+                        } catch { /* ignore */ }
+                        goToModule(r.module)
+                      }}
+                    >
                       <Search className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
                       <span className="truncate">{r.label}</span>
                       {r.sub && <span className="ml-auto text-[10px] text-muted-foreground truncate max-w-[140px]">{r.sub}</span>}

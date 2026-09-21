@@ -19,6 +19,7 @@ import {
   SelectInput,
   StatusBadge,
   TextInput,
+  useRowHighlight,
 } from '@/components/erp/kit'
 import type { Column } from '@/components/erp/kit'
 
@@ -94,6 +95,7 @@ const emptyForm: FormState = {
 }
 
 export default function ItemsModule({ companyId }: { companyId: string }) {
+  const highlightId = useRowHighlight('items')
   const { data, loading, refetch } = useList<ItemsResponse>(`/api/items?companyId=${companyId}`)
   const rows = data?.items ?? []
 
@@ -258,6 +260,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         columns={columns}
         rows={rows}
         loading={loading}
+        highlightId={highlightId}
         searchPlaceholder="Search items…"
         emptyText="No items yet"
         csvExport={{

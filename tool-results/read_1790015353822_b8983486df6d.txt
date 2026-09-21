@@ -1,0 +1,451 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import * as React from 'react'
+     4→     4→import { toast } from 'sonner'
+     5→     5→import { Button } from '@/components/ui/button'
+     6→     6→import { BadgeIndianRupee, Plus, Printer, Trash2, X } from 'lucide-react'
+     7→     7→import {
+     8→     8→  Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
+     9→     9→  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
+    10→    10→} from '@/components/erp/kit'
+    11→    11→import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
+    12→    12→import { PAYMENT_MODES, fmtMoney } from '@/lib/erp-constants'
+    13→    13→import { amountInWords } from '@/lib/number-to-words'
+    14→    14→
+    15→    15→interface PartyRow { id: string; name?: string | null; code?: string | null }
+    16→    16→interface ItemRow { id: string; code?: string | null; name?: string | null; sellingPrice?: number | null; gstRate?: number | null; hsn?: string | null }
+    17→    17→interface InvItem { id: string; itemId: string; hsn?: string | null; qty: number; rate: number; discountPct?: number; gstRate: number; lineTotal: number; invoicedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }
+    18→    18→interface InvoiceRow {
+    19→    19→  id: string; number: string; date: string; dueDate?: string | null; placeOfSupply?: string | null
+    20→    20→  customerId?: string | null; status: string; subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number
+    21→    21→  grandTotal: number; paidAmount: number; irn?: string | null; ewayBillNo?: string | null; notes?: string | null
+    22→    22→  salesOrderId?: string | null; salesOrder?: { number?: string | null } | null
+    23→    23→  customer?: { name?: string | null; gstin?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; addressLine?: string | null } | null
+    24→    24→  items?: InvItem[] | null
+    25→    25→}
+    26→    26→interface CompanyRow { id: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null; bankAccountName?: string | null; bankAccountNumber?: string | null; bankIfsc?: string | null; bankUpiId?: string | null }
+    27→    27→interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
+    28→    28→
+    29→    29→const r2 = (n: number) => Math.round(n * 100) / 100
+    30→    30→const today = () => new Date().toISOString().slice(0, 10)
+    31→    31→const INVOICEABLE = ['CONFIRMED', 'READY', 'PARTIALLY_DISPATCHED', 'DISPATCHED']
+    32→    32→
+    33→    33→function computeTotals(lines: DraftLine[]) {
+    34→    34→  let subtotal = 0, discount = 0, gst = 0
+    35→    35→  for (const l of lines) {
+    36→    36→    const gross = l.qty * l.rate
+    37→    37→    const disc = gross * ((l.discountPct || 0) / 100)
+    38→    38→    const net = gross - disc
+    39→    39→    subtotal += gross; discount += disc; gst += net * ((l.gstRate || 0) / 100)
+    40→    40→  }
+    41→    41→  return { subtotal: r2(subtotal), discount: r2(discount), cgst: r2(gst / 2), sgst: r2(gst / 2), grand: r2(subtotal - discount + gst) }
+    42→    42→}
+    43→    43→function emptyLine(): DraftLine { return { itemId: '', qty: 1, rate: 0, discountPct: 0, gstRate: 18 } }
+    44→    44→
+    45→    45→// Escape a value for interpolation into the print-window HTML.
+    46→    46→const esc = (v?: string | null) =>
+    47→    47→  (v ?? '').replace(/[&<>"]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'))
+    48→    48→// Join non-empty address parts with ', ' (raw — wrap the result in esc() before injecting).
+    49→    49→const joinAddr = (...parts: (string | null | undefined)[]) =>
+    50→    50→  parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
+    51→    51→
+    52→    52→export default function SalesInvoicesModule({ companyId }: { companyId: string }) {
+    53→    53→  const highlightId = useRowHighlight('sales-invoices')
+    54→    54→  const list = useList<{ items: InvoiceRow[] }>(`/api/sales-invoices?companyId=${companyId}`)
+    55→    55→  const customers = useList<{ items: PartyRow[] }>(`/api/customers?companyId=${companyId}`)
+    56→    56→  const items = useList<{ items: ItemRow[] }>(`/api/items?companyId=${companyId}`)
+    57→    57→  const sos = useList<{ items: { id: string; number: string; status: string }[] }>(`/api/sales-orders?companyId=${companyId}`)
+    58→    58→
+    59→    59→  const [open, setOpen] = React.useState(false)
+    60→    60→  const [saving, setSaving] = React.useState(false)
+    61→    61→  const [mode, setMode] = React.useState('SO')
+    62→    62→  const [salesOrderId, setSalesOrderId] = React.useState('')
+    63→    63→  const [customerId, setCustomerId] = React.useState('')
+    64→    64→  const [date, setDate] = React.useState(today)
+    65→    65→  const [dueDate, setDueDate] = React.useState('')
+    66→    66→  const [placeOfSupply, setPlaceOfSupply] = React.useState('')
+    67→    67→  const [notes, setNotes] = React.useState('')
+    68→    68→  const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
+    69→    69→
+    70→    70→  const [payFor, setPayFor] = React.useState<InvoiceRow | null>(null)
+    71→    71→  const [payAmount, setPayAmount] = React.useState(0)
+    72→    72→  const [payMode, setPayMode] = React.useState('NEFT')
+    73→    73→  const [payDate, setPayDate] = React.useState(today)
+    74→    74→  const [payRef, setPayRef] = React.useState('')
+    75→    75→  const [paying, setPaying] = React.useState(false)
+    76→    76→
+    77→    77→  const rows = list.data?.items ?? []
+    78→    78→  const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.id }))
+    79→    79→  const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.id }))
+    80→    80→  const soOpts = (sos.data?.items ?? []).filter((s) => INVOICEABLE.includes(s.status)).map((s) => ({ value: s.id, label: `${s.number} (${s.status.replaceAll('_', ' ')})` }))
+    81→    81→
+    82→    82→  function resetForm() {
+    83→    83→    setMode('SO'); setSalesOrderId(''); setCustomerId(''); setDate(today()); setDueDate(''); setPlaceOfSupply(''); setNotes('')
+    84→    84→    setLines([emptyLine()])
+    85→    85→  }
+    86→    86→
+    87→    87→  async function pickSo(sid: string) {
+    88→    88→    setSalesOrderId(sid)
+    89→    89→    if (!sid) return
+    90→    90→    try {
+    91→    91→      const so = await apiGet<InvoiceRow & { customerId?: string }>(`/api/sales-orders/${sid}?companyId=${companyId}`)
+    92→    92→      if (so.customerId) setCustomerId(so.customerId)
+    93→    93→      const mapped = (so.items ?? [])
+    94→    94→        .filter((it) => it.qty - (it.invoicedQty ?? 0) > 0)
+    95→    95→        .map((it) => ({ itemId: it.itemId, qty: r2(it.qty - (it.invoicedQty ?? 0)), rate: it.rate, discountPct: it.discountPct ?? 0, gstRate: it.gstRate }))
+    96→    96→      setLines(mapped.length ? mapped : [emptyLine()])
+    97→    97→      toast.success(`Loaded ${mapped.length} pending line(s) from ${so.number}`)
+    98→    98→    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to load sales order') }
+    99→    99→  }
+   100→   100→
+   101→   101→  async function submit() {
+   102→   102→    if (mode === 'SO' && !salesOrderId) { toast.error('Select a sales order'); return }
+   103→   103→    if (mode === 'MANUAL' && !customerId) { toast.error('Select a customer'); return }
+   104→   104→    const valid = lines.filter((l) => l.itemId && l.qty > 0)
+   105→   105→    if (!valid.length) { toast.error('Add at least one line with item and qty'); return }
+   106→   106→    setSaving(true)
+   107→   107→    try {
+   108→   108→      await apiPost('/api/sales-invoices', {
+   109→   109→        companyId, salesOrderId: mode === 'SO' ? salesOrderId : undefined, customerId: customerId || undefined,
+   110→   110→        date, dueDate: dueDate || undefined, placeOfSupply: placeOfSupply || undefined, notes: notes || undefined,
+   111→   111→        items: valid,
+   112→   112→      })
+   113→   113→      toast.success('Sales invoice created')
+   114→   114→      setOpen(false); resetForm(); void list.refetch()
+   115→   115→    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to create invoice') } finally { setSaving(false) }
+   116→   116→  }
+   117→   117→
+   118→   118→  async function openPay(row: InvoiceRow) {
+   119→   119→    setPayFor(row); setPayAmount(r2((row.grandTotal || 0) - (row.paidAmount || 0)))
+   120→   120→    setPayMode('NEFT'); setPayDate(today()); setPayRef('')
+   121→   121→  }
+   122→   122→
+   123→   123→  async function submitPayment() {
+   124→   124→    if (!payFor) return
+   125→   125→    if (payAmount <= 0) { toast.error('Enter a valid amount'); return }
+   126→   126→    setPaying(true)
+   127→   127→    try {
+   128→   128→      await apiPost('/api/payments', {
+   129→   129→        companyId, type: 'RECEIPT', partyType: 'CUSTOMER', customerId: payFor.customerId,
+   130→   130→        invoiceType: 'SALES', invoiceId: payFor.id, amount: payAmount, mode: payMode, date: payDate,
+   131→   131→        reference: payRef || undefined, userName: 'Sales User',
+   132→   132→      })
+   133→   133→      toast.success(`Payment of ${fmtMoney(payAmount)} recorded`)
+   134→   134→      setPayFor(null); void list.refetch()
+   135→   135→    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to record payment') } finally { setPaying(false) }
+   136→   136→  }
+   137→   137→
+   138→   138→  async function generateIrn(row: InvoiceRow) {
+   139→   139→    try {
+   140→   140→      const res = await apiPatch<{ irn?: string }>(`/api/sales-invoices/${row.id}`, { action: 'generate-irn', companyId })
+   141→   141→      toast.success(`IRN generated: ${res?.irn || 'registered on e-invoice portal'}`)
+   142→   142→      void list.refetch()
+   143→   143→    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to generate IRN') }
+   144→   144→  }
+   145→   145→
+   146→   146→  async function cancelInvoice(row: InvoiceRow) {
+   147→   147→    try {
+   148→   148→      await apiPatch(`/api/sales-invoices/${row.id}`, { action: 'cancel', companyId })
+   149→   149→      toast.success(`Invoice ${row.number} cancelled`); void list.refetch()
+   150→   150→    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to cancel') }
+   151→   151→  }
+   152→   152→
+   153→   153→  async function printInvoice(row: InvoiceRow) {
+   154→   154→    // Prefer the detail endpoint — it returns the full customer (phone/email/address),
+   155→   155→    // items with UOM and the seller company (PAN/state code) needed on a GST tax invoice.
+   156→   156→    let inv: InvoiceRow = row
+   157→   157→    let seller: CompanyRow | undefined
+   158→   158→    try {
+   159→   159→      const detail = await apiGet<InvoiceRow & { company?: CompanyRow }>(`/api/sales-invoices/${row.id}?companyId=${companyId}`)
+   160→   160→      if (detail) {
+   161→   161→        inv = { ...row, ...detail, customer: detail.customer ?? row.customer, items: detail.items ?? row.items }
+   162→   162→        seller = detail.company
+   163→   163→      }
+   164→   164→    } catch { /* fall back to the list row */ }
+   165→   165→    if (!seller) {
+   166→   166→      try {
+   167→   167→        const companies = await apiGet<{ companies?: CompanyRow[]; items?: CompanyRow[] }>('/api/companies')
+   168→   168→        seller = (companies.companies ?? companies.items ?? []).find((c) => c.id === companyId)
+   169→   169→      } catch { /* fall back to placeholders below */ }
+   170→   170→    }
+   171→   171→
+   172→   172→    const cust = inv.customer
+   173→   173→    const lines2 = inv.items ?? []
+   174→   174→    const interState = (inv.igst || 0) > 0
+   175→   175→    const sellerName = seller?.name || 'Acme Precision Manufacturing Pvt Ltd'
+   176→   176→    // PAN = characters 3-12 of the GSTIN (when PAN itself is not stored)
+   177→   177→    const sellerPan = seller?.pan || (seller?.gstin && seller.gstin.length >= 12 ? seller.gstin.slice(2, 12) : '')
+   178→   178→    const sellerStateCode = seller?.stateCode || (seller?.gstin ? seller.gstin.slice(0, 2) : '')
+   179→   179→    const buyerStateCode = cust?.stateCode || (cust?.gstin ? cust.gstin.slice(0, 2) : '')
+   180→   180→    const buyerContact = [cust?.phone, cust?.email].filter((x): x is string => !!x && x.trim() !== '').join(' · ')
+   181→   181→    const qtySum = r2(lines2.reduce((s, it) => s + (it.qty || 0), 0))
+   182→   182→    const taxableSum = r2(lines2.reduce((s, it) => s + (it.lineTotal || 0), 0))
+   183→   183→    const balance = r2((inv.grandTotal || 0) - (inv.paidAmount || 0))
+   184→   184→
+   185→   185→    // Bank details box — real rows when any bank field is stored on the company,
+   186→   186→    // otherwise keep the 'As per records' placeholder so the box is never empty.
+   187→   187→    const bankName = (seller?.bankAccountName || '').trim()
+   188→   188→    const bankAcctNo = (seller?.bankAccountNumber || '').trim()
+   189→   189→    const bankIfsc = (seller?.bankIfsc || '').trim().toUpperCase()
+   190→   190→    const bankUpi = (seller?.bankUpiId || '').trim()
+   191→   191→    const hasBankDetails = !!(bankName || bankAcctNo || bankIfsc || bankUpi)
+   192→   192→    const bankRowsHtml = [
+   193→   193→      `A/C Name: ${esc(bankName || sellerName)}`,
+   194→   194→      bankAcctNo ? `A/C No.: ${esc(bankAcctNo)}` : '',
+   195→   195→      bankIfsc ? `IFSC: ${esc(bankIfsc)}` : '',
+   196→   196→      bankUpi ? `UPI: ${esc(bankUpi)}` : '',
+   197→   197→    ].filter(Boolean).join('<br/>')
+   198→   198→
+   199→   199→    const html = `
+   200→   200→      <style>
+   201→   201→        .gst-inv { border: 1.5px solid #333; }
+   202→   202→        .gst-inv table { margin-top: 0; }
+   203→   203→        .gst-inv th, .gst-inv td { border-color: #444; }
+   204→   204→        .gst-inv .grid td { vertical-align: top; padding: 8px 10px; }
+   205→   205→        .gst-inv .bare td { border: none; padding: 5px 10px; vertical-align: top; }
+   206→   206→        .gst-inv .sec { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+   207→   207→        .gst-inv .title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: 4px; padding: 7px 10px; border-bottom: 1.5px solid #333; }
+   208→   208→        .gst-inv .words { font-weight: 700; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+   209→   209→        .gst-inv .bankbox { border: 1px solid #444; padding: 8px 10px; font-size: 11px; line-height: 1.7; }
+   210→   210→        .gst-inv .terms { font-size: 10.5px; line-height: 1.7; color: #444; }
+   211→   211→        .gst-inv .signline { border-top: 1px solid #333; margin-top: 72px; padding-top: 5px; font-size: 11px; text-align: center; }
+   212→   212→        .gst-inv .footer { border-top: 1.5px solid #333; padding: 6px 10px; font-size: 10px; color: #444; text-align: center; line-height: 1.6; }
+   213→   213→        .gst-inv .grand td { font-size: 15px; }
+   214→   214→      </style>
+   215→   215→      <div class="gst-inv">
+   216→   216→        <div class="title">TAX INVOICE</div>
+   217→   217→        <div class="head" style="padding:10px 12px">
+   218→   218→          <div>
+   219→   219→            <h1 style="font-size:17px">${esc(sellerName)}</h1>
+   220→   220→            <div class="muted">${esc(joinAddr(seller?.addressLine, seller?.city, seller?.state)) || '&nbsp;'}</div>
+   221→   221→            <div class="muted">${seller?.gstin ? `GSTIN: ${esc(seller.gstin)}` : ''}${sellerPan ? ` &nbsp;·&nbsp; PAN: ${esc(sellerPan)}` : ''}</div>
+   222→   222→            <div class="muted">${esc(joinAddr(seller?.phone, seller?.email))}</div>
+   223→   223→            <div class="muted">${esc(joinAddr(seller?.state, sellerStateCode ? `State Code: ${sellerStateCode}` : ''))}</div>
+   224→   224→          </div>
+   225→   225→          <div style="text-align:right">
+   226→   226→            <div style="font-size:13px"><strong>Invoice No: ${esc(inv.number)}</strong></div>
+   227→   227→            <div class="muted">Date: ${new Date(inv.date).toLocaleDateString('en-IN')}</div>
+   228→   228→            ${inv.dueDate ? `<div class="muted">Due: ${new Date(inv.dueDate).toLocaleDateString('en-IN')}</div>` : ''}
+   229→   229→            ${inv.irn ? `<div class="muted" style="max-width:280px;word-break:break-all">IRN: ${esc(inv.irn)}</div>` : ''}
+   230→   230→            ${inv.ewayBillNo ? `<div class="muted">E-Way Bill No: ${esc(inv.ewayBillNo)}</div>` : ''}
+   231→   231→            <span class="badge">${esc(inv.status)}</span>
+   232→   232→          </div>
+   233→   233→        </div>
+   234→   234→        <table class="grid"><tr>
+   235→   235→          <td style="width:58%">
+   236→   236→            <div class="sec">Buyer (Bill To)</div>
+   237→   237→            <strong style="font-size:13px">${esc(cust?.name || '—')}</strong>
+   238→   238→            ${cust?.contactPerson ? `<div class="muted">Attn: ${esc(cust.contactPerson)}</div>` : ''}
+   239→   239→            <div class="muted">${esc(joinAddr(cust?.addressLine, cust?.city)) || '&nbsp;'}</div>
+   240→   240→            <div class="muted">${cust?.gstin ? `GSTIN: ${esc(cust.gstin)}` : ''}</div>
+   241→   241→            <div class="muted">${esc(joinAddr(cust?.state, buyerStateCode ? `State Code: ${buyerStateCode}` : ''))}</div>
+   242→   242→            ${buyerContact ? `<div class="muted">${esc(buyerContact)}</div>` : ''}
+   243→   243→            ${inv.placeOfSupply ? `<div class="muted">Place of Supply: ${esc(inv.placeOfSupply)}</div>` : ''}
+   244→   244→          </td>
+   245→   245→          <td style="width:42%">
+   246→   246→            <div class="sec">Invoice Details</div>
+   247→   247→            <table class="bare">
+   248→   248→              <tr><td class="muted">Against Sales Order</td><td style="text-align:right"><strong>${esc(inv.salesOrder?.number || '—')}</strong></td></tr>
+   249→   249→              <tr><td class="muted">Supply Type</td><td style="text-align:right">${interState ? 'Inter-State (IGST)' : 'Intra-State (CGST + SGST)'}</td></tr>
+   250→   250→              <tr><td class="muted">Payment Due</td><td style="text-align:right">${inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('en-IN') : '—'}</td></tr>
+   251→   251→              <tr><td class="muted">E-Invoice (IRN)</td><td style="text-align:right">${inv.irn ? 'Registered' : '—'}</td></tr>
+   252→   252→            </table>
+   253→   253→          </td>
+   254→   254→        </tr></table>
+   255→   255→        <table>
+   256→   256→          <thead><tr><th style="width:26px">#</th><th>Item</th><th style="width:70px">HSN</th><th class="num" style="width:70px">Qty</th><th class="num" style="width:85px">Rate</th><th class="num" style="width:52px">Disc %</th><th class="num" style="width:90px">Taxable</th><th class="num" style="width:52px">GST %</th><th class="num" style="width:95px">Amount</th></tr></thead>
+   257→   257→          <tbody>${lines2.map((it, i) => {
+   258→   258→            const gross = it.qty * it.rate
+   259→   259→            const taxable = gross - gross * ((it.discountPct || 0) / 100)
+   260→   260→            return `<tr><td>${i + 1}</td><td>${esc(it.item?.name || it.itemId)}${it.item?.code ? ` <span class="muted">(${esc(it.item.code)})</span>` : ''}</td><td>${esc(it.hsn || '—')}</td><td class="num">${it.qty}${it.item?.uom ? ` ${esc(it.item.uom)}` : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.discountPct || 0}</td><td class="num">${fmtMoney(taxable)}</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`
+   261→   261→          }).join('')}</tbody>
+   262→   262→          <tfoot><tr style="background:#f4f4f5;font-weight:600"><td colspan="3" style="text-align:right">Total</td><td class="num">${qtySum}</td><td></td><td></td><td class="num">${fmtMoney(taxableSum)}</td><td></td><td class="num">${fmtMoney(taxableSum)}</td></tr></tfoot>
+   263→   263→        </table>
+   264→   264→        <table class="grid"><tr>
+   265→   265→          <td style="width:55%">
+   266→   266→            <div class="sec">Bank Details</div>
+   267→   267→            <div class="bankbox">
+   268→   268→              ${hasBankDetails
+   269→   269→                ? bankRowsHtml
+   270→   270→                : `<strong>${esc(sellerName)}</strong><br/>A/C No.: As per records<br/>IFSC: As per records &nbsp;·&nbsp; UPI: As per records`}
+   271→   271→            </div>
+   272→   272→          </td>
+   273→   273→          <td style="width:45%">
+   274→   274→            <table class="totals" style="width:100%">
+   275→   275→              <tr><td>Subtotal</td><td class="num">${fmtMoney(inv.subtotal)}</td></tr>
+   276→   276→              <tr><td>Discount</td><td class="num">- ${fmtMoney(inv.discountTotal)}</td></tr>
+   277→   277→              ${interState
+   278→   278→                ? `<tr><td>IGST</td><td class="num">${fmtMoney(inv.igst)}</td></tr>`
+   279→   279→                : `<tr><td>CGST</td><td class="num">${fmtMoney(inv.cgst)}</td></tr><tr><td>SGST</td><td class="num">${fmtMoney(inv.sgst)}</td></tr>`}
+   280→   280→              <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(inv.grandTotal)}</td></tr>
+   281→   281→              <tr><td>Paid</td><td class="num">${fmtMoney(inv.paidAmount)}</td></tr>
+   282→   282→              <tr><td>Balance Due</td><td class="num">${fmtMoney(balance)}</td></tr>
+   283→   283→            </table>
+   284→   284→            <div style="margin-top:6px;font-size:13px"><strong>Total Invoice Value: ${fmtMoney(inv.grandTotal)}</strong></div>
+   285→   285→            <div class="words">Amount in words: Rupees ${amountInWords(inv.grandTotal)} Only</div>
+   286→   286→          </td>
+   287→   287→        </tr></table>
+   288→   288→        ${inv.notes ? `<div class="muted" style="padding:6px 10px;border-top:1px solid #444">Notes: ${esc(inv.notes)}</div>` : ''}
+   289→   289→        <table class="bare"><tr>
+   290→   290→          <td style="width:58%">
+   291→   291→            <div class="sec">Terms &amp; Conditions</div>
+   292→   292→            <div class="terms">
+   293→   293→              1. Subject to ${seller?.city ? esc(seller.city) + ' ' : ''}jurisdiction.<br/>
+   294→   294→              2. Interest @18% p.a. will be charged on overdue payments.<br/>
+   295→   295→              3. Delivery subject to realisation of payment.<br/>
+   296→   296→              4. Goods once sold will not be taken back. E&amp;OE.
+   297→   297→            </div>
+   298→   298→          </td>
+   299→   299→          <td style="width:42%;text-align:right">
+   300→   300→            <div style="font-weight:700;font-size:12px;text-align:left">For ${esc(sellerName)}</div>
+   301→   301→            <div class="signline">Authorised Signatory</div>
+   302→   302→          </td>
+   303→   303→        </tr></table>
+   304→   304→        <div class="footer">
+   305→   305→          This is a computer-generated GST tax invoice.<br/>
+   306→   306→          <strong>Declaration:</strong> We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
+   307→   307→        </div>
+   308→   308→      </div>`
+   309→   309→    printHtml(`Tax Invoice ${row.number}`, html)
+   310→   310→  }
+   311→   311→
+   312→   312→  const totals = computeTotals(lines)
+   313→   313→
+   314→   314→  const columns: Column<InvoiceRow>[] = [
+   315→   315→    { key: 'number', header: 'Invoice #', render: (r) => <span className="font-medium">{r.number}</span> },
+   316→   316→    { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
+   317→   317→    { key: 'customer', header: 'Customer', render: (r) => r.customer?.name || '—' },
+   318→   318→    { key: 'total', header: 'Grand Total', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
+   319→   319→    { key: 'paid', header: 'Paid', hideOnMobile: true, render: (r) => <Money value={r.paidAmount} /> },
+   320→   320→    { key: 'outstanding', header: 'Outstanding', render: (r) => <Money value={r2((r.grandTotal || 0) - (r.paidAmount || 0))} className={r2((r.grandTotal || 0) - (r.paidAmount || 0)) > 0 ? 'text-amber-600 font-medium' : 'text-emerald-600'} /> },
+   321→   321→    { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
+   322→   322→    {
+   323→   323→      key: 'actions', header: 'Actions',
+   324→   324→      render: (r) => (
+   325→   325→        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+   326→   326→          <Button variant="ghost" size="sm" className="h-7" title="Print tax invoice" onClick={() => void printInvoice(r)}><Printer className="h-3.5 w-3.5" /></Button>
+   327→   327→          {!r.irn && r.status !== 'CANCELLED' && (
+   328→   328→            <Button variant="ghost" size="sm" className="h-7" title="Generate IRN" onClick={() => void generateIrn(r)}><BadgeIndianRupee className="h-3.5 w-3.5" /></Button>
+   329→   329→          )}
+   330→   330→          {r.status !== 'PAID' && r.status !== 'CANCELLED' && (
+   331→   331→            <Button variant="outline" size="sm" className="h-7" onClick={() => void openPay(r)}>Payment</Button>
+   332→   332→          )}
+   333→   333→          {r.status !== 'CANCELLED' && (r.paidAmount || 0) <= 0 && (
+   334→   334→            <ConfirmAction
+   335→   335→              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
+   336→   336→              title="Cancel invoice?" message={`Cancel ${r.number}? Only unpaid invoices can be cancelled.`} tone="destructive"
+   337→   337→              onConfirm={() => cancelInvoice(r)}
+   338→   338→            />
+   339→   339→          )}
+   340→   340→        </div>
+   341→   341→      ),
+   342→   342→    },
+   343→   343→  ]
+   344→   344→
+   345→   345→  return (
+   346→   346→    <div>
+   347→   347→      <PageHeader
+   348→   348→        title="Sales Invoices"
+   349→   349→        description="GST tax invoices, payments received and e-invoicing"
+   350→   350→        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Invoice</Button>}
+   351→   351→      />
+   352→   352→      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search invoices…" highlightId={highlightId} />
+   353→   353→
+   354→   354→      <FormDialog
+   355→   355→        open={open} onOpenChange={setOpen} wide title="New Sales Invoice" submitLabel="Create Invoice"
+   356→   356→        description="From a sales order (pending qty pre-filled) or manual lines" loading={saving} onSubmit={submit}
+   357→   357→      >
+   358→   358→        <div className="grid sm:grid-cols-3 gap-4">
+   359→   359→          <Field label="Mode">
+   360→   360→            <SelectInput
+   361→   361→              value={mode} onChange={setMode}
+   362→   362→              options={[{ value: 'SO', label: 'From Sales Order' }, { value: 'MANUAL', label: 'Manual Lines' }]}
+   363→   363→            />
+   364→   364→          </Field>
+   365→   365→          {mode === 'SO' ? (
+   366→   366→            <Field label="Sales Order" required>
+   367→   367→              <SelectInput value={salesOrderId} onChange={(v) => void pickSo(v)} options={soOpts} placeholder="Select SO…" />
+   368→   368→            </Field>
+   369→   369→          ) : (
+   370→   370→            <Field label="Customer" required>
+   371→   371→              <SelectInput value={customerId} onChange={setCustomerId} options={customerOpts} />
+   372→   372→            </Field>
+   373→   373→          )}
+   374→   374→          <Field label="Date" required><DateInput value={date} onChange={setDate} /></Field>
+   375→   375→          <Field label="Due Date"><DateInput value={dueDate} onChange={setDueDate} /></Field>
+   376→   376→          <Field label="Place of Supply"><TextInput value={placeOfSupply} onChange={(e) => setPlaceOfSupply(e.target.value)} placeholder="e.g. Maharashtra" /></Field>
+   377→   377→          <Field label="Notes"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Remarks…" /></Field>
+   378→   378→        </div>
+   379→   379→
+   380→   380→        <div className="space-y-2">
+   381→   381→          <div className="flex items-center justify-between">
+   382→   382→            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Lines</span>
+   383→   383→            <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
+   384→   384→              <Plus className="h-3.5 w-3.5 mr-1" />Add Line
+   385→   385→            </Button>
+   386→   386→          </div>
+   387→   387→          {lines.map((l, idx) => (
+   388→   388→            <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+   389→   389→              <div className="col-span-12 sm:col-span-4">
+   390→   390→                <SelectInput
+   391→   391→                  value={l.itemId} options={itemOpts} placeholder="Select item…"
+   392→   392→                  onChange={(v) => setLines((ls) => ls.map((x, i) => {
+   393→   393→                    if (i !== idx) return x
+   394→   394→                    const it = (items.data?.items ?? []).find((o) => o.id === v)
+   395→   395→                    return { ...x, itemId: v, rate: x.rate || Number(it?.sellingPrice || 0), gstRate: it?.gstRate ?? x.gstRate }
+   396→   396→                  }))}
+   397→   397→                />
+   398→   398→              </div>
+   399→   399→              <NumberInput className="col-span-3 sm:col-span-2" value={l.qty} min={0} placeholder="Qty"
+   400→   400→                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
+   401→   401→              <NumberInput className="col-span-3 sm:col-span-2" value={l.rate} min={0} placeholder="Rate"
+   402→   402→                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, rate: n } : x)))} />
+   403→   403→              <NumberInput className="col-span-3 sm:col-span-1" value={l.discountPct} min={0} placeholder="Disc %"
+   404→   404→                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, discountPct: n } : x)))} />
+   405→   405→              <NumberInput className="col-span-2 sm:col-span-1" value={l.gstRate} min={0} placeholder="GST %"
+   406→   406→                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, gstRate: n } : x)))} />
+   407→   407→              <div className="col-span-1 flex justify-end">
+   408→   408→                <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
+   409→   409→                  onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
+   410→   410→                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+   411→   411→                </Button>
+   412→   412→              </div>
+   413→   413→            </div>
+   414→   414→          ))}
+   415→   415→          <div className="rounded-md border bg-muted/30 p-3 text-sm grid grid-cols-2 sm:grid-cols-5 gap-2">
+   416→   416→            <TotCell label="Subtotal" value={totals.subtotal} />
+   417→   417→            <TotCell label="Discount" value={totals.discount} />
+   418→   418→            <TotCell label="CGST (preview)" value={totals.cgst} />
+   419→   419→            <TotCell label="SGST (preview)" value={totals.sgst} />
+   420→   420→            <TotCell label="Grand Total" value={totals.grand} bold />
+   421→   421→          </div>
+   422→   422→        </div>
+   423→   423→      </FormDialog>
+   424→   424→
+   425→   425→      <FormDialog
+   426→   426→        open={!!payFor} onOpenChange={(o) => !o && setPayFor(null)} title={`Record Payment — ${payFor?.number || ''}`}
+   427→   427→        submitLabel="Save Payment" loading={paying} onSubmit={submitPayment}
+   428→   428→        description={`Outstanding: ${fmtMoney(payFor ? (payFor.grandTotal || 0) - (payFor.paidAmount || 0) : 0)}`}
+   429→   429→      >
+   430→   430→        <div className="grid sm:grid-cols-2 gap-4">
+   431→   431→          <Field label="Amount" required><NumberInput value={payAmount} onChange={setPayAmount} min={0} /></Field>
+   432→   432→          <Field label="Mode">
+   433→   433→            <SelectInput value={payMode} onChange={setPayMode} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} />
+   434→   434→          </Field>
+   435→   435→          <Field label="Date" required><DateInput value={payDate} onChange={setPayDate} /></Field>
+   436→   436→          <Field label="Reference"><TextInput value={payRef} onChange={(e) => setPayRef(e.target.value)} placeholder="UTR / cheque no." /></Field>
+   437→   437→        </div>
+   438→   438→      </FormDialog>
+   439→   439→    </div>
+   440→   440→  )
+   441→   441→}
+   442→   442→
+   443→   443→function TotCell({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
+   444→   444→  return (
+   445→   445→    <div className={bold ? 'sm:text-right' : ''}>
+   446→   446→      <p className="text-[11px] text-muted-foreground uppercase tracking-wide">{label}</p>
+   447→   447→      <p className={`tabular-nums ${bold ? 'font-bold text-base' : 'font-medium'}`}>{fmtMoney(value)}</p>
+   448→   448→    </div>
+   449→   449→  )
+   450→   450→}
+   451→   451→

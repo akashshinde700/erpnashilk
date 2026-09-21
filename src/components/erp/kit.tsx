@@ -97,6 +97,70 @@ export function Kbd({ children, className }: { children: React.ReactNode; classN
   )
 }
 
+// ---------- Deep-link row highlight (global search → module table) ----------
+
+/** Escape a string for safe use inside a CSS attribute selector (ids are plain cuids — defensive only). */
+function cssAttrEscape(s: string): string {
+  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(s)
+    : s.replace(/["\\]/g, '\\$&')
+}
+
+/**
+ * Reads the deep-link written by the global search palette (sessionStorage key
+ * 'erp_deep_link': { module, id, ts }) and returns the record id that should be
+ * highlighted in this module's table — or null. The entry is consumed (removed)
+ * on first read and the highlight auto-clears after ~8s, making it a one-shot pulse.
+ * Pass the module's key (e.g. 'items', 'sales-orders'); deep links for other
+ * modules are ignored (and consumed) by the first mounted module that reads them.
+ */
+export function useRowHighlight(moduleKey: string | null | undefined): string | null {
+  const [highlightId, setHighlightId] = React.useState<string | null>(null)
+
+  // Read once per mount. The sessionStorage key is removed on every successful
+  // read, so effect re-runs (moduleKey change without a remount) are no-ops.
+  React.useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('erp_deep_link')
+      if (!raw) return
+      const d = JSON.parse(raw) as { module?: unknown; id?: unknown; ts?: unknown }
+      sessionStorage.removeItem('erp_deep_link')
+      if (d && d.module === moduleKey && typeof d.id === 'string' && d.id.trim() !== '') {
+        setHighlightId(String(d.id))
+      }
+    } catch {
+      // Malformed / unavailable deep link — best-effort UX nicety, ignore.
+    }
+  }, [moduleKey])
+
+  // Auto-clear the pulse so a stale highlight never sticks around.
+  React.useEffect(() => {
+    if (!highlightId) return
+    const t = setTimeout(() => setHighlightId(null), 8000)
+    return () => clearTimeout(t)
+  }, [highlightId])
+
+  // Same-module deep link while already mounted (no remount happens): the palette
+  // also broadcasts 'erp:deep-link' so we re-highlight live.
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      try {
+        const d = (e as CustomEvent<{ module?: unknown; id?: unknown }>).detail
+        if (d && d.module === moduleKey && typeof d.id === 'string' && d.id.trim() !== '') {
+          setHighlightId(null) // restart the pulse even for the same row
+          window.setTimeout(() => setHighlightId(String(d.id)), 0)
+        }
+      } catch {
+        // best-effort UX nicety — ignore
+      }
+    }
+    window.addEventListener('erp:deep-link', handler)
+    return () => window.removeEventListener('erp:deep-link', handler)
+  }, [moduleKey])
+
+  return highlightId
+}
+
 // ---------- Generic data table ----------
 
 export interface Column<T> {
@@ -108,7 +172,7 @@ export interface Column<T> {
 }
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, highlightId,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -120,9 +184,12 @@ export function DataTable<T extends { id: string }>({
   pageSize?: number
   /** When provided, shows an "Export CSV" button exporting all filtered rows. */
   csvExport?: { filename: string; pick: (row: T) => (string | number)[] }
+  /** Deep-linked record id (from useRowHighlight) — page-jumps to + scrolls the row into view and highlights it. */
+  highlightId?: string | null
 }) {
   const [q, setQ] = React.useState('')
   const [page, setPage] = React.useState(0)
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null)
 
   const filtered = React.useMemo(() => {
     if (!q.trim()) return rows
@@ -131,6 +198,41 @@ export function DataTable<T extends { id: string }>({
   }, [rows, q])
 
   React.useEffect(() => setPage(0), [q, rows.length])
+
+  // Deep-link: page-jump to + scroll the highlighted row into view. Rows may
+  // arrive async (table can be loading when the highlight first applies), so
+  // attempts are retried across a few ticks; state kept in a ref keyed by the
+  // highlight id makes each jump a strict one-shot that never fights the
+  // user's own paging/filtering afterwards.
+  const jumpStateRef = React.useRef<{ id: string | null; jumped: boolean; scrolled: boolean }>({ id: null, jumped: false, scrolled: false })
+
+  React.useEffect(() => {
+    if (!highlightId) return
+    const st = jumpStateRef.current
+    if (st.id !== highlightId) {
+      st.id = highlightId
+      st.jumped = false
+      st.scrolled = false
+    }
+    const timers: ReturnType<typeof setTimeout>[] = []
+    const attempt = () => {
+      if (!st.jumped) {
+        const idx = filtered.findIndex((r) => String(r.id) === highlightId)
+        if (idx === -1) return // not in filtered yet (rows still loading) or filtered out by the text filter — do nothing
+        st.jumped = true
+        setPage(Math.floor(idx / pageSize))
+      }
+      if (!st.scrolled) {
+        const el = wrapperRef.current?.querySelector(`[data-row-id="${cssAttrEscape(highlightId)}"]`)
+        if (el) {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          st.scrolled = true
+        }
+      }
+    }
+    for (const delay of [0, 150, 400, 900]) timers.push(setTimeout(attempt, delay))
+    return () => timers.forEach(clearTimeout)
+  }, [highlightId, filtered, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -157,7 +259,7 @@ export function DataTable<T extends { id: string }>({
           )}
         </div>
       )}
-      <div className="rounded-lg border overflow-hidden bg-card">
+      <div ref={wrapperRef} className="rounded-lg border overflow-hidden bg-card">
         <ScrollArea className={maxHeight !== 'auto' ? maxHeight : undefined} style={maxHeight !== 'auto' ? { height: maxHeight } : undefined}>
           <Table>
             <TableHeader>
@@ -186,13 +288,24 @@ export function DataTable<T extends { id: string }>({
                   </TableCell>
                 </TableRow>
               ) : (
-                pageRows.map((row) => (
-                  <TableRow key={row.id} onClick={() => onRowClick?.(row)} className={onRowClick ? 'cursor-pointer' : undefined}>
-                    {columns.map((c) => (
-                      <TableCell key={c.key} className={cn('align-middle', c.hideOnMobile && 'hidden md:table-cell', c.className)}>{c.render(row)}</TableCell>
-                    ))}
-                  </TableRow>
-                ))
+                pageRows.map((row) => {
+                  const highlighted = highlightId !== null && highlightId !== undefined && String(row.id) === highlightId
+                  return (
+                    <TableRow
+                      key={row.id}
+                      data-row-id={String(row.id)}
+                      onClick={() => onRowClick?.(row)}
+                      className={cn(
+                        onRowClick && 'cursor-pointer',
+                        highlighted && 'bg-amber-50 dark:bg-amber-500/10 ring-2 ring-inset ring-amber-300 dark:ring-amber-500/40',
+                      )}
+                    >
+                      {columns.map((c) => (
+                        <TableCell key={c.key} className={cn('align-middle', c.hideOnMobile && 'hidden md:table-cell', c.className)}>{c.render(row)}</TableCell>
+                      ))}
+                    </TableRow>
+                  )
+                })
               )}
             </TableBody>
           </Table>

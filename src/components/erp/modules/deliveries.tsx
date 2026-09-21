@@ -16,15 +16,25 @@ interface SoDetail {
   customer?: { name?: string | null; city?: string | null; state?: string | null } | null
   items?: { id: string; itemId: string; qty: number; dispatchedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }[] | null
 }
+interface CompanyBlock { name?: string | null; gstin?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null }
 interface DeliveryRow {
-  id: string; number: string; date: string; vehicleNo?: string | null; transporter?: string | null; status: string; notes?: string | null
-  salesOrder?: { number?: string | null; customer?: { name?: string | null } | null } | null
-  items?: { id: string; qty: number; item?: { name?: string | null; uom?: string | null } | null }[] | null
+  id: string; number: string; date: string; vehicleNo?: string | null; transporter?: string | null; ewayBillNo?: string | null; status: string; notes?: string | null
+  salesOrder?: { number?: string | null; customer?: { name?: string | null; gstin?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null } | null } | null
+  warehouse?: { id?: string; code?: string | null; name?: string | null; location?: string | null } | null
+  company?: CompanyBlock | null
+  items?: { id: string; qty: number; item?: { code?: string | null; name?: string | null; uom?: string | null; hsn?: string | null } | null }[] | null
 }
 interface DraftRow { salesOrderItemId: string; itemId: string; label: string; uom: string; pending: number; qty: number }
 
 const today = () => new Date().toISOString().slice(0, 10)
 const DISPATCHABLE = ['CONFIRMED', 'IN_PRODUCTION', 'READY', 'PARTIALLY_DISPATCHED']
+
+// Escape a value for interpolation into the print-window HTML.
+const esc = (v?: string | null) =>
+  (v ?? '').replace(/[&<>"]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'))
+// Join non-empty address parts with ', ' (raw — wrap the result in esc() before injecting).
+const joinAddr = (...parts: (string | null | undefined)[]) =>
+  parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
 
 export default function DeliveriesModule({ companyId }: { companyId: string }) {
   const list = useList<{ items: DeliveryRow[] }>(`/api/deliveries?companyId=${companyId}`)
@@ -101,22 +111,92 @@ export default function DeliveriesModule({ companyId }: { companyId: string }) {
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to delete') }
   }
 
-  function printChallan(d: DeliveryRow) {
+  async function printChallan(row: DeliveryRow) {
+    // Prefer the detail endpoint — it returns the full consignee (address/GSTIN/state code),
+    // item master info (code/uom/HSN), the dispatch warehouse and the consignor company block.
+    let d: DeliveryRow = row
+    try {
+      const detail = await apiGet<DeliveryRow>(`/api/deliveries/${row.id}?companyId=${companyId}`)
+      if (detail) {
+        d = { ...row, ...detail, salesOrder: detail.salesOrder ?? row.salesOrder, items: detail.items ?? row.items }
+      }
+    } catch { /* fall back to the list row */ }
+
+    const consignor = d.company
+    const consignorName = consignor?.name || 'Acme Precision Manufacturing Pvt Ltd'
+    const cust = d.salesOrder?.customer
+    const custStateCode = cust?.stateCode || (cust?.gstin ? cust.gstin.slice(0, 2) : '')
+    const wh = d.warehouse
+    const whLabel = wh ? joinAddr(wh.code, wh.name, wh.location) : ''
+
     const html = `
-      <div class="head">
-        <div><h1>Acme Precision Manufacturing Pvt Ltd</h1><div class="muted">Delivery Challan · ${d.number}</div></div>
-        <div style="text-align:right"><span class="badge">${d.status}</span><br/>
-          <div class="muted">Date: ${new Date(d.date).toLocaleDateString('en-IN')}</div></div>
-      </div>
-      <p><strong>Sales Order:</strong> ${d.salesOrder?.number || '—'} &nbsp; <strong>Customer:</strong> ${d.salesOrder?.customer?.name || '—'}</p>
-      <p class="muted">Vehicle: ${d.vehicleNo || '—'} · Transporter: ${d.transporter || '—'}</p>
-      <table>
-        <thead><tr><th>#</th><th>Item</th><th class="num">Qty</th></tr></thead>
-        <tbody>${(d.items ?? []).map((it, i) => `<tr><td>${i + 1}</td><td>${it.item?.name || '—'}</td><td class="num">${it.qty}${it.item?.uom ? ' ' + it.item.uom : ''}</td></tr>`).join('')}</tbody>
-      </table>
-      ${d.notes ? `<p class="muted">Notes: ${d.notes}</p>` : ''}
-      <p class="muted">Receiver's signature: ______________________</p>`
-    printHtml(`Delivery Challan ${d.number}`, html)
+      <style>
+        .dc-form { border: 1.5px solid #333; }
+        .dc-form table { margin-top: 0; }
+        .dc-form th, .dc-form td { border-color: #444; }
+        .dc-form .grid td { vertical-align: top; padding: 8px 10px; }
+        .dc-form .bare td { border: none; padding: 5px 10px; vertical-align: top; }
+        .dc-form .sec { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+        .dc-form .title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: 4px; padding: 7px 10px; border-bottom: 1.5px solid #333; }
+        .dc-form .signline { border-top: 1px solid #333; margin-top: 56px; padding-top: 5px; font-size: 11px; text-align: center; }
+        .dc-form .footer { border-top: 1.5px solid #333; padding: 6px 10px; font-size: 10px; color: #444; text-align: center; line-height: 1.6; }
+      </style>
+      <div class="dc-form">
+        <div class="title">DELIVERY CHALLAN</div>
+        <div class="head" style="padding:10px 12px">
+          <div>
+            <h1 style="font-size:17px">${esc(consignorName)}</h1>
+            <div class="muted">${esc(joinAddr(consignor?.addressLine, consignor?.city, consignor?.state)) || '&nbsp;'}</div>
+            <div class="muted">${consignor?.gstin ? `GSTIN: ${esc(consignor.gstin)}` : ''}</div>
+            <div class="muted">${esc(joinAddr(consignor?.phone, consignor?.email))}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px"><strong>Challan No: ${esc(d.number)}</strong></div>
+            <div class="muted">Date: ${new Date(d.date).toLocaleDateString('en-IN')}</div>
+            <div class="muted">Against SO: ${esc(d.salesOrder?.number || '—')}</div>
+            ${d.vehicleNo ? `<div class="muted">Vehicle No: ${esc(d.vehicleNo)}</div>` : ''}
+            <span class="badge">${esc(d.status)}</span>
+          </div>
+        </div>
+        <table class="grid"><tr>
+          <td style="width:58%">
+            <div class="sec">Consignee (Ship To)</div>
+            <strong style="font-size:13px">${esc(cust?.name || '—')}</strong>
+            <div class="muted">${esc(joinAddr(cust?.addressLine, cust?.city)) || '&nbsp;'}</div>
+            <div class="muted">${cust?.gstin ? `GSTIN: ${esc(cust.gstin)}` : ''}</div>
+            <div class="muted">${esc(joinAddr(cust?.state, custStateCode ? `State Code: ${custStateCode}` : ''))}</div>
+          </td>
+          <td style="width:42%">
+            <div class="sec">Dispatch Details</div>
+            <table class="bare">
+              <tr><td class="muted">Dispatch From</td><td style="text-align:right"><strong>${esc(whLabel || '—')}</strong></td></tr>
+              <tr><td class="muted">Vehicle No</td><td style="text-align:right">${esc(d.vehicleNo || '—')}</td></tr>
+              <tr><td class="muted">Transporter</td><td style="text-align:right">${esc(d.transporter || '—')}</td></tr>
+              ${d.ewayBillNo ? `<tr><td class="muted">E-Way Bill No</td><td style="text-align:right">${esc(d.ewayBillNo)}</td></tr>` : ''}
+            </table>
+          </td>
+        </tr></table>
+        <table>
+          <thead><tr><th style="width:26px">#</th><th>Description of Goods</th><th style="width:70px">HSN</th><th class="num" style="width:80px">Qty</th><th style="width:120px">Remarks</th></tr></thead>
+          <tbody>${(d.items ?? []).map((it, i) =>
+            `<tr><td>${i + 1}</td><td>${esc(it.item?.name || '—')}${it.item?.code ? ` <span class="muted">(${esc(it.item.code)})</span>` : ''}</td><td>${esc(it.item?.hsn || '—')}</td><td class="num">${it.qty}${it.item?.uom ? ` ${esc(it.item.uom)}` : ''}</td><td></td></tr>`
+          ).join('')}</tbody>
+        </table>
+        ${d.notes ? `<div class="muted" style="padding:6px 10px;border-top:1px solid #444">Notes: ${esc(d.notes)}</div>` : ''}
+        <div style="padding:8px 10px;border-top:1px solid #444">
+          <div class="sec">Declaration</div>
+          <div style="font-size:10.5px;line-height:1.7;color:#444">Goods described above are being delivered for further manufacturing/processing. We declare that the particulars given above are true and correct.</div>
+        </div>
+        <table class="bare"><tr>
+          <td style="width:58%"><div class="signline">Receiver's Signature</div></td>
+          <td style="width:42%;text-align:right">
+            <div style="font-weight:700;font-size:12px;text-align:left">For ${esc(consignorName)}</div>
+            <div class="signline">Authorised Signatory</div>
+          </td>
+        </tr></table>
+        <div class="footer">This is a computer-generated delivery challan.</div>
+      </div>`
+    printHtml(`Delivery Challan ${row.number}`, html)
   }
 
   const columns: Column<DeliveryRow>[] = [
@@ -130,7 +210,7 @@ export default function DeliveriesModule({ companyId }: { companyId: string }) {
       key: 'actions', header: 'Actions',
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button variant="ghost" size="sm" className="h-7" title="Print challan" onClick={() => printChallan(r)}><Printer className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7" title="Print delivery challan" onClick={() => void printChallan(r)}><Printer className="h-3.5 w-3.5" /></Button>
           {r.status === 'DRAFT' && (
             <>
               <ConfirmAction

@@ -26,6 +26,10 @@ model Company {
   phone        String?
   email        String?
   logoText     String?
+  bankAccountName   String? // bank details for invoice print
+  bankAccountNumber String?
+  bankIfsc          String?
+  bankUpiId         String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

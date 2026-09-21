@@ -7,25 +7,36 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Check, Plus, Printer, Trash2, Upload, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
+  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtMoney } from '@/lib/erp-constants'
+import { amountInWords } from '@/lib/number-to-words'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
 interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; purchasePrice?: number | null; gstRate?: number | null }
-interface PoItem { id: string; itemId: string; qty: number; rate: number; gstRate: number; lineTotal: number; receivedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }
+interface PoItem { id: string; itemId: string; qty: number; rate: number; gstRate: number; lineTotal: number; receivedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null; hsn?: string | null } | null }
+interface CompanyBlock { id?: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null }
+interface PoSupplier { name?: string | null; gstin?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; paymentTermsDays?: number | null }
 interface PoRow {
   id: string; number: string; orderDate: string; expectedDate?: string | null; status: string
   subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number; grandTotal: number
   approvedBy?: string | null; notes?: string | null
-  supplier?: { name?: string | null; gstin?: string | null; city?: string | null; state?: string | null } | null
+  supplier?: PoSupplier | null
+  company?: CompanyBlock | null
   items?: PoItem[] | null
 }
 interface DraftLine { itemId: string; qty: number; rate: number; gstRate: number }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 const today = () => new Date().toISOString().slice(0, 10)
+
+// Escape a value for interpolation into the print-window HTML.
+const esc = (v?: string | null) =>
+  (v ?? '').replace(/[&<>"]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'))
+// Join non-empty address parts with ', ' (raw — wrap the result in esc() before injecting).
+const joinAddr = (...parts: (string | null | undefined)[]) =>
+  parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
 
 function computeTotals(lines: DraftLine[]) {
   let taxable = 0, gst = 0
@@ -39,6 +50,7 @@ function computeTotals(lines: DraftLine[]) {
 function emptyLine(): DraftLine { return { itemId: '', qty: 1, rate: 0, gstRate: 18 } }
 
 export default function PurchaseOrdersModule({ companyId }: { companyId: string }) {
+  const highlightId = useRowHighlight('purchase-orders')
   const list = useList<{ items: PoRow[] }>(`/api/purchase-orders?companyId=${companyId}`)
   const suppliers = useList<{ items: PartyRow[] }>(`/api/suppliers?companyId=${companyId}`)
   const items = useList<{ items: ItemRow[] }>(`/api/items?companyId=${companyId}`)
@@ -105,30 +117,129 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
     await act(row, { action: 'cancel' }, `Purchase order ${row.number} cancelled`)
   }
 
-  function printPo(po: PoRow) {
+  async function printPo(row: PoRow) {
+    // Prefer the detail endpoint — it returns the full supplier (address/contacts/terms),
+    // items with UOM + HSN and the purchaser company block needed on a formal PO.
+    let po: PoRow = row
+    try {
+      const detail = await apiGet<PoRow>(`/api/purchase-orders/${row.id}?companyId=${companyId}`)
+      if (detail) {
+        po = { ...row, ...detail, supplier: detail.supplier ?? row.supplier, items: detail.items ?? row.items }
+      }
+    } catch { /* fall back to the list row */ }
+
+    const sup = po.supplier
+    const buyer = po.company
+    const lines2 = po.items ?? []
+    const buyerName = buyer?.name || 'Acme Precision Manufacturing Pvt Ltd'
+    // PAN = characters 3-12 of the GSTIN (when PAN itself is not stored)
+    const buyerPan = buyer?.pan || (buyer?.gstin && buyer.gstin.length >= 12 ? buyer.gstin.slice(2, 12) : '')
+    const buyerStateCode = buyer?.stateCode || (buyer?.gstin ? buyer.gstin.slice(0, 2) : '')
+    const supStateCode = sup?.stateCode || (sup?.gstin ? sup.gstin.slice(0, 2) : '')
+    const supContact = [sup?.phone, sup?.email].filter((x): x is string => !!x && x.trim() !== '').join(' · ')
+    const interState = (po.igst || 0) > 0
+    const qtySum = r2(lines2.reduce((s, it) => s + (it.qty || 0), 0))
+    const taxableSum = r2(lines2.reduce((s, it) => s + (it.lineTotal || 0), 0))
+    const payTerms = sup?.paymentTermsDays ? `Net ${sup.paymentTermsDays} days` : ''
+
     const html = `
-      <div class="head">
-        <div><h1>Acme Precision Manufacturing Pvt Ltd</h1><div class="muted">Purchase Order · ${po.number}</div></div>
-        <div style="text-align:right"><span class="badge">${po.status}</span><br/>
-          <div class="muted">Order date: ${new Date(po.orderDate).toLocaleDateString('en-IN')}</div>
-          ${po.expectedDate ? `<div class="muted">Expected: ${new Date(po.expectedDate).toLocaleDateString('en-IN')}</div>` : ''}</div>
-      </div>
-      <p><strong>Supplier:</strong> ${po.supplier?.name || '—'}${po.supplier?.gstin ? ` · GSTIN ${po.supplier.gstin}` : ''}
-      ${po.supplier?.city ? `<br/><span class="muted">${po.supplier.city}${po.supplier.state ? ', ' + po.supplier.state : ''}</span>` : ''}</p>
-      <table>
-        <thead><tr><th>#</th><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">GST %</th><th class="num">Amount</th></tr></thead>
-        <tbody>${(po.items ?? []).map((it, i) => `<tr><td>${i + 1}</td><td>${it.item?.name || it.itemId}</td><td class="num">${it.qty}${it.item?.uom ? ' ' + it.item.uom : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`).join('')}</tbody>
-      </table>
-      <table class="totals" style="width:280px;margin-left:auto">
-        <tr><td>Subtotal</td><td class="num">${fmtMoney(po.subtotal)}</td></tr>
-        <tr><td>CGST</td><td class="num">${fmtMoney(po.cgst)}</td></tr>
-        <tr><td>SGST</td><td class="num">${fmtMoney(po.sgst)}</td></tr>
-        ${po.igst ? `<tr><td>IGST</td><td class="num">${fmtMoney(po.igst)}</td></tr>` : ''}
-        <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(po.grandTotal)}</td></tr>
-      </table>
-      ${po.approvedBy ? `<p class="muted">Approved by: ${po.approvedBy}</p>` : ''}
-      ${po.notes ? `<p class="muted">Notes: ${po.notes}</p>` : ''}`
-    printHtml(`Purchase Order ${po.number}`, html)
+      <style>
+        .po-form { border: 1.5px solid #333; }
+        .po-form table { margin-top: 0; }
+        .po-form th, .po-form td { border-color: #444; }
+        .po-form .grid td { vertical-align: top; padding: 8px 10px; }
+        .po-form .bare td { border: none; padding: 5px 10px; vertical-align: top; }
+        .po-form .sec { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+        .po-form .title { text-align: center; font-size: 15px; font-weight: 800; letter-spacing: 4px; padding: 7px 10px; border-bottom: 1.5px solid #333; }
+        .po-form .words { font-weight: 700; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+        .po-form .terms { font-size: 10.5px; line-height: 1.7; color: #444; }
+        .po-form .signline { border-top: 1px solid #333; margin-top: 72px; padding-top: 5px; font-size: 11px; text-align: center; }
+        .po-form .footer { border-top: 1.5px solid #333; padding: 6px 10px; font-size: 10px; color: #444; text-align: center; line-height: 1.6; }
+        .po-form .grand td { font-size: 15px; }
+      </style>
+      <div class="po-form">
+        <div class="title">PURCHASE ORDER</div>
+        <div class="head" style="padding:10px 12px">
+          <div>
+            <h1 style="font-size:17px">${esc(buyerName)}</h1>
+            <div class="muted">${esc(joinAddr(buyer?.addressLine, buyer?.city, buyer?.state)) || '&nbsp;'}</div>
+            <div class="muted">${buyer?.gstin ? `GSTIN: ${esc(buyer.gstin)}` : ''}${buyerPan ? ` &nbsp;·&nbsp; PAN: ${esc(buyerPan)}` : ''}</div>
+            <div class="muted">${esc(joinAddr(buyer?.phone, buyer?.email))}</div>
+            <div class="muted">${esc(joinAddr(buyer?.state, buyerStateCode ? `State Code: ${buyerStateCode}` : ''))}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px"><strong>PO No: ${esc(po.number)}</strong></div>
+            <div class="muted">Order Date: ${new Date(po.orderDate).toLocaleDateString('en-IN')}</div>
+            ${po.expectedDate ? `<div class="muted">Delivery Date: ${new Date(po.expectedDate).toLocaleDateString('en-IN')}</div>` : ''}
+            <span class="badge">${esc(po.status)}</span>
+            ${payTerms ? `<div class="muted">Payment Terms: ${esc(payTerms)}</div>` : ''}
+          </div>
+        </div>
+        <table class="grid"><tr>
+          <td style="width:58%">
+            <div class="sec">Supplier (Vendor)</div>
+            <strong style="font-size:13px">${esc(sup?.name || '—')}</strong>
+            ${sup?.contactPerson ? `<div class="muted">Attn: ${esc(sup.contactPerson)}</div>` : ''}
+            <div class="muted">${esc(joinAddr(sup?.addressLine, sup?.city)) || '&nbsp;'}</div>
+            <div class="muted">${sup?.gstin ? `GSTIN: ${esc(sup.gstin)}` : ''}</div>
+            <div class="muted">${esc(joinAddr(sup?.state, supStateCode ? `State Code: ${supStateCode}` : ''))}</div>
+            ${supContact ? `<div class="muted">${esc(supContact)}</div>` : ''}
+          </td>
+          <td style="width:42%">
+            <div class="sec">Order Details</div>
+            <table class="bare">
+              <tr><td class="muted">Supply Type</td><td style="text-align:right">${interState ? 'Inter-State (IGST)' : 'Intra-State (CGST + SGST)'}</td></tr>
+              <tr><td class="muted">Expected Delivery</td><td style="text-align:right">${po.expectedDate ? new Date(po.expectedDate).toLocaleDateString('en-IN') : '—'}</td></tr>
+              <tr><td class="muted">Approved By</td><td style="text-align:right"><strong>${esc(po.approvedBy || '—')}</strong></td></tr>
+            </table>
+          </td>
+        </tr></table>
+        <table>
+          <thead><tr><th style="width:26px">#</th><th>Item</th><th style="width:70px">HSN</th><th class="num" style="width:70px">Qty</th><th class="num" style="width:85px">Rate</th><th class="num" style="width:52px">Disc %</th><th class="num" style="width:90px">Taxable</th><th class="num" style="width:52px">GST %</th><th class="num" style="width:95px">Amount</th></tr></thead>
+          <tbody>${lines2.map((it, i) => {
+            const gross = it.qty * it.rate
+            return `<tr><td>${i + 1}</td><td>${esc(it.item?.name || it.itemId)}${it.item?.code ? ` <span class="muted">(${esc(it.item.code)})</span>` : ''}</td><td>${esc(it.item?.hsn || '—')}</td><td class="num">${it.qty}${it.item?.uom ? ` ${esc(it.item.uom)}` : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">0</td><td class="num">${fmtMoney(gross)}</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`
+          }).join('')}</tbody>
+          <tfoot><tr style="background:#f4f4f5;font-weight:600"><td colspan="3" style="text-align:right">Total</td><td class="num">${qtySum}</td><td></td><td></td><td class="num">${fmtMoney(taxableSum)}</td><td></td><td class="num">${fmtMoney(taxableSum)}</td></tr></tfoot>
+        </table>
+        <table class="grid"><tr>
+          <td style="width:55%">
+            <div class="sec">Supplier Acceptance</div>
+            <div class="terms">
+              Please confirm acceptance of this purchase order and advise the expected dispatch schedule.
+            </div>
+          </td>
+          <td style="width:45%">
+            <table class="totals" style="width:100%">
+              <tr><td>Subtotal</td><td class="num">${fmtMoney(po.subtotal)}</td></tr>
+              ${(po.discountTotal || 0) > 0 ? `<tr><td>Discount</td><td class="num">- ${fmtMoney(po.discountTotal)}</td></tr>` : ''}
+              ${interState
+                ? `<tr><td>IGST</td><td class="num">${fmtMoney(po.igst)}</td></tr>`
+                : `<tr><td>CGST</td><td class="num">${fmtMoney(po.cgst)}</td></tr><tr><td>SGST</td><td class="num">${fmtMoney(po.sgst)}</td></tr>`}
+              <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(po.grandTotal)}</td></tr>
+            </table>
+            <div style="margin-top:6px;font-size:13px"><strong>Total Order Value: ${fmtMoney(po.grandTotal)}</strong></div>
+            <div class="words">Amount in words: Rupees ${amountInWords(po.grandTotal)} Only</div>
+          </td>
+        </tr></table>
+        ${po.notes ? `<div class="muted" style="padding:6px 10px;border-top:1px solid #444">Notes: ${esc(po.notes)}</div>` : ''}
+        <table class="bare"><tr>
+          <td style="width:58%">
+            <div class="sec">Terms &amp; Conditions</div>
+            <div class="terms">
+              1. Delivery as per agreed schedule.<br/>
+              2. Please mention our PO number on all invoices &amp; correspondence.<br/>
+              3. Goods must conform to agreed specifications. E&amp;OE.
+            </div>
+          </td>
+          <td style="width:42%;text-align:right">
+            <div style="font-weight:700;font-size:12px;text-align:left">For ${esc(buyerName)}</div>
+            <div class="signline">Authorised Signatory</div>
+          </td>
+        </tr></table>
+        <div class="footer">This is a computer-generated purchase order.</div>
+      </div>`
+    printHtml(`Purchase Order ${row.number}`, html)
   }
 
   const totals = computeTotals(lines)
@@ -144,7 +255,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
       key: 'actions', header: 'Actions',
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button variant="ghost" size="sm" className="h-7" title="Print PO" onClick={() => printPo(r)}><Printer className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7" title="Print purchase order" onClick={() => void printPo(r)}><Printer className="h-3.5 w-3.5" /></Button>
           {r.status === 'DRAFT' && (
             <Button variant="outline" size="sm" className="h-7" onClick={() => void act(r, { action: 'submit' }, `PO ${r.number} submitted for approval`)}>
               <Upload className="h-3.5 w-3.5 mr-0.5" />Submit
@@ -176,6 +287,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
       />
       <DataTable
         columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase orders…" onRowClick={(r) => setDetail(r)}
+        highlightId={highlightId}
         csvExport={{
           filename: 'purchase-orders',
           pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.supplier?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],

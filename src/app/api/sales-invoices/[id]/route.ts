@@ -42,7 +42,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!invoice) throw new ApiError('Invoice not found', 404)
     const company = await db.company.findUnique({
       where: { id: companyId },
-      select: { name: true, gstin: true, pan: true, addressLine: true, city: true, state: true, stateCode: true, phone: true, email: true, logoText: true },
+      select: { name: true, gstin: true, pan: true, addressLine: true, city: true, state: true, stateCode: true, phone: true, email: true, logoText: true, bankAccountName: true, bankAccountNumber: true, bankIfsc: true, bankUpiId: true },
     })
     const [row] = await withItemInfo(companyId, [{ ...invoice, company }])
     return ok(row)

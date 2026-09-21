@@ -23,3 +23,20 @@ export async function PATCH(req: Request, { params }: Params) {
     return handleError(e)
   }
 }
+
+// DELETE /api/notifications/[id]?companyId= → remove the notification
+export async function DELETE(req: Request, { params }: Params) {
+  try {
+    if (!getActor(req)) throw new ApiError('Unauthorized — sign in to continue', 401)
+    const { id } = await params
+    const companyId = await companyRequired(req)
+
+    const existing = await db.notification.findFirst({ where: { id, companyId } })
+    if (!existing) throw new ApiError('Notification not found', 404)
+
+    await db.notification.delete({ where: { id: existing.id } })
+    return ok({ success: true }, 'Notification deleted')
+  } catch (e) {
+    return handleError(e)
+  }
+}

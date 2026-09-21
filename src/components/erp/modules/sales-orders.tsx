@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Plus, Printer, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
+  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtMoney } from '@/lib/erp-constants'
@@ -41,6 +41,7 @@ function computeTotals(lines: DraftLine[]) {
 function emptyLine(): DraftLine { return { itemId: '', qty: 1, rate: 0, discountPct: 0, gstRate: 18 } }
 
 export default function SalesOrdersModule({ companyId }: { companyId: string }) {
+  const highlightId = useRowHighlight('sales-orders')
   const list = useList<{ items: SoRow[] }>(`/api/sales-orders?companyId=${companyId}`)
   const customers = useList<{ items: PartyRow[] }>(`/api/customers?companyId=${companyId}`)
   const items = useList<{ items: ItemRow[] }>(`/api/items?companyId=${companyId}`)
@@ -166,6 +167,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
       />
       <DataTable
         columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search sales orders…" onRowClick={(r) => setDetail(r)}
+        highlightId={highlightId}
         csvExport={{
           filename: 'sales-orders',
           pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.customer?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],

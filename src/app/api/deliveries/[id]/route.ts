@@ -5,7 +5,7 @@ import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isIn
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
   const ids = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const masters = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
+    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, hsn: true } })
     : []
   const map = new Map(masters.map((m) => [m.id, m]))
   return docs.map((d) => ({ ...d, items: d.items.map((i) => ({ ...i, item: map.get(i.itemId) || null })) }))
@@ -32,7 +32,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       where: { id: challan.warehouseId, companyId },
       select: { id: true, code: true, name: true, location: true },
     })
-    const [row] = await withItemInfo(companyId, [{ ...challan, warehouse }])
+    // Consignor (our company) block for the challan print — DeliveryChallan has no
+    // company relation in the schema, so fetch + attach via JS (mirrors sales-invoices detail).
+    const company = await db.company.findUnique({
+      where: { id: companyId },
+      select: { name: true, gstin: true, addressLine: true, city: true, state: true, stateCode: true, phone: true, email: true },
+    })
+    const [row] = await withItemInfo(companyId, [{ ...challan, warehouse, company }])
     return ok(row)
   } catch (e) {
     return handleError(e)
