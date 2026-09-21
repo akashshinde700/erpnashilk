@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2 } from '@/lib/erp-helpers'
+import { emitEvent } from '@/lib/emit-event'
 
 // GET /api/stock-adjustments?companyId= — ADJUST_IN / ADJUST_OUT ledger rows
 export async function GET(req: Request) {
@@ -107,6 +108,8 @@ export async function POST(req: Request) {
 
       return { number, date: adjDate, warehouseId, lines: cleanLines.length }
     })
+
+    void emitEvent({ companyId, title: 'Stock adjusted', message: reason || `Adjustment ${result.number}`, level: 'WARNING', topic: 'inventory' })
 
     return ok(result, `Stock adjustment ${result.number} posted`)
   } catch (e) {

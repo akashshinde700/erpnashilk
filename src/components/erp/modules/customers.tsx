@@ -215,6 +215,10 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         loading={loading}
         searchPlaceholder="Search customers…"
         emptyText="No customers yet"
+        csvExport={{
+          filename: 'customers',
+          pick: (r) => [r.code, r.name, r.gstin || '', r.contactPerson || '', r.phone || '', r.email || '', r.city || '', r.state || '', r.paymentTermsDays ?? 0, r.creditLimit ?? 0, r.status],
+        }}
       />
 
       <FormDialog

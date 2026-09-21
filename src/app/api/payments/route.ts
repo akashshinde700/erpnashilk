@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { emitEvent } from '@/lib/emit-event'
 
 // GET /api/payments?companyId=&type=RECEIPT|PAYMENT&customerId=&supplierId=&invoiceId=&q=
 export async function GET(req: Request) {
@@ -139,6 +140,8 @@ export async function POST(req: Request) {
         outstandingAfter: r2(invoice.grandTotal - newPaid),
       }
     })
+
+    void emitEvent({ companyId, title: 'Payment recorded', message: `${type} ₹${amount.toFixed(2)} — ${partyType}`, topic: 'finance' })
 
     return ok(result, type === 'RECEIPT' ? 'Receipt recorded' : 'Payment recorded')
   } catch (e) {

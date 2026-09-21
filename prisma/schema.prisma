@@ -57,6 +57,7 @@ model User {
   email     String
   phone     String?
   role      String   @default("VIEWER") // SUPER_ADMIN|TENANT_ADMIN|MANAGEMENT|PLANT_MANAGER|PRODUCTION_MANAGER|PRODUCTION_SUPERVISOR|OPERATOR|PURCHASE_MANAGER|PURCHASE_EXECUTIVE|SALES_MANAGER|SALES_EXECUTIVE|STORE_MANAGER|STORE_OPERATOR|QUALITY_MANAGER|QC_INSPECTOR|ACCOUNTS_MANAGER|ACCOUNTANT|HR_MANAGER|MAINTENANCE_MANAGER|MAINTENANCE_TECHNICIAN|DISPATCH_MANAGER|VIEWER
+  passwordHash String? // scrypt "salt:hash" — null falls back to demo password 'demo1234' at login
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

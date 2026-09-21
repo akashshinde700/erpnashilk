@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { emitEvent } from '@/lib/emit-event'
 
 // WorkOrder has no item relation in the schema — join in JS.
 async function attachWorkOrderItems(entries: any[]) {
@@ -129,6 +130,7 @@ export async function POST(req: Request) {
       include: { workOrder: { select: { number: true, status: true, itemId: true } } },
     })
     const [full] = await attachWorkOrderItems([row])
+    void emitEvent({ companyId, title: 'Production reported', message: `${full?.workOrder?.number || 'work order'} +${producedQty}`, topic: 'production' })
     return ok(full, `Production entry posted for ${full?.workOrder?.number || 'work order'}`)
   } catch (e) {
     return handleError(e)

@@ -4,6 +4,7 @@
  * Idempotent: skips companies that already exist.
  */
 import { PrismaClient } from '@prisma/client'
+import { hashPassword, DEMO_PASSWORD } from '../src/lib/password'
 
 const db = new PrismaClient({ log: ['error'] })
 
@@ -68,7 +69,7 @@ async function main() {
       data: {
         name: 'Bharat Motors Ltd', gstin: '24AABCB1234C1ZP', state: 'Gujarat', stateCode: '24',
         city: 'Vadodara', addressLine: 'Plot 42, GIDC Makarpura', phone: '+91 98200 11223',
-        users: { create: { name: 'Bharat Admin', email: 'admin@bharatmotors.in', role: 'TENANT_ADMIN' } },
+        users: { create: { name: 'Bharat Admin', email: 'admin@bharatmotors.in', role: 'TENANT_ADMIN', passwordHash: hashPassword(DEMO_PASSWORD) } },
         items: {
           create: [
             { code: 'BM-STATOR', name: 'Stator Winding Assembly', type: 'FINISHED', uom: 'NOS', gstRate: 18, sellingPrice: 15500, standardCost: 12400, reorderLevel: 10, purchasePrice: 12400 },
@@ -104,7 +105,7 @@ async function main() {
   // Users
   await db.user.createMany({
     data: [
-      { companyId: coId, name: 'Rajesh Deshmukh', email: 'rajesh@acmeprecision.in', role: 'TENANT_ADMIN', phone: '+91 98220 11111' },
+      { companyId: coId, name: 'Rajesh Deshmukh', email: 'rajesh@acmeprecision.in', role: 'TENANT_ADMIN', phone: '+91 98220 11111', passwordHash: hashPassword(DEMO_PASSWORD) },
       { companyId: coId, name: 'Priya Kulkarni', email: 'priya@acmeprecision.in', role: 'SALES_MANAGER' },
       { companyId: coId, name: 'Amit Patil', email: 'amit@acmeprecision.in', role: 'PURCHASE_MANAGER' },
       { companyId: coId, name: 'Suresh Joshi', email: 'suresh@acmeprecision.in', role: 'PRODUCTION_MANAGER' },
@@ -112,7 +113,7 @@ async function main() {
       { companyId: coId, name: 'Anita Gokhale', email: 'anita@acmeprecision.in', role: 'QUALITY_MANAGER' },
       { companyId: coId, name: 'Deepak Rane', email: 'deepak@acmeprecision.in', role: 'STORE_MANAGER' },
       { companyId: coId, name: 'Sarita Mhatre', email: 'sarita@acmeprecision.in', role: 'ACCOUNTANT' },
-      { companyId: coId, name: 'Rahul Pawar', email: 'rahul@acmeprecision.in', role: 'OPERATOR' },
+      { companyId: coId, name: 'Rahul Pawar', email: 'rahul@acmeprecision.in', role: 'OPERATOR', passwordHash: hashPassword(DEMO_PASSWORD) },
     ],
   })
 

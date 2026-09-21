@@ -132,6 +132,10 @@ export default function StockLedgerModule({ companyId }: { companyId: string }) 
       <DataTable
         columns={columns} rows={filtered} loading={loading}
         searchPlaceholder="Search ledger…" emptyText="No stock movements yet" pageSize={15}
+        csvExport={{
+          filename: 'stock-ledger',
+          pick: (r) => [new Date(r.date).toISOString().slice(0, 10), r.type, r.item?.code || '', r.item?.name || '', r.warehouse?.code || '', r.qtyIn ?? 0, r.qtyOut ?? 0, r.rate ?? 0, r.refType || '', r.refNumber || ''],
+        }}
       />
     </div>
   )

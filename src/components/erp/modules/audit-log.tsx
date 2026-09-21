@@ -76,6 +76,10 @@ export default function AuditLogModule({ companyId }: { companyId: string }) {
         searchPlaceholder="Search audit trail…"
         emptyText="No audit entries yet"
         pageSize={15}
+        csvExport={{
+          filename: 'audit-log',
+          pick: (r) => [new Date(r.createdAt).toISOString(), r.userName || '', r.action, r.entity, r.entityId || '', r.details || ''],
+        }}
       />
     </div>
   )

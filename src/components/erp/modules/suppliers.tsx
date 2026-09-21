@@ -213,6 +213,10 @@ export default function SuppliersModule({ companyId }: { companyId: string }) {
         loading={loading}
         searchPlaceholder="Search suppliers…"
         emptyText="No suppliers yet"
+        csvExport={{
+          filename: 'suppliers',
+          pick: (r) => [r.code, r.name, r.gstin || '', r.contactPerson || '', r.phone || '', r.email || '', r.city || '', r.state || '', r.paymentTermsDays ?? 0, r.status],
+        }}
       />
 
       <FormDialog

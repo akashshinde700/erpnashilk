@@ -174,7 +174,13 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
         description="Raise, approve and track supplier orders"
         actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Purchase Order</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase orders…" onRowClick={(r) => setDetail(r)} />
+      <DataTable
+        columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase orders…" onRowClick={(r) => setDetail(r)}
+        csvExport={{
+          filename: 'purchase-orders',
+          pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.supplier?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],
+        }}
+      />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide title="New Purchase Order" submitLabel="Create PO"

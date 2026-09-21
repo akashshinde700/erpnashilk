@@ -122,7 +122,17 @@ export default function StockModule({ companyId }: { companyId: string }) {
         </p>
       </div>
 
-      <DataTable columns={columns} rows={filtered} loading={loading} searchPlaceholder="Search stock…" emptyText="No stock balances yet — post GRNs, productions or opening stock" />
+      <DataTable
+        columns={columns}
+        rows={filtered}
+        loading={loading}
+        searchPlaceholder="Search stock…"
+        emptyText="No stock balances yet — post GRNs, productions or opening stock"
+        csvExport={{
+          filename: 'stock-balances',
+          pick: (r) => [r.item?.code || '', r.item?.name || '', r.item?.type || '', r.warehouse?.code || '', r.qty, r.avgRate, Math.round(r.qty * r.avgRate * 100) / 100, r.item?.reorderLevel ?? 0],
+        }}
+      />
     </div>
   )
 }

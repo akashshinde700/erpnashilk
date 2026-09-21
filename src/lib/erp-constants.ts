@@ -71,3 +71,35 @@ export interface ApiResponse<T> {
   message?: string
   error?: { code: string; message: string }
 }
+
+// ============ RBAC: role → visible module keys (client-side gating) ============
+// '*' = full access. Server still enforces tenant isolation; this gates navigation only.
+export const ROLE_MODULE_KEYS: Record<string, string[] | '*'> = {
+  TENANT_ADMIN: '*',
+  MANAGEMENT: '*',
+  SUPER_ADMIN: '*',
+  SALES_MANAGER: ['dashboard', 'items', 'customers', 'enquiries', 'quotations', 'sales-orders', 'deliveries', 'sales-invoices', 'payments', 'reports', 'stock'],
+  SALES_EXECUTIVE: ['dashboard', 'items', 'customers', 'enquiries', 'quotations', 'sales-orders', 'deliveries', 'sales-invoices', 'stock'],
+  PURCHASE_MANAGER: ['dashboard', 'items', 'suppliers', 'requisitions', 'purchase-orders', 'grns', 'purchase-invoices', 'payments', 'reports', 'stock'],
+  PURCHASE_EXECUTIVE: ['dashboard', 'items', 'suppliers', 'requisitions', 'purchase-orders', 'grns', 'purchase-invoices', 'stock'],
+  PRODUCTION_MANAGER: ['dashboard', 'items', 'boms', 'machines', 'work-orders', 'material-issues', 'production-entries', 'mrp', 'qc-inspections', 'stock', 'reports'],
+  PRODUCTION_SUPERVISOR: ['dashboard', 'work-orders', 'material-issues', 'production-entries', 'mrp', 'qc-inspections', 'stock'],
+  PLANT_MANAGER: ['dashboard', 'items', 'boms', 'machines', 'work-orders', 'material-issues', 'production-entries', 'mrp', 'qc-inspections', 'stock', 'reports'],
+  OPERATOR: ['dashboard', 'work-orders', 'production-entries', 'stock'],
+  STORE_MANAGER: ['dashboard', 'items', 'warehouses', 'stock', 'stock-ledger', 'stock-transfers', 'stock-adjustments', 'grns', 'deliveries'],
+  STORE_OPERATOR: ['dashboard', 'stock', 'stock-ledger', 'stock-transfers'],
+  QUALITY_MANAGER: ['dashboard', 'items', 'qc-inspections', 'grns', 'production-entries', 'reports'],
+  QC_INSPECTOR: ['dashboard', 'qc-inspections', 'stock'],
+  ACCOUNTS_MANAGER: ['dashboard', 'sales-invoices', 'purchase-invoices', 'payments', 'expenses', 'receivables', 'payables', 'gst-report', 'reports'],
+  ACCOUNTANT: ['dashboard', 'sales-invoices', 'purchase-invoices', 'payments', 'expenses', 'receivables', 'payables', 'gst-report', 'reports'],
+  DISPATCH_MANAGER: ['dashboard', 'sales-orders', 'deliveries', 'stock', 'items'],
+  MAINTENANCE_MANAGER: ['dashboard', 'machines'],
+  VIEWER: ['dashboard'],
+}
+
+export function canAccessModule(role: string | null | undefined, moduleKey: string): boolean {
+  if (!role) return false
+  const allowed = ROLE_MODULE_KEYS[role]
+  if (!allowed) return role === 'TENANT_ADMIN' // unknown roles default to minimal
+  return allowed === '*' || allowed.includes(moduleKey)
+}

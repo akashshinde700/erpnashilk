@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2 } from '@/lib/erp-helpers'
+import { emitEvent } from '@/lib/emit-event'
 
 interface SoLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
@@ -144,6 +145,8 @@ export async function POST(req: Request) {
       })
       return so
     })
+
+    void emitEvent({ companyId, title: 'New Sales Order', message: `${created.number} for ₹${totals.grandTotal}`, level: 'INFO', topic: 'sales' })
 
     const full = await db.salesOrder.findFirst({
       where: { id: created.id, companyId },

@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Package, Users, Truck, Building2, Wrench, Layers3, UserCog,
   ClipboardList, FileText, ShoppingCart, Boxes, Warehouse, ArrowLeftRight, SlidersHorizontal,
   Factory, ClipboardCheck, Award, ReceiptIndianRupee, Wallet, Landmark, Percent,
-  ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck,
+  ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck, BarChart3,
 } from 'lucide-react'
 
 import DashboardModule from '@/components/erp/modules/dashboard'
@@ -41,6 +41,8 @@ import PayablesModule from '@/components/erp/modules/payables'
 import GstReportModule from '@/components/erp/modules/gst-report'
 import AuditLogModule from '@/components/erp/modules/audit-log'
 import SettingsModule from '@/components/erp/modules/settings'
+import ReportsModule from '@/components/erp/modules/reports'
+import CompanySetupModule from '@/components/erp/modules/company-setup'
 
 export interface ErpModuleDef {
   key: string
@@ -92,9 +94,11 @@ export const MODULES: ErpModuleDef[] = [
   { key: 'expenses', label: 'Expenses', icon: Wallet, group: 'Finance', component: ExpensesModule },
   { key: 'receivables', label: 'Receivables', icon: Handshake, group: 'Finance', component: ReceivablesModule },
   { key: 'payables', label: 'Payables', icon: Landmark, group: 'Finance', component: PayablesModule },
+  { key: 'reports', label: 'Reports Center', icon: BarChart3, group: 'Finance', description: 'Sales, purchase, stock & profitability analytics', component: ReportsModule },
   // GST
   { key: 'gst-report', label: 'GST Reports', icon: Percent, group: 'GST', component: GstReportModule },
   // Admin
+  { key: 'company-setup', label: 'Company Setup', icon: Building2, group: 'Admin', description: 'Create & manage tenant companies', component: CompanySetupModule },
   { key: 'audit-log', label: 'Audit Log', icon: ScrollText, group: 'Admin', component: AuditLogModule },
   { key: 'settings', label: 'Settings', icon: Settings, group: 'Admin', description: 'Company profile, numbering, notifications', component: SettingsModule },
 ]

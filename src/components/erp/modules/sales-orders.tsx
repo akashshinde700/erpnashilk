@@ -164,7 +164,13 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
         description="Confirmed customer orders feeding production and dispatch"
         actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Sales Order</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search sales orders…" onRowClick={(r) => setDetail(r)} />
+      <DataTable
+        columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search sales orders…" onRowClick={(r) => setDetail(r)}
+        csvExport={{
+          filename: 'sales-orders',
+          pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.customer?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],
+        }}
+      />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide title="New Sales Order" submitLabel="Create Sales Order"

@@ -14,7 +14,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 import { fmtDate, fmtMoney, fmtNum, tone } from '@/lib/erp-constants'
-import { Inbox, Search, Printer } from 'lucide-react'
+import { Download, Inbox, Search, Printer } from 'lucide-react'
 
 // ---------- Page header ----------
 
@@ -64,6 +64,24 @@ export function StatCard({ title, value, sub, icon, toneClass }: { title: string
   )
 }
 
+// ---------- CSV export ----------
+
+function csvEscape(v: string | number): string {
+  const s = String(v ?? '')
+  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
+}
+
+export function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
+  const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n')
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ---------- Generic data table ----------
 
 export interface Column<T> {
@@ -75,7 +93,7 @@ export interface Column<T> {
 }
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -85,6 +103,8 @@ export function DataTable<T extends { id: string }>({
   onRowClick?: (row: T) => void
   maxHeight?: string
   pageSize?: number
+  /** When provided, shows an "Export CSV" button exporting all filtered rows. */
+  csvExport?: { filename: string; pick: (row: T) => (string | number)[] }
 }) {
   const [q, setQ] = React.useState('')
   const [page, setPage] = React.useState(0)
@@ -102,10 +122,24 @@ export function DataTable<T extends { id: string }>({
 
   return (
     <div className="space-y-3">
-      {searchPlaceholder && (
-        <div className="relative max-w-xs">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="pl-8 h-9" />
+      {(searchPlaceholder || csvExport) && (
+        <div className="flex items-center justify-between gap-2">
+          {searchPlaceholder ? (
+            <div className="relative max-w-xs flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="pl-8 h-9" />
+            </div>
+          ) : <div />}
+          {csvExport && rows.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 shrink-0"
+              onClick={() => downloadCsv(csvExport.filename, columns.map((c) => c.header), filtered.map(csvExport.pick))}
+            >
+              <Download className="h-4 w-4 mr-1.5" />CSV
+            </Button>
+          )}
         </div>
       )}
       <div className="rounded-lg border overflow-hidden bg-card">

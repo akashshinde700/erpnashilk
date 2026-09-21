@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import {
   ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, r2,
 } from '@/lib/erp-helpers'
+import { emitEvent } from '@/lib/emit-event'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -175,6 +176,7 @@ export async function POST(req: Request) {
       })
       return created
     })
+    void emitEvent({ companyId, title: 'GRN created', message: `${grn.number} — QC pending`, topic: 'quality' })
     const [row] = await attachItemInfo(companyId, [grn])
     return ok(row, 'GRN created — pending QC')
   } catch (e) {
