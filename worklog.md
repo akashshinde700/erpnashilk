@@ -351,3 +351,44 @@ Work Log:
 
 Stage Summary:
 - Phase 6 shipped: demo-grade auth (email+password, scrypt), role-based module gating (client-side; server stays tenant-gated), multi-tenant self-service creation, 4-tab analytics Reports Center with CSV+print, global Cmd+K search across modules+documents, CSV export on 8+ tables, live socket.io notifications wired to 5 business events. All browser-verified. Remaining ideas for Phase 7: server-side session enforcement (API-level RBAC), quotation→SO deep-linking from search, Excel import, dark mode polish, password change UI.
+---
+Task ID: 7-a
+Agent: change-password-api
+Task: POST /api/auth/change-password — logged-in user changes own password (scrypt verify, demo fallback, CONFIG audit)
+
+Work Log:
+- Read worklog (Phase 6 auth contract), password.ts (hashPassword/verifyPassword + DEMO_PASSWORD fallback for null passwordHash), erp-helpers.ts (ok/fail/ApiError/handleError, logAudit(tx,{companyId,userName,action,entity,entityId,details})), auth/login + auth/logout routes (patterns: body via req.json().catch(()=>({})), logAudit(db as never,...), best-effort audit in try/catch), prisma schema (User: id/companyId/name/email/role/passwordHash?/active), users route (?companyId= query) and audit-logs route (?companyId=&limit=).
+- Created src/app/api/auth/change-password/route.ts (only file touched): POST {userId,currentPassword,newPassword,userName?}; string-coerced body guards; missing/empty userId|currentPassword|newPassword → 400 'Current and new passwords are required'; newPassword.trim().length<6 → 400 'New password must be at least 6 characters'; findUnique by id → 404 'User not found'; verifyPassword(currentPassword,user.passwordHash) handles both hashed users and legacy null-hash users (demo1234) → 401 'Current password is incorrect'; no-op guard via verifyPassword(newPassword.trim(), user.passwordHash) → 400 'New password must be different from current password'; success: db.user.update passwordHash=hashPassword(newPassword.trim()); best-effort logAudit(db as never) action CONFIG entity USER entityId=user.id details `Password changed for ${user.email}`, userName = body.userName (trimmed) || user.name, wrapped in try/catch (logout-route pattern); returns ok({success:true},'Password updated successfully'); outer try/catch → handleError(e) for ApiError vs unexpected.
+- Verification: bunx eslint on the file → 0 problems; bunx tsc --noEmit (filtered) → 0 errors in src/. Runtime curl on running dev server (not restarted): missing fields → 400; short newPassword → 400; unknown userId → 404; wrong current password → 401; same-password demo1234→demo1234 → 400; rajesh (cmub9qyqx000cj79otz112htk) demo1234→newpass123 → 200 'Password updated successfully'; old password login → 401; restore newpass123→demo1234 → 200; same-password guard after restore → 400; login rajesh/demo1234 → 200 with user+company envelope. GET /api/audit-logs?companyId=cmub9qyqv000bj79o5q1jpkxl shows 2 CONFIG/USER rows 'Password changed for rajesh@acmeprecision.in' (userName 'admin').
+- Demo state preserved: rajesh's password ends as demo1234. No other files modified; no packages installed; dev server untouched.
+
+Stage Summary:
+- New file: src/app/api/auth/change-password/route.ts. Contract: POST { userId: string, currentPassword: string, newPassword: string, userName?: string } → 200 { success:true, data:{success:true}, message:'Password updated successfully' }; 400 missing fields ('Current and new passwords are required'), 400 newPassword.trim().length<6, 400 new===effective current ('New password must be different from current password'), 404 unknown userId ('User not found'), 401 wrong current password ('Current password is incorrect', incl. legacy null-hash users verifying against demo 'demo1234'). Success writes scrypt hash of trimmed newPassword + best-effort CONFIG/USER audit row (`Password changed for <email>`). All responses use the standard ok()/fail() envelopes; unexpected errors go through handleError().
+---
+Task ID: 7
+Agent: main (orchestrator)
+Task: Phase 7 "UX Excellence & Shortcuts" — keyboard shortcuts, favorites/recents, collapsible sidebar, dark mode, user menu + change password, palette polish
+
+Work Log:
+- Task 7-a (subagent change-password-api): created src/app/api/auth/change-password/route.ts — POST {userId,currentPassword,newPassword,userName?}; 400 missing/short/same-as-current, 404 unknown user, 401 wrong current (legacy null-hash accepts demo1234), 200 ok() + CONFIG/USER audit row. Verified via curl (all error paths + rajesh demo1234→newpass99→demo1234 restore → login 200). eslint 0, tsc 0.
+- kit.tsx: added shared <Kbd> key-chip component (used by palette footer, user menu, shortcuts help, app footer).
+- layout.tsx: wrapped app in next-themes ThemeProvider (attribute="class", defaultTheme="light", enableSystem, disableTransitionOnChange) — next-themes was already a dependency; globals.css already had .dark tokens.
+- NEW src/components/erp/shortcuts-help.tsx: ShortcutsDialog — grouped cheatsheet (General: Ctrl+K, /, ?, Esc; Navigate: [ ], g+key table), Kbd chips, accessible dialog.
+- NEW src/components/erp/change-password-dialog.tsx: current/new/confirm fields, show/hide toggle, strength meter, client validation (min 6, match, differ), apiPost to change-password, inline role=alert errors + toasts.
+- erp-app.tsx rework:
+  * Keyboard shortcuts engine (window keydown, guarded by isTypingTarget + open-dialog checks): Ctrl/Cmd+K toggle palette, '/' open palette, '?' toggle help dialog, 'g'+key Gmail-style jumps (18 mappings d/i/c/v/s/o/q/e/n/p/w/m/b/l/t/u/r/a; RBAC-checked, toast.error when role lacks module), '[' / ']' prev/next visible module with wrap-around.
+  * Favorites: star button per sidebar row (hover reveal, amber filled when pinned), FAVORITES group at sidebar top, palette Favorites group; persisted localStorage erp_fav_modules.
+  * Recents: goToModule records last 6 modules → palette 'Recent' group; persisted erp_recent_modules.
+  * Collapsible desktop sidebar: w-60 ↔ w-[56px] icon rail (title tooltips, group headers become separators, footer text hidden), toggle moved to TOPBAR (bottom-left button collided with Next.js dev-tools badge), persisted erp_sidebar_collapsed; mobile drawer always expanded.
+  * User dropdown menu (replaces bare logout button + static chip): avatar trigger on all breakpoints, header with name/email/role/company, Change password, Keyboard shortcuts (?), theme toggle, red Sign out.
+  * Dark mode toggle in topbar (Sun/Moon, mounted-guarded) + palette 'Actions' group (Dark mode, Keyboard shortcuts, Show quick tips).
+  * Palette footer hint bar: ↑↓ navigate · ↵ open · Esc close · g+d go to module · ? all shortcuts (clickable).
+  * document.title follows active module ('Stock · ManuFlow ERP'); one-time 'Pro tips' toast (erp_tip_shown flag) after login/restore.
+- Browser verification (agent-browser, gateway :81 path via :3000 direct): login via demo chip; '?' opens help dialog; g+s → Stock, ']' → Stock Ledger, '[' → Purchase Invoices (titles confirmed); '/' opens palette with Recent/Favorites/Modules/Actions + footer hints; Dark mode via palette action → html.dark, full dark render OK (tables/badges/charts); star Items+Stock → FAVORITES group + localStorage ["items","stock"]; collapse → w-[56px] rail; user menu → Change password: mismatch error shown, wrong current 401 'Current password is incorrect' shown inline, successful change closes dialog + API login verified with new password; password restored to demo1234 (login 200). Mobile 390×844: hamburger drawer with Favorites, 2-col KPIs, all topbar controls fit. Desktop restored to light + expanded for handoff.
+- eslint 0 problems (all touched files); tsc 0 errors in src/; dev.log clean (only 200s); notify-service healthy on :3003; console/page errors: none.
+
+Stage Summary:
+- Phase 7 shipped: full keyboard shortcuts (Ctrl+K, /, ?, g+key ×18, [ ] module cycling), favorites/recents pinning, collapsible icon-rail sidebar, dark mode app-wide, user menu with working self-service password change, palette action group + hint footer, dynamic tab titles, one-time pro-tips toast.
+- Files: NEW src/app/api/auth/change-password/route.ts, src/components/erp/shortcuts-help.tsx, src/components/erp/change-password-dialog.tsx; MODIFIED src/components/erp/erp-app.tsx (major), src/components/erp/kit.tsx (Kbd), src/app/layout.tsx (ThemeProvider). No module files touched.
+- localStorage keys added: erp_fav_modules, erp_recent_modules, erp_sidebar_collapsed, erp_tip_shown. Demo state intact (rajesh=demo1234; Test Tenant LLP still present).
+- Ideas for Phase 8: server-side API RBAC enforcement, Excel import, dashboard quick-actions card, module-level deep links from search results (highlight row), printable invoice templates polish.

@@ -1,10 +1,12 @@
 'use client'
 
 import * as React from 'react'
+import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import { io, type Socket } from 'socket.io-client'
 import {
-  Bell, CheckCheck, ChevronDown, Factory, Loader2, LogOut, Menu, Search, X, Command as CommandIcon,
+  Bell, CheckCheck, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
+  Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -13,13 +15,19 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator,
 } from '@/components/ui/command'
 import { cn } from '@/lib/utils'
 import { fmtDateTime, ROLE_LABEL, canAccessModule } from '@/lib/erp-constants'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { MODULES, MODULE_GROUPS, findModule } from '@/components/erp/registry'
+import { Kbd } from '@/components/erp/kit'
 import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp/login-screen'
+import ShortcutsDialog from '@/components/erp/shortcuts-help'
+import ChangePasswordDialog from '@/components/erp/change-password-dialog'
 
 interface CompanyRow {
   id: string
@@ -53,6 +61,9 @@ interface SearchResult {
 }
 
 const SESSION_KEY = 'erp_user'
+const FAV_KEY = 'erp_fav_modules'
+const RECENT_KEY = 'erp_recent_modules'
+const COLLAPSE_KEY = 'erp_sidebar_collapsed'
 
 const LEVEL_DOT: Record<string, string> = {
   INFO: 'bg-sky-500',
@@ -62,8 +73,47 @@ const LEVEL_DOT: Record<string, string> = {
 
 const TENANT_ADMIN_ROLES = ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN']
 
+/** g + key → module key (Gmail-style jump). Only fires for modules the role can access. */
+const GO_KEYS: Record<string, string> = {
+  d: 'dashboard',
+  i: 'items',
+  c: 'customers',
+  v: 'suppliers',
+  s: 'stock',
+  o: 'sales-orders',
+  q: 'quotations',
+  e: 'enquiries',
+  n: 'sales-invoices',
+  p: 'purchase-orders',
+  w: 'work-orders',
+  m: 'mrp',
+  b: 'boms',
+  l: 'stock-ledger',
+  t: 'stock-transfers',
+  u: 'users',
+  r: 'reports',
+  a: 'audit-log',
+}
+
 const initials = (name: string) =>
   name.split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() || '').join('') || 'U'
+
+function isTypingTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false
+  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+}
+
+function readJsonArray(key: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter((k) => typeof k === 'string') : []
+  } catch { return [] }
+}
+
+function persistJson(key: string, value: string[]) {
+  try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* private mode */ }
+}
 
 export default function ErpApp() {
   const [session, setSession] = React.useState<Session | null>(null)
@@ -74,12 +124,26 @@ export default function ErpApp() {
   const [switching, setSwitching] = React.useState(false)
   const socketRef = React.useRef<Socket | null>(null)
 
-  // ---------- boot: restore session ----------
+  // ---------- Phase 7 UX state ----------
+  const [collapsed, setCollapsed] = React.useState(false)
+  const [favs, setFavs] = React.useState<string[]>([])
+  const [recents, setRecents] = React.useState<string[]>([])
+  const [helpOpen, setHelpOpen] = React.useState(false)
+  const [pwdOpen, setPwdOpen] = React.useState(false)
+  const goPendingRef = React.useRef(0)
+  const { resolvedTheme, setTheme } = useTheme()
+  const [themeMounted, setThemeMounted] = React.useState(false)
+
+  // ---------- boot: restore session + prefs ----------
   React.useEffect(() => {
     try {
       const raw = window.localStorage.getItem(SESSION_KEY)
       if (raw) setSession(JSON.parse(raw) as Session)
+      setCollapsed(window.localStorage.getItem(COLLAPSE_KEY) === '1')
+      setFavs(readJsonArray(FAV_KEY))
+      setRecents(readJsonArray(RECENT_KEY))
     } catch { /* corrupted session — ignore */ }
+    setThemeMounted(true)
     setBooting(false)
   }, [])
 
@@ -115,6 +179,11 @@ export default function ErpApp() {
     window.scrollTo({ top: 0 })
   }, [activeKey])
 
+  // Browser tab title follows the active module
+  React.useEffect(() => {
+    document.title = session ? `${activeModule.label} · ManuFlow ERP` : 'ManuFlow ERP — Manufacturing SaaS Suite'
+  }, [activeModule, session])
+
   const notifications = useList<{ items: NotificationRow[]; unreadCount: number }>(
     session && companyId ? `/api/notifications?companyId=${companyId}&unread=1` : null,
   )
@@ -147,17 +216,6 @@ export default function ErpApp() {
   const [searching, setSearching] = React.useState(false)
 
   React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setPaletteOpen((o) => !o)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  React.useEffect(() => {
     if (!paletteOpen || !session || !companyId) return
     const q = paletteQuery.trim()
     if (q.length < 2) { setSearchResults([]); setSearching(false); return }
@@ -176,6 +234,15 @@ export default function ErpApp() {
     [session],
   )
 
+  const favModules = React.useMemo(
+    () => favs.map((k) => findModule(k)).filter((m): m is NonNullable<typeof m> => !!m && canAccessModule(session?.user.role, m.key)),
+    [favs, session],
+  )
+  const recentModules = React.useMemo(
+    () => recents.map((k) => findModule(k)).filter((m): m is NonNullable<typeof m> => !!m && canAccessModule(session?.user.role, m.key)).slice(0, 5),
+    [recents, session],
+  )
+
   // group palette search results by target module
   const groupedResults = React.useMemo(() => {
     const map = new Map<string, SearchResult[]>()
@@ -191,6 +258,85 @@ export default function ErpApp() {
     setActiveKey(key)
     setPaletteOpen(false)
     setNavOpen(false)
+    setRecents((prev) => {
+      const nx = [key, ...prev.filter((k) => k !== key)].slice(0, 6)
+      persistJson(RECENT_KEY, nx)
+      return nx
+    })
+  }
+
+  function toggleFav(key: string) {
+    setFavs((prev) => {
+      const nx = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      persistJson(FAV_KEY, nx)
+      return nx
+    })
+  }
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const nx = !prev
+      try { window.localStorage.setItem(COLLAPSE_KEY, nx ? '1' : '0') } catch { /* private mode */ }
+      return nx
+    })
+  }
+
+  // ---------- keyboard shortcuts engine ----------
+  React.useEffect(() => {
+    if (!session) return
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((o) => !o)
+        return
+      }
+      if (paletteOpen || helpOpen || pwdOpen) return
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
+
+      // g + key sequence (Gmail-style)
+      const now = Date.now()
+      if (goPendingRef.current && now - goPendingRef.current < 1500) {
+        goPendingRef.current = 0
+        const target = GO_KEYS[e.key.toLowerCase()]
+        if (target) {
+          e.preventDefault()
+          const def = findModule(target)
+          if (def && canAccessModule(session.user.role, target)) goToModule(target)
+          else if (def) toast.error(`${def.label} is not available for the ${ROLE_LABEL[session.user.role] || session.user.role} role`)
+          return
+        }
+      }
+      if (e.key === 'g') { goPendingRef.current = Date.now(); return }
+      if (e.key === '?') { e.preventDefault(); setHelpOpen((o) => !o); return }
+      if (e.key === '/') { e.preventDefault(); setPaletteOpen(true); return }
+      if (e.key === '[' || e.key === ']') {
+        e.preventDefault()
+        const dir = e.key === ']' ? 1 : -1
+        const idx = visibleModules.findIndex((m) => m.key === activeKey)
+        const nextIdx = (idx + dir + visibleModules.length) % visibleModules.length
+        const target = visibleModules[nextIdx]
+        if (target) goToModule(target.key)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [session, paletteOpen, helpOpen, pwdOpen, visibleModules, activeKey])
+
+  function toggleTheme() {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
+  }
+
+  function showProTipOnce() {
+    try {
+      if (!window.localStorage.getItem('erp_tip_shown')) {
+        window.localStorage.setItem('erp_tip_shown', '1')
+        setTimeout(() => {
+          toast('Pro tips for power users', {
+            description: 'Press ? for keyboard shortcuts · Ctrl+K to search · g then d to jump to Dashboard · star modules to pin them.',
+          })
+        }, 1500)
+      }
+    } catch { /* private mode */ }
   }
 
   function handleLogin(user: LoginUser, company: LoginCompany) {
@@ -201,6 +347,7 @@ export default function ErpApp() {
     setCompanyId(user.companyId)
     setActiveKey('dashboard')
     toast.success(`Welcome back, ${user.name.split(' ')[0]}`, { description: `${ROLE_LABEL[user.role] || user.role} · ${company.name}` })
+    showProTipOnce()
   }
 
   async function logout() {
@@ -211,6 +358,8 @@ export default function ErpApp() {
     setCompanyId(null)
     setActiveKey('dashboard')
     setPaletteOpen(false)
+    setPwdOpen(false)
+    setHelpOpen(false)
     toast.success('Signed out')
   }
 
@@ -252,73 +401,129 @@ export default function ErpApp() {
 
   const currentCompany = companyList.find((c) => c.id === companyId)
 
-  const sidebar = (
-    <div className="flex h-full flex-col bg-card">
-      <div className="flex items-center gap-2.5 px-4 h-14 border-b shrink-0">
-        <div className="h-8 w-8 rounded-lg bg-emerald-600 text-white grid place-items-center shrink-0">
-          <Factory className="h-4.5 w-4.5" />
-        </div>
-        <div className="leading-tight min-w-0">
-          <p className="font-semibold text-sm">ManuFlow ERP</p>
-          <p className="text-[10px] text-muted-foreground">Manufacturing SaaS Suite</p>
-        </div>
-        {navOpen && (
-          <Button variant="ghost" size="icon" className="ml-auto lg:hidden h-8 w-8" onClick={() => setNavOpen(false)}>
-            <X className="h-4 w-4" />
-          </Button>
+  function renderModuleRow(m: (typeof MODULES)[number], opts: { collapsed: boolean; star?: boolean }) {
+    const active = m.key === activeKey
+    const isFav = favs.includes(m.key)
+    return (
+      <div
+        key={m.key}
+        className={cn(
+          'group flex items-center rounded-md transition-colors',
+          active ? 'bg-emerald-600 text-white font-medium shadow-sm' : 'text-foreground/70 hover:bg-muted hover:text-foreground',
+        )}
+      >
+        <button
+          onClick={() => goToModule(m.key)}
+          title={opts.collapsed ? m.label : undefined}
+          className={cn(
+            'flex flex-1 items-center gap-2.5 py-1.5 text-[13px] text-left min-w-0',
+            opts.collapsed ? 'justify-center px-0' : 'px-2.5',
+          )}
+          aria-current={active ? 'page' : undefined}
+        >
+          <m.icon className="h-4 w-4 shrink-0" />
+          {!opts.collapsed && <span className="truncate">{m.label}</span>}
+        </button>
+        {opts.star && !opts.collapsed && (
+          <button
+            onClick={() => toggleFav(m.key)}
+            className={cn(
+              'mr-1.5 rounded p-1 transition-opacity',
+              isFav ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+              active ? 'hover:bg-white/20' : 'hover:bg-muted',
+            )}
+            aria-label={isFav ? `Unpin ${m.label}` : `Pin ${m.label} to favorites`}
+            title={isFav ? 'Unpin' : 'Pin to favorites'}
+          >
+            <Star className={cn('h-3.5 w-3.5', isFav ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground')} />
+          </button>
         )}
       </div>
-      <ScrollArea className="flex-1">
-        <nav className="p-2 pb-6" aria-label="ERP modules">
-          {MODULE_GROUPS.map((group) => {
-            const mods = visibleModules.filter((m) => m.group === group)
-            if (!mods.length) return null
-            return (
-              <div key={group} className="mb-1">
-                <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group}</p>
-                {mods.map((m) => {
-                  const active = m.key === activeKey
-                  return (
-                    <button
-                      key={m.key}
-                      onClick={() => goToModule(m.key)}
-                      className={cn(
-                        'w-full flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors text-left',
-                        active ? 'bg-emerald-600 text-white font-medium shadow-sm' : 'text-foreground/70 hover:bg-muted hover:text-foreground',
-                      )}
-                      aria-current={active ? 'page' : undefined}
-                    >
-                      <m.icon className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{m.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </nav>
-      </ScrollArea>
-      <div className="border-t px-4 py-2.5 text-[10px] text-muted-foreground shrink-0">
-        {currentCompany ? (
-          <div className="truncate">
-            <span className="font-medium text-foreground/80">{currentCompany.name}</span>
-            {currentCompany.gstin && <span className="ml-1">· GSTIN {currentCompany.gstin}</span>}
+    )
+  }
+
+  function buildSidebar(isCollapsed: boolean) {
+    const favRows = favModules.filter((m) => m.group !== 'Dashboard')
+    return (
+      <div className="flex h-full flex-col bg-card">
+        <div className={cn('flex items-center gap-2.5 h-14 border-b shrink-0', isCollapsed ? 'justify-center px-0' : 'px-4')}>
+          <div className="h-8 w-8 rounded-lg bg-emerald-600 text-white grid place-items-center shrink-0">
+            <Factory className="h-4.5 w-4.5" />
           </div>
-        ) : 'Multi-tenant SaaS · FY Apr–Mar'}
+          {!isCollapsed && (
+            <div className="leading-tight min-w-0">
+              <p className="font-semibold text-sm">ManuFlow ERP</p>
+              <p className="text-[10px] text-muted-foreground">Manufacturing SaaS Suite</p>
+            </div>
+          )}
+          {navOpen && (
+            <Button variant="ghost" size="icon" className="ml-auto lg:hidden h-8 w-8" onClick={() => setNavOpen(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        <ScrollArea className="flex-1">
+          <nav className={cn('pb-6', isCollapsed ? 'p-1.5' : 'p-2')} aria-label="ERP modules">
+            {favRows.length > 0 && (
+              <div className="mb-1">
+                {isCollapsed ? (
+                  <div className="mx-2 my-2 border-t" />
+                ) : (
+                  <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-1">
+                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> Favorites
+                  </p>
+                )}
+                {favRows.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
+              </div>
+            )}
+            {MODULE_GROUPS.map((group) => {
+              const mods = visibleModules.filter((m) => m.group === group)
+              if (!mods.length) return null
+              return (
+                <div key={group} className="mb-1">
+                  {isCollapsed ? (
+                    <div className="mx-2 my-2 border-t" />
+                  ) : (
+                    <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group}</p>
+                  )}
+                  {mods.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
+                </div>
+              )
+            })}
+          </nav>
+        </ScrollArea>
+        <div className={cn('border-t shrink-0', isCollapsed ? 'px-1.5 py-2.5' : 'px-4 py-2.5')}>
+          {isCollapsed ? (
+            <div className="h-4" aria-hidden="true" />
+          ) : (
+            <div className="text-[10px] text-muted-foreground truncate">
+              {currentCompany ? (
+                <div className="truncate">
+                  <span className="font-medium text-foreground/80">{currentCompany.name}</span>
+                  {currentCompany.gstin && <span className="ml-1">· GSTIN {currentCompany.gstin}</span>}
+                </div>
+              ) : 'Multi-tenant SaaS · FY Apr–Mar'}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  const dark = themeMounted && resolvedTheme === 'dark'
 
   return (
     <div className="min-h-screen flex bg-background">
       {/* Desktop sidebar */}
-      <aside className="hidden lg:block w-60 border-r shrink-0 sticky top-0 h-screen">{sidebar}</aside>
+      <aside className={cn('hidden lg:block border-r shrink-0 sticky top-0 h-screen transition-[width] duration-200', collapsed ? 'w-[56px]' : 'w-60')}>
+        {buildSidebar(collapsed)}
+      </aside>
 
       {/* Mobile nav overlay */}
       {navOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-72 shadow-xl">{sidebar}</div>
+          <div className="absolute inset-y-0 left-0 w-72 shadow-xl">{buildSidebar(false)}</div>
         </div>
       )}
 
@@ -327,6 +532,18 @@ export default function ErpApp() {
         <header className="sticky top-0 z-40 h-14 border-b bg-card/95 backdrop-blur flex items-center gap-2 px-3 sm:px-4">
           <Button variant="ghost" size="icon" className="lg:hidden h-9 w-9 shrink-0" onClick={() => setNavOpen(true)} aria-label="Open navigation">
             <Menu className="h-5 w-5" />
+          </Button>
+
+          {/* Sidebar collapse toggle (desktop) */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden lg:inline-flex h-9 w-9 shrink-0 text-muted-foreground"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4.5 w-4.5" /> : <PanelLeftClose className="h-4.5 w-4.5" />}
           </Button>
 
           <div className="min-w-0 flex-1">
@@ -351,9 +568,21 @@ export default function ErpApp() {
             </kbd>
           </Button>
 
+          {/* Theme toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            onClick={toggleTheme}
+            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={dark ? 'Light mode' : 'Dark mode'}
+          >
+            {dark ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+          </Button>
+
           {/* Company switcher */}
-          <div className="flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <div className="hidden sm:flex items-center gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               {switching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="hidden md:inline">Tenant:</span>}
             </div>
             <Select value={companyId ?? ''} onValueChange={switchCompany} disabled={!multiTenant && companyList.length <= 1}>
@@ -369,57 +598,86 @@ export default function ErpApp() {
                 ))}
               </SelectContent>
             </Select>
-
-            {/* Notifications */}
-            <Popover open={notifOpen} onOpenChange={setNotifOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="relative h-9 w-9 shrink-0" aria-label={`Notifications (${notifications.data?.unreadCount || 0} unread)`}>
-                  <Bell className="h-4.5 w-4.5" />
-                  {!!notifications.data?.unreadCount && (
-                    <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] grid place-items-center font-semibold">
-                      {notifications.data.unreadCount > 9 ? '9+' : notifications.data.unreadCount}
-                    </span>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-80 p-0">
-                <div className="flex items-center justify-between px-3 py-2 border-b">
-                  <p className="text-sm font-medium">Notifications</p>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void markAllRead()}>
-                    <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
-                  </Button>
-                </div>
-                <ScrollArea className="max-h-80">
-                  {(notifications.data?.items || []).length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-8">No unread notifications 🎉</p>
-                  ) : (
-                    (notifications.data?.items || []).map((n) => (
-                      <div key={n.id} className="px-3 py-2.5 border-b last:border-0 flex gap-2.5">
-                        <span className={cn('h-2 w-2 rounded-full mt-1.5 shrink-0', LEVEL_DOT[n.level] || 'bg-gray-400')} />
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-medium leading-snug">{n.title}</p>
-                          {n.message && <p className="text-xs text-muted-foreground leading-snug mt-0.5">{n.message}</p>}
-                          <p className="text-[10px] text-muted-foreground/70 mt-1">{fmtDateTime(n.createdAt)}</p>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </ScrollArea>
-              </PopoverContent>
-            </Popover>
-
-            {/* User chip */}
-            <div className="hidden md:flex items-center gap-2 pl-2 border-l">
-              <div className="h-8 w-8 rounded-full bg-teal-600 text-white grid place-items-center text-xs font-semibold shrink-0">{initials(session.user.name)}</div>
-              <div className="leading-tight">
-                <p className="text-xs font-medium max-w-[140px] truncate">{session.user.name}</p>
-                <p className="text-[10px] text-muted-foreground">{ROLE_LABEL[session.user.role] || session.user.role}</p>
-              </div>
-            </div>
-            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Sign out" onClick={() => void logout()}>
-              <LogOut className="h-4 w-4" />
-            </Button>
           </div>
+
+          {/* Notifications */}
+          <Popover open={notifOpen} onOpenChange={setNotifOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="relative h-9 w-9 shrink-0" aria-label={`Notifications (${notifications.data?.unreadCount || 0} unread)`}>
+                <Bell className="h-4.5 w-4.5" />
+                {!!notifications.data?.unreadCount && (
+                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] grid place-items-center font-semibold">
+                    {notifications.data.unreadCount > 9 ? '9+' : notifications.data.unreadCount}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 p-0">
+              <div className="flex items-center justify-between px-3 py-2 border-b">
+                <p className="text-sm font-medium">Notifications</p>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void markAllRead()}>
+                  <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
+                </Button>
+              </div>
+              <ScrollArea className="max-h-80">
+                {(notifications.data?.items || []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">No unread notifications 🎉</p>
+                ) : (
+                  (notifications.data?.items || []).map((n) => (
+                    <div key={n.id} className="px-3 py-2.5 border-b last:border-0 flex gap-2.5">
+                      <span className={cn('h-2 w-2 rounded-full mt-1.5 shrink-0', LEVEL_DOT[n.level] || 'bg-gray-400')} />
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-medium leading-snug">{n.title}</p>
+                        {n.message && <p className="text-xs text-muted-foreground leading-snug mt-0.5">{n.message}</p>}
+                        <p className="text-[10px] text-muted-foreground/70 mt-1">{fmtDateTime(n.createdAt)}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </ScrollArea>
+            </PopoverContent>
+          </Popover>
+
+          {/* User menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex items-center gap-2 pl-1 sm:pl-2 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Open user menu"
+              >
+                <span className="h-8 w-8 rounded-full bg-teal-600 text-white grid place-items-center text-xs font-semibold">
+                  {initials(session.user.name)}
+                </span>
+                <span className="hidden md:block text-left leading-tight">
+                  <span className="block text-xs font-medium max-w-[140px] truncate">{session.user.name}</span>
+                  <span className="block text-[10px] text-muted-foreground">{ROLE_LABEL[session.user.role] || session.user.role}</span>
+                </span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuLabel className="font-normal">
+                <p className="text-sm font-medium truncate">{session.user.name}</p>
+                <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{ROLE_LABEL[session.user.role] || session.user.role} · {session.company?.name}</p>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setPwdOpen(true)}>
+                <KeyRound className="h-4 w-4 mr-2" />Change password
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setHelpOpen(true)}>
+                <Keyboard className="h-4 w-4 mr-2" />Keyboard shortcuts
+                <Kbd className="ml-auto">?</Kbd>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={toggleTheme}>
+                {dark ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
+                {dark ? 'Light mode' : 'Dark mode'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => void logout()} className="text-red-600 focus:text-red-600">
+                <LogOut className="h-4 w-4 mr-2" />Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </header>
 
         {/* Content */}
@@ -447,6 +705,14 @@ export default function ErpApp() {
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-[10px] font-normal">Signed in as {ROLE_LABEL[session.user.role] || session.user.role}</Badge>
               <Separator orientation="vertical" className="h-3 hidden sm:block" />
+              <button
+                onClick={() => setHelpOpen(true)}
+                className="hidden sm:flex items-center gap-1 hover:text-foreground transition-colors"
+                aria-label="Show keyboard shortcuts"
+              >
+                Shortcuts: <Kbd>?</Kbd>
+              </button>
+              <Separator orientation="vertical" className="h-3 hidden sm:block" />
               <span className="hidden sm:inline">FY {new Date().getMonth() + 1 >= 4 ? new Date().getFullYear() : new Date().getFullYear() - 1}–{(new Date().getMonth() + 1 >= 4 ? new Date().getFullYear() : new Date().getFullYear() - 1) + 1}</span>
             </div>
           </div>
@@ -462,15 +728,55 @@ export default function ErpApp() {
             <CommandEmpty>No results found.</CommandEmpty>
           )}
           {paletteQuery.trim().length < 2 && (
-            <CommandGroup heading="Modules">
-              {visibleModules.map((m) => (
-                <CommandItem key={m.key} value={`module-${m.key}`} onSelect={() => goToModule(m.key)}>
-                  <m.icon className="h-4 w-4 mr-2 text-muted-foreground" />
-                  <span>{m.label}</span>
-                  <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+            <>
+              {favModules.length > 0 && (
+                <CommandGroup heading="Favorites">
+                  {favModules.map((m) => (
+                    <CommandItem key={`fav-${m.key}`} value={`fav-${m.label}`} onSelect={() => goToModule(m.key)}>
+                      <Star className="h-4 w-4 mr-2 fill-amber-400 text-amber-400" />
+                      <span>{m.label}</span>
+                      <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              {recentModules.length > 0 && (
+                <CommandGroup heading="Recent">
+                  {recentModules.map((m) => (
+                    <CommandItem key={`recent-${m.key}`} value={`recent-${m.label}`} onSelect={() => goToModule(m.key)}>
+                      <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
+                      <span>{m.label}</span>
+                      <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              <CommandGroup heading="Modules">
+                {visibleModules.map((m) => (
+                  <CommandItem key={`module-${m.key}`} value={`module-${m.label}`} onSelect={() => goToModule(m.key)}>
+                    <m.icon className="h-4 w-4 mr-2 text-muted-foreground" />
+                    <span>{m.label}</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+              <CommandSeparator />
+              <CommandGroup heading="Actions">
+                <CommandItem value="action-theme" onSelect={() => { toggleTheme(); setPaletteOpen(false) }}>
+                  {dark ? <Sun className="h-4 w-4 mr-2 text-muted-foreground" /> : <Moon className="h-4 w-4 mr-2 text-muted-foreground" />}
+                  <span>{dark ? 'Light mode' : 'Dark mode'}</span>
                 </CommandItem>
-              ))}
-            </CommandGroup>
+                <CommandItem value="action-shortcuts" onSelect={() => { setPaletteOpen(false); setHelpOpen(true) }}>
+                  <Keyboard className="h-4 w-4 mr-2 text-muted-foreground" />
+                  <span>Keyboard shortcuts</span>
+                  <Kbd className="ml-auto">?</Kbd>
+                </CommandItem>
+                <CommandItem value="action-tip" onSelect={() => { setPaletteOpen(false); toast('Pro tips', { description: 'g then d → Dashboard · [ ] → prev/next module · / → search · star modules to pin.' }) }}>
+                  <Sparkles className="h-4 w-4 mr-2 text-muted-foreground" />
+                  <span>Show quick tips</span>
+                </CommandItem>
+              </CommandGroup>
+            </>
           )}
           {paletteQuery.trim().length >= 2 && groupedResults.map(([moduleKey, rows]) => {
             const mod = findModule(moduleKey)
@@ -490,7 +796,27 @@ export default function ErpApp() {
             )
           })}
         </CommandList>
+        <div className="border-t px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground shrink-0">
+          <span className="flex items-center gap-1"><Kbd>↑</Kbd><Kbd>↓</Kbd> navigate</span>
+          <span className="flex items-center gap-1"><Kbd>↵</Kbd> open</span>
+          <span className="flex items-center gap-1"><Kbd>Esc</Kbd> close</span>
+          <span className="hidden sm:flex items-center gap-1"><Kbd>g</Kbd>+<Kbd>d</Kbd> go to module</span>
+          <button className="ml-auto flex items-center gap-1 hover:text-foreground" onClick={() => { setPaletteOpen(false); setHelpOpen(true) }}>
+            <Kbd>?</Kbd> all shortcuts
+          </button>
+        </div>
       </CommandDialog>
+
+      {/* Keyboard shortcuts help */}
+      <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
+
+      {/* Change password */}
+      <ChangePasswordDialog
+        open={pwdOpen}
+        onOpenChange={setPwdOpen}
+        userId={session.user.id}
+        userName={session.user.name}
+      />
     </div>
   )
 }

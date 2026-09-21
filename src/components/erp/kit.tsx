@@ -82,6 +82,21 @@ export function downloadCsv(filename: string, headers: string[], rows: (string |
   URL.revokeObjectURL(url)
 }
 
+// ---------- Kbd (keyboard key chip) ----------
+
+export function Kbd({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <kbd
+      className={cn(
+        'inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-semibold text-muted-foreground',
+        className,
+      )}
+    >
+      {children}
+    </kbd>
+  )
+}
+
 // ---------- Generic data table ----------
 
 export interface Column<T> {
