@@ -214,6 +214,8 @@ export default function SuppliersModule({ companyId }: { companyId: string }) {
         rows={rows}
         loading={loading}
         highlightId={highlightId}
+        moduleKey="suppliers"
+        savedViewsKey={`${companyId}:suppliers`}
         searchPlaceholder="Search suppliers…"
         emptyText="No suppliers yet"
         csvExport={{

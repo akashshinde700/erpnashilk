@@ -126,6 +126,8 @@ export default function StockModule({ companyId }: { companyId: string }) {
         columns={columns}
         rows={filtered}
         loading={loading}
+        moduleKey="stock"
+        savedViewsKey={`${companyId}:stock`}
         searchPlaceholder="Search stock…"
         emptyText="No stock balances yet — post GRNs, productions or opening stock"
         csvExport={{

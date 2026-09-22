@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, FileText, IndianRupee, ReceiptText } from 'lucide-react'
+import { AlertTriangle, FileText, IndianRupee, MessageCircle, ReceiptText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Column, DataTable, DateCell, DateInput, Money, PageHeader, PrintButton, SectionCard, StatCard, StatusBadge, printHtml,
@@ -20,7 +20,7 @@ interface InvoiceRow {
   grandTotal: number
   paidAmount: number
   status: string
-  customer?: { name?: string | null } | null
+  customer?: { name?: string | null; phone?: string | null } | null
 }
 
 interface CompanyProfile {
@@ -31,6 +31,7 @@ interface CompanyProfile {
   state?: string | null
   phone?: string | null
   email?: string | null
+  bankUpiId?: string | null
 }
 
 interface StatementRow { date: string; type: 'INVOICE' | 'PAYMENT'; ref: string; particulars: string; debit: number; credit: number; balance: number }
@@ -53,6 +54,14 @@ const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g,
 // Join non-empty address parts with ', ' (raw — wrap the result in esc() before injecting).
 const joinAddr = (...parts: (string | null | undefined)[]) =>
   parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
+
+// Build a wa.me deep link: 10-digit numbers get the '91' prefix, already-prefixed
+// 12-digit numbers pass through, anything else (or no phone) opens WhatsApp's chat chooser.
+function waUrl(phone: string | null | undefined, message: string): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  const valid = digits.length === 10 || (digits.length === 12 && digits.startsWith('91'))
+  return `https://wa.me/${valid ? digits : ''}?text=${encodeURIComponent(message)}`
+}
 
 // Default statement period: current Indian financial year (1 Apr) → today (reports.tsx convention).
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -209,6 +218,18 @@ export default function ReceivablesModule({ companyId }: { companyId: string }) 
     }
   }
 
+  async function remindPayment(row: InvoiceRow) {
+    // Company profile is only needed for the UPI line + signature — best-effort fetch.
+    let company: CompanyProfile | undefined
+    try {
+      company = await apiGet<CompanyProfile>(`/api/settings?companyId=${companyId}`)
+    } catch { /* the UPI line is simply omitted without the profile */ }
+    const customerName = row.customer?.name || 'Customer'
+    const message = `Namaste ${customerName},\n\nGentle reminder: Invoice ${row.number} dated ${fmtDate(row.date)} — outstanding balance ${fmtMoney(outstandingOf(row))}${row.dueDate ? `, due ${fmtDate(row.dueDate)}` : ''}.\n${company?.bankUpiId ? `You can pay via UPI: ${company.bankUpiId}\n` : ''}Kindly arrange payment at the earliest.\n\nThank you,\n${company?.name || 'Accounts'}`
+    if (!row.customer?.phone) toast.info('No phone saved for this customer — choose a chat in WhatsApp')
+    window.open(waUrl(row.customer?.phone, message), '_blank', 'noopener,noreferrer')
+  }
+
   const columns: Column<InvoiceRow>[] = [
     { key: 'number', header: 'Invoice', render: (r) => <span className="font-mono text-xs">{r.number}</span> },
     { key: 'date', header: 'Date', hideOnMobile: true, render: (r) => <DateCell value={r.date} /> },
@@ -222,9 +243,14 @@ export default function ReceivablesModule({ companyId }: { companyId: string }) 
     {
       key: 'actions', header: 'Actions',
       render: (r) => (
-        <Button variant="ghost" size="sm" className="h-7" title="Print statement of account" onClick={() => void printStatement(r)}>
-          <FileText className="h-3.5 w-3.5" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" className="h-7" title="Print statement of account" onClick={() => void printStatement(r)}>
+            <FileText className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send payment reminder on WhatsApp" onClick={() => void remindPayment(r)}>
+            <MessageCircle className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       ),
     },
   ]

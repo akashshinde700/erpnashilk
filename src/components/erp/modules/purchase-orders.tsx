@@ -288,6 +288,8 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
       <DataTable
         columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase orders…" onRowClick={(r) => setDetail(r)}
         highlightId={highlightId}
+        moduleKey="purchase-orders"
+        savedViewsKey={`${companyId}:purchase-orders`}
         csvExport={{
           filename: 'purchase-orders',
           pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.supplier?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],

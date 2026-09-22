@@ -167,7 +167,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
         description="Supplier bills against purchase orders and payments made"
         actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Invoice</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase invoices…" />
+      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase invoices…" moduleKey="purchase-invoices" savedViewsKey={`${companyId}:purchase-invoices`} />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide title="New Purchase Invoice" submitLabel="Create Invoice"

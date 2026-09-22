@@ -17,7 +17,7 @@ function lastSixMonths(now: Date): MonthBucket[] {
     const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
     const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
     months.push({
-      key: `${start.getFullYear()}-${start.getMonth()}`,
+      key: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`,
       month: MONTH_LABELS[start.getMonth()],
       start,
       end,
@@ -26,14 +26,14 @@ function lastSixMonths(now: Date): MonthBucket[] {
   return months
 }
 
-/** Sum rows into the given month windows. */
+/** Sum rows into the given month windows; each point carries its yyyy-mm key for drill-down. */
 function trendByMonth(rows: { date: Date; value: number }[], months: MonthBucket[]) {
   const sums = new Map<string, number>(months.map((m) => [m.key, 0]))
   for (const r of rows) {
-    const key = `${r.date.getFullYear()}-${r.date.getMonth()}`
+    const key = `${r.date.getFullYear()}-${String(r.date.getMonth() + 1).padStart(2, '0')}`
     sums.set(key, (sums.get(key) || 0) + r.value)
   }
-  return months.map((m) => ({ month: m.month, value: r2(sums.get(m.key) || 0) }))
+  return months.map((m) => ({ month: m.month, key: m.key, value: r2(sums.get(m.key) || 0) }))
 }
 
 // GET /api/dashboard?companyId= — KPIs + charts + operational lists (single object)

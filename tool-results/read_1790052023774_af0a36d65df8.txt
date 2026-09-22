@@ -1,0 +1,856 @@
+     1→'use client'
+     2→
+     3→import * as React from 'react'
+     4→import { useTheme } from 'next-themes'
+     5→import { toast } from 'sonner'
+     6→import { io, type Socket } from 'socket.io-client'
+     7→import {
+     8→  Bell, CheckCheck, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
+     9→  Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles,
+    10→} from 'lucide-react'
+    11→import { Button } from '@/components/ui/button'
+    12→import { Badge } from '@/components/ui/badge'
+    13→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    14→import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+    15→import { ScrollArea } from '@/components/ui/scroll-area'
+    16→import { Separator } from '@/components/ui/separator'
+    17→import {
+    18→  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+    19→} from '@/components/ui/dropdown-menu'
+    20→import {
+    21→  CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator,
+    22→} from '@/components/ui/command'
+    23→import { cn } from '@/lib/utils'
+    24→import { fmtDateTime, ROLE_LABEL, canAccessModule } from '@/lib/erp-constants'
+    25→import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
+    26→import { MODULES, MODULE_GROUPS, findModule } from '@/components/erp/registry'
+    27→import { Kbd } from '@/components/erp/kit'
+    28→import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp/login-screen'
+    29→import ShortcutsDialog from '@/components/erp/shortcuts-help'
+    30→import ChangePasswordDialog from '@/components/erp/change-password-dialog'
+    31→
+    32→interface CompanyRow {
+    33→  id: string
+    34→  name: string
+    35→  gstin?: string | null
+    36→  city?: string | null
+    37→  stateCode?: string | null
+    38→  logoText?: string | null
+    39→}
+    40→
+    41→interface NotificationRow {
+    42→  id: string
+    43→  title: string
+    44→  message?: string | null
+    45→  level: string
+    46→  read: boolean
+    47→  createdAt: string
+    48→}
+    49→
+    50→interface Session {
+    51→  user: LoginUser
+    52→  company: LoginCompany
+    53→}
+    54→
+    55→interface SearchResult {
+    56→  id: string
+    57→  type: string
+    58→  label: string
+    59→  sub?: string | null
+    60→  module: string
+    61→}
+    62→
+    63→const SESSION_KEY = 'erp_user'
+    64→const FAV_KEY = 'erp_fav_modules'
+    65→const RECENT_KEY = 'erp_recent_modules'
+    66→const COLLAPSE_KEY = 'erp_sidebar_collapsed'
+    67→
+    68→const LEVEL_DOT: Record<string, string> = {
+    69→  INFO: 'bg-sky-500',
+    70→  WARNING: 'bg-amber-500',
+    71→  CRITICAL: 'bg-red-500',
+    72→}
+    73→
+    74→const TENANT_ADMIN_ROLES = ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN']
+    75→
+    76→/** g + key → module key (Gmail-style jump). Only fires for modules the role can access. */
+    77→const GO_KEYS: Record<string, string> = {
+    78→  d: 'dashboard',
+    79→  i: 'items',
+    80→  c: 'customers',
+    81→  v: 'suppliers',
+    82→  s: 'stock',
+    83→  o: 'sales-orders',
+    84→  q: 'quotations',
+    85→  e: 'enquiries',
+    86→  n: 'sales-invoices',
+    87→  p: 'purchase-orders',
+    88→  w: 'work-orders',
+    89→  m: 'mrp',
+    90→  b: 'boms',
+    91→  l: 'stock-ledger',
+    92→  t: 'stock-transfers',
+    93→  u: 'users',
+    94→  r: 'reports',
+    95→  a: 'audit-log',
+    96→}
+    97→
+    98→const initials = (name: string) =>
+    99→  name.split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() || '').join('') || 'U'
+   100→
+   101→function isTypingTarget(t: EventTarget | null): boolean {
+   102→  if (!(t instanceof HTMLElement)) return false
+   103→  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+   104→}
+   105→
+   106→function readJsonArray(key: string): string[] {
+   107→  try {
+   108→    const raw = window.localStorage.getItem(key)
+   109→    const parsed = raw ? JSON.parse(raw) : []
+   110→    return Array.isArray(parsed) ? parsed.filter((k) => typeof k === 'string') : []
+   111→  } catch { return [] }
+   112→}
+   113→
+   114→function persistJson(key: string, value: string[]) {
+   115→  try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* private mode */ }
+   116→}
+   117→
+   118→export default function ErpApp() {
+   119→  const [session, setSession] = React.useState<Session | null>(null)
+   120→  const [booting, setBooting] = React.useState(true)
+   121→  const [companyId, setCompanyId] = React.useState<string | null>(null)
+   122→  const [activeKey, setActiveKey] = React.useState('dashboard')
+   123→  const [navOpen, setNavOpen] = React.useState(false)
+   124→  const [switching, setSwitching] = React.useState(false)
+   125→  const socketRef = React.useRef<Socket | null>(null)
+   126→
+   127→  // ---------- Phase 7 UX state ----------
+   128→  const [collapsed, setCollapsed] = React.useState(false)
+   129→  const [favs, setFavs] = React.useState<string[]>([])
+   130→  const [recents, setRecents] = React.useState<string[]>([])
+   131→  const [helpOpen, setHelpOpen] = React.useState(false)
+   132→  const [pwdOpen, setPwdOpen] = React.useState(false)
+   133→  const goPendingRef = React.useRef(0)
+   134→  const { resolvedTheme, setTheme } = useTheme()
+   135→  const [themeMounted, setThemeMounted] = React.useState(false)
+   136→
+   137→  // ---------- boot: restore session + prefs ----------
+   138→  React.useEffect(() => {
+   139→    try {
+   140→      const raw = window.localStorage.getItem(SESSION_KEY)
+   141→      if (raw) setSession(JSON.parse(raw) as Session)
+   142→      setCollapsed(window.localStorage.getItem(COLLAPSE_KEY) === '1')
+   143→      setFavs(readJsonArray(FAV_KEY))
+   144→      setRecents(readJsonArray(RECENT_KEY))
+   145→    } catch { /* corrupted session — ignore */ }
+   146→    setThemeMounted(true)
+   147→    setBooting(false)
+   148→  }, [])
+   149→
+   150→  const companies = useList<{ companies: CompanyRow[] }>(session ? '/api/companies' : null)
+   151→
+   152→  // ---------- company selection (restricted by role) ----------
+   153→  const multiTenant = !!session && TENANT_ADMIN_ROLES.includes(session.user.role)
+   154→  const companyList = React.useMemo(() => {
+   155→    const all = companies.data?.companies || []
+   156→    if (!session) return []
+   157→    return multiTenant ? all : all.filter((c) => c.id === session.user.companyId)
+   158→  }, [companies.data, session, multiTenant])
+   159→
+   160→  React.useEffect(() => {
+   161→    if (!session || !companies.data || companyId) return
+   162→    const saved = window.localStorage.getItem('erp_company_id')
+   163→    const allowed = companyList.find((c) => c.id === saved) || companyList.find((c) => c.id === session.user.companyId) || companyList[0]
+   164→    if (allowed) setCompanyId(allowed.id)
+   165→  }, [session, companies.data, companyId, companyList])
+   166→
+   167→  // Keep tenant list fresh when a Company Setup module creates/edits tenants
+   168→  React.useEffect(() => {
+   169→    const handler = () => { void companies.refetch() }
+   170→    window.addEventListener('erp:companies-changed', handler)
+   171→    return () => window.removeEventListener('erp:companies-changed', handler)
+   172→  }, [companies])
+   173→
+   174→  const activeModuleDef = findModule(activeKey)
+   175→  // RBAC: fall back to dashboard when current module is not allowed for this role
+   176→  const activeModule = activeModuleDef && canAccessModule(session?.user.role, activeModuleDef.key) ? activeModuleDef : MODULES[0]
+   177→
+   178→  React.useEffect(() => {
+   179→    window.scrollTo({ top: 0 })
+   180→  }, [activeKey])
+   181→
+   182→  // Browser tab title follows the active module
+   183→  React.useEffect(() => {
+   184→    document.title = session ? `${activeModule.label} · ManuFlow ERP` : 'ManuFlow ERP — Manufacturing SaaS Suite'
+   185→  }, [activeModule, session])
+   186→
+   187→  const notifications = useList<{ items: NotificationRow[]; unreadCount: number }>(
+   188→    session && companyId ? `/api/notifications?companyId=${companyId}&unread=1` : null,
+   189→  )
+   190→  const [notifOpen, setNotifOpen] = React.useState(false)
+   191→
+   192→  // ---------- realtime notifications (socket.io via gateway) ----------
+   193→  React.useEffect(() => {
+   194→    if (!session || !companyId) return
+   195→    const socket: Socket = io('/?XTransformPort=3003', {
+   196→      transports: ['websocket', 'polling'],
+   197→      reconnection: true,
+   198→      reconnectionAttempts: 10,
+   199→      forceNew: true,
+   200→    })
+   201→    socketRef.current = socket
+   202→    socket.on('connect', () => socket.emit('join', { companyId }))
+   203→    socket.on('erp:notification', (n: { title: string; message?: string; level?: string }) => {
+   204→      const level = n.level || 'INFO'
+   205→      const run = level === 'CRITICAL' ? toast.error : level === 'WARNING' ? toast.warning : toast.info
+   206→      run(n.title, { description: n.message })
+   207→      void notifications.refetch()
+   208→    })
+   209→    return () => { socket.disconnect(); socketRef.current = null }
+   210→  }, [session, companyId])
+   211→
+   212→  // ---------- command palette (global search) ----------
+   213→  const [paletteOpen, setPaletteOpen] = React.useState(false)
+   214→  const [paletteQuery, setPaletteQuery] = React.useState('')
+   215→  const [searchResults, setSearchResults] = React.useState<SearchResult[]>([])
+   216→  const [searching, setSearching] = React.useState(false)
+   217→
+   218→  React.useEffect(() => {
+   219→    if (!paletteOpen || !session || !companyId) return
+   220→    const q = paletteQuery.trim()
+   221→    if (q.length < 2) { setSearchResults([]); setSearching(false); return }
+   222→    setSearching(true)
+   223→    const t = setTimeout(() => {
+   224→      apiGet<{ results: SearchResult[] }>(`/api/search?companyId=${companyId}&q=${encodeURIComponent(q)}`)
+   225→        .then((d) => setSearchResults(d.results || []))
+   226→        .catch(() => setSearchResults([]))
+   227→        .finally(() => setSearching(false))
+   228→    }, 300)
+   229→    return () => clearTimeout(t)
+   230→  }, [paletteQuery, paletteOpen, session, companyId])
+   231→
+   232→  const visibleModules = React.useMemo(
+   233→    () => MODULES.filter((m) => canAccessModule(session?.user.role, m.key)),
+   234→    [session],
+   235→  )
+   236→
+   237→  const favModules = React.useMemo(
+   238→    () => favs.map((k) => findModule(k)).filter((m): m is NonNullable<typeof m> => !!m && canAccessModule(session?.user.role, m.key)),
+   239→    [favs, session],
+   240→  )
+   241→  const recentModules = React.useMemo(
+   242→    () => recents.map((k) => findModule(k)).filter((m): m is NonNullable<typeof m> => !!m && canAccessModule(session?.user.role, m.key)).slice(0, 5),
+   243→    [recents, session],
+   244→  )
+   245→
+   246→  // group palette search results by target module
+   247→  const groupedResults = React.useMemo(() => {
+   248→    const map = new Map<string, SearchResult[]>()
+   249→    for (const r of searchResults) {
+   250→      const list = map.get(r.module) || []
+   251→      list.push(r)
+   252→      map.set(r.module, list)
+   253→    }
+   254→    return Array.from(map.entries())
+   255→  }, [searchResults])
+   256→
+   257→  function goToModule(key: string) {
+   258→    setActiveKey(key)
+   259→    setPaletteOpen(false)
+   260→    setPaletteQuery('') // programmatic close bypasses onOpenChange — clear stale query/results
+   261→    setSearchResults([])
+   262→    setNavOpen(false)
+   263→    setRecents((prev) => {
+   264→      const nx = [key, ...prev.filter((k) => k !== key)].slice(0, 6)
+   265→      persistJson(RECENT_KEY, nx)
+   266→      return nx
+   267→    })
+   268→  }
+   269→
+   270→  // Module navigation events (dashboard quick actions, future widgets)
+   271→  React.useEffect(() => {
+   272→    const handler = (e: Event) => {
+   273→      const key = (e as CustomEvent<string>).detail
+   274→      if (typeof key === 'string' && findModule(key)) goToModule(key)
+   275→    }
+   276→    window.addEventListener('erp:goto', handler)
+   277→    return () => window.removeEventListener('erp:goto', handler)
+   278→  }, [goToModule])
+   279→
+   280→  function toggleFav(key: string) {
+   281→    setFavs((prev) => {
+   282→      const nx = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+   283→      persistJson(FAV_KEY, nx)
+   284→      return nx
+   285→    })
+   286→  }
+   287→
+   288→  function toggleCollapsed() {
+   289→    setCollapsed((prev) => {
+   290→      const nx = !prev
+   291→      try { window.localStorage.setItem(COLLAPSE_KEY, nx ? '1' : '0') } catch { /* private mode */ }
+   292→      return nx
+   293→    })
+   294→  }
+   295→
+   296→  // ---------- keyboard shortcuts engine ----------
+   297→  React.useEffect(() => {
+   298→    if (!session) return
+   299→    const onKey = (e: KeyboardEvent) => {
+   300→      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+   301→        e.preventDefault()
+   302→        setPaletteOpen((o) => !o)
+   303→        return
+   304→      }
+   305→      if (paletteOpen || helpOpen || pwdOpen) return
+   306→      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
+   307→
+   308→      // g + key sequence (Gmail-style)
+   309→      const now = Date.now()
+   310→      if (goPendingRef.current && now - goPendingRef.current < 1500) {
+   311→        goPendingRef.current = 0
+   312→        const target = GO_KEYS[e.key.toLowerCase()]
+   313→        if (target) {
+   314→          e.preventDefault()
+   315→          const def = findModule(target)
+   316→          if (def && canAccessModule(session.user.role, target)) goToModule(target)
+   317→          else if (def) toast.error(`${def.label} is not available for the ${ROLE_LABEL[session.user.role] || session.user.role} role`)
+   318→          return
+   319→        }
+   320→      }
+   321→      if (e.key === 'g') { goPendingRef.current = Date.now(); return }
+   322→      if (e.key === '?') { e.preventDefault(); setHelpOpen((o) => !o); return }
+   323→      if (e.key === '/') { e.preventDefault(); setPaletteOpen(true); return }
+   324→      if (e.key === '[' || e.key === ']') {
+   325→        e.preventDefault()
+   326→        const dir = e.key === ']' ? 1 : -1
+   327→        const idx = visibleModules.findIndex((m) => m.key === activeKey)
+   328→        const nextIdx = (idx + dir + visibleModules.length) % visibleModules.length
+   329→        const target = visibleModules[nextIdx]
+   330→        if (target) goToModule(target.key)
+   331→      }
+   332→    }
+   333→    window.addEventListener('keydown', onKey)
+   334→    return () => window.removeEventListener('keydown', onKey)
+   335→  }, [session, paletteOpen, helpOpen, pwdOpen, visibleModules, activeKey])
+   336→
+   337→  function toggleTheme() {
+   338→    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
+   339→  }
+   340→
+   341→  function showProTipOnce() {
+   342→    try {
+   343→      if (!window.localStorage.getItem('erp_tip_shown')) {
+   344→        window.localStorage.setItem('erp_tip_shown', '1')
+   345→        setTimeout(() => {
+   346→          toast('Pro tips for power users', {
+   347→            description: 'Press ? for keyboard shortcuts · Ctrl+K to search · g then d to jump to Dashboard · star modules to pin them.',
+   348→          })
+   349→        }, 1500)
+   350→      }
+   351→    } catch { /* private mode */ }
+   352→  }
+   353→
+   354→  function handleLogin(user: LoginUser, company: LoginCompany) {
+   355→    const s: Session = { user, company }
+   356→    window.localStorage.setItem(SESSION_KEY, JSON.stringify(s))
+   357→    window.localStorage.setItem('erp_company_id', user.companyId)
+   358→    setSession(s)
+   359→    setCompanyId(user.companyId)
+   360→    setActiveKey('dashboard')
+   361→    toast.success(`Welcome back, ${user.name.split(' ')[0]}`, { description: `${ROLE_LABEL[user.role] || user.role} · ${company.name}` })
+   362→    showProTipOnce()
+   363→  }
+   364→
+   365→  async function logout() {
+   366→    try { await apiPost('/api/auth/logout', { userName: session?.user.name }) } catch { /* best effort */ }
+   367→    window.localStorage.removeItem(SESSION_KEY)
+   368→    socketRef.current?.disconnect()
+   369→    setSession(null)
+   370→    setCompanyId(null)
+   371→    setActiveKey('dashboard')
+   372→    setPaletteOpen(false)
+   373→    setPwdOpen(false)
+   374→    setHelpOpen(false)
+   375→    toast.success('Signed out')
+   376→  }
+   377→
+   378→  function switchCompany(id: string) {
+   379→    if (id === companyId) return
+   380→    setSwitching(true)
+   381→    window.localStorage.setItem('erp_company_id', id)
+   382→    setTimeout(() => {
+   383→      setCompanyId(id)
+   384→      setSwitching(false)
+   385→      setNavOpen(false)
+   386→      toast.success('Tenant switched — data isolated per company')
+   387→    }, 250)
+   388→  }
+   389→
+   390→  async function markAllRead() {
+   391→    if (!companyId) return
+   392→    try {
+   393→      await apiPatch('/api/notifications', { companyId, all: true })
+   394→      await notifications.refetch()
+   395→    } catch { /* non-blocking */ }
+   396→  }
+   397→
+   398→  // ---------- auth gate ----------
+   399→  if (booting) {
+   400→    return (
+   401→      <div className="min-h-screen grid place-items-center bg-background">
+   402→        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+   403→          <Loader2 className="h-7 w-7 animate-spin text-emerald-600" />
+   404→          <p className="text-sm">Loading ManuFlow ERP…</p>
+   405→        </div>
+   406→      </div>
+   407→    )
+   408→  }
+   409→
+   410→  if (!session) {
+   411→    return <LoginScreen onLogin={handleLogin} />
+   412→  }
+   413→
+   414→  const currentCompany = companyList.find((c) => c.id === companyId)
+   415→
+   416→  function renderModuleRow(m: (typeof MODULES)[number], opts: { collapsed: boolean; star?: boolean }) {
+   417→    const active = m.key === activeKey
+   418→    const isFav = favs.includes(m.key)
+   419→    return (
+   420→      <div
+   421→        key={m.key}
+   422→        className={cn(
+   423→          'group flex items-center rounded-md transition-colors',
+   424→          active ? 'bg-emerald-600 text-white font-medium shadow-sm' : 'text-foreground/70 hover:bg-muted hover:text-foreground',
+   425→        )}
+   426→      >
+   427→        <button
+   428→          onClick={() => goToModule(m.key)}
+   429→          title={opts.collapsed ? m.label : undefined}
+   430→          className={cn(
+   431→            'flex flex-1 items-center gap-2.5 py-1.5 text-[13px] text-left min-w-0',
+   432→            opts.collapsed ? 'justify-center px-0' : 'px-2.5',
+   433→          )}
+   434→          aria-current={active ? 'page' : undefined}
+   435→        >
+   436→          <m.icon className="h-4 w-4 shrink-0" />
+   437→          {!opts.collapsed && <span className="truncate">{m.label}</span>}
+   438→        </button>
+   439→        {opts.star && !opts.collapsed && (
+   440→          <button
+   441→            onClick={() => toggleFav(m.key)}
+   442→            className={cn(
+   443→              'mr-1.5 rounded p-1 transition-opacity',
+   444→              isFav ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+   445→              active ? 'hover:bg-white/20' : 'hover:bg-muted',
+   446→            )}
+   447→            aria-label={isFav ? `Unpin ${m.label}` : `Pin ${m.label} to favorites`}
+   448→            title={isFav ? 'Unpin' : 'Pin to favorites'}
+   449→          >
+   450→            <Star className={cn('h-3.5 w-3.5', isFav ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground')} />
+   451→          </button>
+   452→        )}
+   453→      </div>
+   454→    )
+   455→  }
+   456→
+   457→  function buildSidebar(isCollapsed: boolean) {
+   458→    const favRows = favModules.filter((m) => m.group !== 'Dashboard')
+   459→    return (
+   460→      <div className="flex h-full flex-col bg-card">
+   461→        <div className={cn('flex items-center gap-2.5 h-14 border-b shrink-0', isCollapsed ? 'justify-center px-0' : 'px-4')}>
+   462→          <div className="h-8 w-8 rounded-lg bg-emerald-600 text-white grid place-items-center shrink-0">
+   463→            <Factory className="h-4.5 w-4.5" />
+   464→          </div>
+   465→          {!isCollapsed && (
+   466→            <div className="leading-tight min-w-0">
+   467→              <p className="font-semibold text-sm">ManuFlow ERP</p>
+   468→              <p className="text-[10px] text-muted-foreground">Manufacturing SaaS Suite</p>
+   469→            </div>
+   470→          )}
+   471→          {navOpen && (
+   472→            <Button variant="ghost" size="icon" className="ml-auto lg:hidden h-8 w-8" onClick={() => setNavOpen(false)}>
+   473→              <X className="h-4 w-4" />
+   474→            </Button>
+   475→          )}
+   476→        </div>
+   477→        <ScrollArea className="flex-1">
+   478→          <nav className={cn('pb-6', isCollapsed ? 'p-1.5' : 'p-2')} aria-label="ERP modules">
+   479→            {favRows.length > 0 && (
+   480→              <div className="mb-1">
+   481→                {isCollapsed ? (
+   482→                  <div className="mx-2 my-2 border-t" />
+   483→                ) : (
+   484→                  <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-1">
+   485→                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> Favorites
+   486→                  </p>
+   487→                )}
+   488→                {favRows.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
+   489→              </div>
+   490→            )}
+   491→            {MODULE_GROUPS.map((group) => {
+   492→              const mods = visibleModules.filter((m) => m.group === group)
+   493→              if (!mods.length) return null
+   494→              return (
+   495→                <div key={group} className="mb-1">
+   496→                  {isCollapsed ? (
+   497→                    <div className="mx-2 my-2 border-t" />
+   498→                  ) : (
+   499→                    <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group}</p>
+   500→                  )}
+   501→                  {mods.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
+   502→                </div>
+   503→              )
+   504→            })}
+   505→          </nav>
+   506→        </ScrollArea>
+   507→        <div className={cn('border-t shrink-0', isCollapsed ? 'px-1.5 py-2.5' : 'px-4 py-2.5')}>
+   508→          {isCollapsed ? (
+   509→            <div className="h-4" aria-hidden="true" />
+   510→          ) : (
+   511→            <div className="text-[10px] text-muted-foreground truncate">
+   512→              {currentCompany ? (
+   513→                <div className="truncate">
+   514→                  <span className="font-medium text-foreground/80">{currentCompany.name}</span>
+   515→                  {currentCompany.gstin && <span className="ml-1">· GSTIN {currentCompany.gstin}</span>}
+   516→                </div>
+   517→              ) : 'Multi-tenant SaaS · FY Apr–Mar'}
+   518→            </div>
+   519→          )}
+   520→        </div>
+   521→      </div>
+   522→    )
+   523→  }
+   524→
+   525→  const dark = themeMounted && resolvedTheme === 'dark'
+   526→
+   527→  return (
+   528→    <div className="min-h-screen flex bg-background">
+   529→      {/* Desktop sidebar */}
+   530→      <aside className={cn('hidden lg:block border-r shrink-0 sticky top-0 h-screen transition-[width] duration-200', collapsed ? 'w-[56px]' : 'w-60')}>
+   531→        {buildSidebar(collapsed)}
+   532→      </aside>
+   533→
+   534→      {/* Mobile nav overlay */}
+   535→      {navOpen && (
+   536→        <div className="fixed inset-0 z-50 lg:hidden">
+   537→          <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} />
+   538→          <div className="absolute inset-y-0 left-0 w-72 shadow-xl">{buildSidebar(false)}</div>
+   539→        </div>
+   540→      )}
+   541→
+   542→      <div className="flex-1 flex flex-col min-w-0">
+   543→        {/* Topbar */}
+   544→        <header className="sticky top-0 z-40 h-14 border-b bg-card/95 backdrop-blur flex items-center gap-2 px-3 sm:px-4">
+   545→          <Button variant="ghost" size="icon" className="lg:hidden h-9 w-9 shrink-0" onClick={() => setNavOpen(true)} aria-label="Open navigation">
+   546→            <Menu className="h-5 w-5" />
+   547→          </Button>
+   548→
+   549→          {/* Sidebar collapse toggle (desktop) */}
+   550→          <Button
+   551→            variant="ghost"
+   552→            size="icon"
+   553→            className="hidden lg:inline-flex h-9 w-9 shrink-0 text-muted-foreground"
+   554→            onClick={toggleCollapsed}
+   555→            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+   556→            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+   557→          >
+   558→            {collapsed ? <PanelLeftOpen className="h-4.5 w-4.5" /> : <PanelLeftClose className="h-4.5 w-4.5" />}
+   559→          </Button>
+   560→
+   561→          <div className="min-w-0 flex-1">
+   562→            <h1 className="font-semibold text-sm sm:text-base truncate leading-tight">{activeModule.label}</h1>
+   563→            <p className="text-[11px] text-muted-foreground truncate leading-tight hidden sm:block">
+   564→              {activeModule.description || activeModule.group}
+   565→            </p>
+   566→          </div>
+   567→
+   568→          {/* Global search trigger */}
+   569→          <Button
+   570→            variant="outline"
+   571→            size="sm"
+   572→            className="h-9 gap-1.5 text-muted-foreground font-normal shrink-0 w-9 sm:w-auto px-0 sm:px-3"
+   573→            onClick={() => setPaletteOpen(true)}
+   574→            aria-label="Search (Ctrl+K)"
+   575→          >
+   576→            <Search className="h-4 w-4" />
+   577→            <span className="hidden sm:inline text-xs">Search…</span>
+   578→            <kbd className="hidden md:inline-flex h-5 items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+   579→              <CommandIcon className="h-2.5 w-2.5" />K
+   580→            </kbd>
+   581→          </Button>
+   582→
+   583→          {/* Theme toggle */}
+   584→          <Button
+   585→            variant="ghost"
+   586→            size="icon"
+   587→            className="h-9 w-9 shrink-0"
+   588→            onClick={toggleTheme}
+   589→            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+   590→            title={dark ? 'Light mode' : 'Dark mode'}
+   591→          >
+   592→            {dark ? <Sun className="h-4.5 w-4.5" /> : <Moon className="h-4.5 w-4.5" />}
+   593→          </Button>
+   594→
+   595→          {/* Company switcher */}
+   596→          <div className="hidden sm:flex items-center gap-2">
+   597→            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+   598→              {switching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="hidden md:inline">Tenant:</span>}
+   599→            </div>
+   600→            <Select value={companyId ?? ''} onValueChange={switchCompany} disabled={!multiTenant && companyList.length <= 1}>
+   601→              <SelectTrigger className="h-9 w-[130px] sm:w-[200px] text-xs" aria-label="Switch company (tenant)">
+   602→                <SelectValue placeholder="Loading…" />
+   603→              </SelectTrigger>
+   604→              <SelectContent>
+   605→                {companyList.map((c) => (
+   606→                  <SelectItem key={c.id} value={c.id} className="text-xs">
+   607→                    <span className="font-medium">{c.logoText || c.name.slice(0, 12)}</span>
+   608→                    <span className="text-muted-foreground ml-1.5">{c.city || ''}</span>
+   609→                  </SelectItem>
+   610→                ))}
+   611→              </SelectContent>
+   612→            </Select>
+   613→          </div>
+   614→
+   615→          {/* Notifications */}
+   616→          <Popover open={notifOpen} onOpenChange={setNotifOpen}>
+   617→            <PopoverTrigger asChild>
+   618→              <Button variant="ghost" size="icon" className="relative h-9 w-9 shrink-0" aria-label={`Notifications (${notifications.data?.unreadCount || 0} unread)`}>
+   619→                <Bell className="h-4.5 w-4.5" />
+   620→                {!!notifications.data?.unreadCount && (
+   621→                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] grid place-items-center font-semibold">
+   622→                    {notifications.data.unreadCount > 9 ? '9+' : notifications.data.unreadCount}
+   623→                  </span>
+   624→                )}
+   625→              </Button>
+   626→            </PopoverTrigger>
+   627→            <PopoverContent align="end" className="w-80 p-0">
+   628→              <div className="flex items-center justify-between px-3 py-2 border-b">
+   629→                <p className="text-sm font-medium">Notifications</p>
+   630→                <div className="flex items-center gap-1">
+   631→                  <Button
+   632→                    variant="ghost"
+   633→                    size="sm"
+   634→                    className="h-7 text-xs text-teal-700 hover:text-teal-800 hover:bg-teal-50"
+   635→                    onClick={() => { setNotifOpen(false); goToModule('notifications') }}
+   636→                  >
+   637→                    View all
+   638→                  </Button>
+   639→                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void markAllRead()}>
+   640→                    <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
+   641→                  </Button>
+   642→                </div>
+   643→              </div>
+   644→              <ScrollArea className="max-h-80">
+   645→                {(notifications.data?.items || []).length === 0 ? (
+   646→                  <p className="text-xs text-muted-foreground text-center py-8">No unread notifications 🎉</p>
+   647→                ) : (
+   648→                  (notifications.data?.items || []).map((n) => (
+   649→                    <div key={n.id} className="px-3 py-2.5 border-b last:border-0 flex gap-2.5">
+   650→                      <span className={cn('h-2 w-2 rounded-full mt-1.5 shrink-0', LEVEL_DOT[n.level] || 'bg-gray-400')} />
+   651→                      <div className="min-w-0">
+   652→                        <p className="text-[13px] font-medium leading-snug">{n.title}</p>
+   653→                        {n.message && <p className="text-xs text-muted-foreground leading-snug mt-0.5">{n.message}</p>}
+   654→                        <p className="text-[10px] text-muted-foreground/70 mt-1">{fmtDateTime(n.createdAt)}</p>
+   655→                      </div>
+   656→                    </div>
+   657→                  ))
+   658→                )}
+   659→              </ScrollArea>
+   660→            </PopoverContent>
+   661→          </Popover>
+   662→
+   663→          {/* User menu */}
+   664→          <DropdownMenu>
+   665→            <DropdownMenuTrigger asChild>
+   666→              <button
+   667→                className="flex items-center gap-2 pl-1 sm:pl-2 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+   668→                aria-label="Open user menu"
+   669→              >
+   670→                <span className="h-8 w-8 rounded-full bg-teal-600 text-white grid place-items-center text-xs font-semibold">
+   671→                  {initials(session.user.name)}
+   672→                </span>
+   673→                <span className="hidden md:block text-left leading-tight">
+   674→                  <span className="block text-xs font-medium max-w-[140px] truncate">{session.user.name}</span>
+   675→                  <span className="block text-[10px] text-muted-foreground">{ROLE_LABEL[session.user.role] || session.user.role}</span>
+   676→                </span>
+   677→              </button>
+   678→            </DropdownMenuTrigger>
+   679→            <DropdownMenuContent align="end" className="w-60">
+   680→              <DropdownMenuLabel className="font-normal">
+   681→                <p className="text-sm font-medium truncate">{session.user.name}</p>
+   682→                <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
+   683→                <p className="text-[10px] text-muted-foreground mt-0.5">{ROLE_LABEL[session.user.role] || session.user.role} · {session.company?.name}</p>
+   684→              </DropdownMenuLabel>
+   685→              <DropdownMenuSeparator />
+   686→              <DropdownMenuItem onSelect={() => setPwdOpen(true)}>
+   687→                <KeyRound className="h-4 w-4 mr-2" />Change password
+   688→              </DropdownMenuItem>
+   689→              <DropdownMenuItem onSelect={() => setHelpOpen(true)}>
+   690→                <Keyboard className="h-4 w-4 mr-2" />Keyboard shortcuts
+   691→                <Kbd className="ml-auto">?</Kbd>
+   692→              </DropdownMenuItem>
+   693→              <DropdownMenuItem onSelect={toggleTheme}>
+   694→                {dark ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
+   695→                {dark ? 'Light mode' : 'Dark mode'}
+   696→              </DropdownMenuItem>
+   697→              <DropdownMenuSeparator />
+   698→              <DropdownMenuItem onSelect={() => void logout()} className="text-red-600 focus:text-red-600">
+   699→                <LogOut className="h-4 w-4 mr-2" />Sign out
+   700→              </DropdownMenuItem>
+   701→            </DropdownMenuContent>
+   702→          </DropdownMenu>
+   703→        </header>
+   704→
+   705→        {/* Content */}
+   706→        <main className="flex-1 px-3 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6 w-full max-w-[1500px] mx-auto">
+   707→          {!companyId || switching ? (
+   708→            <div className="h-64 grid place-items-center">
+   709→              <div className="flex flex-col items-center gap-3 text-muted-foreground">
+   710→                <Loader2 className="h-7 w-7 animate-spin text-emerald-600" />
+   711→                <p className="text-sm">Loading workspace…</p>
+   712→              </div>
+   713→            </div>
+   714→          ) : (
+   715→            <activeModule.component key={`${companyId}-${activeKey}`} companyId={companyId} />
+   716→          )}
+   717→        </main>
+   718→
+   719→        {/* Sticky footer */}
+   720→        <footer className="mt-auto border-t bg-card">
+   721→          <div className="max-w-[1500px] mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-1.5 text-xs text-muted-foreground">
+   722→            <div className="flex items-center gap-1.5">
+   723→              <Factory className="h-3.5 w-3.5 text-emerald-600" />
+   724→              <span className="font-medium text-foreground/80">ManuFlow ERP</span>
+   725→              <span className="hidden sm:inline">— Lead → Quotation → SO → Production → QC → Dispatch → GST Invoice → Payment</span>
+   726→            </div>
+   727→            <div className="flex items-center gap-2">
+   728→              <Badge variant="outline" className="text-[10px] font-normal">Signed in as {ROLE_LABEL[session.user.role] || session.user.role}</Badge>
+   729→              <Separator orientation="vertical" className="h-3 hidden sm:block" />
+   730→              <button
+   731→                onClick={() => setHelpOpen(true)}
+   732→                className="hidden sm:flex items-center gap-1 hover:text-foreground transition-colors"
+   733→                aria-label="Show keyboard shortcuts"
+   734→              >
+   735→                Shortcuts: <Kbd>?</Kbd>
+   736→              </button>
+   737→              <Separator orientation="vertical" className="h-3 hidden sm:block" />
+   738→              <span className="hidden sm:inline">FY {new Date().getMonth() + 1 >= 4 ? new Date().getFullYear() : new Date().getFullYear() - 1}–{(new Date().getMonth() + 1 >= 4 ? new Date().getFullYear() : new Date().getFullYear() - 1) + 1}</span>
+   739→            </div>
+   740→          </div>
+   741→        </footer>
+   742→      </div>
+   743→
+   744→      {/* Global search / command palette */}
+   745→      <CommandDialog open={paletteOpen} onOpenChange={(o) => { setPaletteOpen(o); if (!o) { setPaletteQuery(''); setSearchResults([]) } }}>
+   746→        <CommandInput value={paletteQuery} onValueChange={setPaletteQuery} placeholder="Search modules, items, customers, orders…" />
+   747→        <CommandList>
+   748→          {searching && <div className="py-6 text-center text-sm text-muted-foreground">Searching…</div>}
+   749→          {!searching && <CommandEmpty>No results found.</CommandEmpty>}
+   750→          {/* Favorites / Recents / Modules / Actions — always rendered; cmdk filters by query,
+   751→              so typing a module name (e.g. “settings”) still jumps straight to it. */}
+   752→          {(
+   753→            <>
+   754→              {favModules.length > 0 && (
+   755→                <CommandGroup heading="Favorites">
+   756→                  {favModules.map((m) => (
+   757→                    <CommandItem key={`fav-${m.key}`} value={`fav-${m.label}`} onSelect={() => goToModule(m.key)}>
+   758→                      <Star className="h-4 w-4 mr-2 fill-amber-400 text-amber-400" />
+   759→                      <span>{m.label}</span>
+   760→                      <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+   761→                    </CommandItem>
+   762→                  ))}
+   763→                </CommandGroup>
+   764→              )}
+   765→              {recentModules.length > 0 && (
+   766→                <CommandGroup heading="Recent">
+   767→                  {recentModules.map((m) => (
+   768→                    <CommandItem key={`recent-${m.key}`} value={`recent-${m.label}`} onSelect={() => goToModule(m.key)}>
+   769→                      <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
+   770→                      <span>{m.label}</span>
+   771→                      <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+   772→                    </CommandItem>
+   773→                  ))}
+   774→                </CommandGroup>
+   775→              )}
+   776→              <CommandGroup heading="Modules">
+   777→                {visibleModules.map((m) => (
+   778→                  <CommandItem key={`module-${m.key}`} value={`module-${m.label}`} onSelect={() => goToModule(m.key)}>
+   779→                    <m.icon className="h-4 w-4 mr-2 text-muted-foreground" />
+   780→                    <span>{m.label}</span>
+   781→                    <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
+   782→                  </CommandItem>
+   783→                ))}
+   784→              </CommandGroup>
+   785→              <CommandSeparator />
+   786→              <CommandGroup heading="Actions">
+   787→                <CommandItem value="action-theme" onSelect={() => { toggleTheme(); setPaletteOpen(false) }}>
+   788→                  {dark ? <Sun className="h-4 w-4 mr-2 text-muted-foreground" /> : <Moon className="h-4 w-4 mr-2 text-muted-foreground" />}
+   789→                  <span>{dark ? 'Light mode' : 'Dark mode'}</span>
+   790→                </CommandItem>
+   791→                <CommandItem value="action-shortcuts" onSelect={() => { setPaletteOpen(false); setHelpOpen(true) }}>
+   792→                  <Keyboard className="h-4 w-4 mr-2 text-muted-foreground" />
+   793→                  <span>Keyboard shortcuts</span>
+   794→                  <Kbd className="ml-auto">?</Kbd>
+   795→                </CommandItem>
+   796→                <CommandItem value="action-tip" onSelect={() => { setPaletteOpen(false); toast('Pro tips', { description: 'g then d → Dashboard · [ ] → prev/next module · / → search · star modules to pin.' }) }}>
+   797→                  <Sparkles className="h-4 w-4 mr-2 text-muted-foreground" />
+   798→                  <span>Show quick tips</span>
+   799→                </CommandItem>
+   800→              </CommandGroup>
+   801→            </>
+   802→          )}
+   803→          {paletteQuery.trim().length >= 2 && groupedResults.map(([moduleKey, rows]) => {
+   804→            const mod = findModule(moduleKey)
+   805→            return (
+   806→              <React.Fragment key={moduleKey}>
+   807→                <CommandSeparator />
+   808→                <CommandGroup heading={mod ? `${mod.label}` : moduleKey}>
+   809→                  {rows.map((r) => (
+   810→                    <CommandItem
+   811→                      key={`${r.type}-${r.id}`}
+   812→                      value={`${r.type}-${r.id}-${r.label}`}
+   813→                      onSelect={() => {
+   814→                        // deep-link: target module scrolls to + highlights this record's row
+   815→                        try {
+   816→                          window.sessionStorage.setItem('erp_deep_link', JSON.stringify({ module: r.module, id: r.id, ts: Date.now() }))
+   817→                          window.dispatchEvent(new CustomEvent('erp:deep-link', { detail: { module: r.module, id: r.id } }))
+   818→                        } catch { /* ignore */ }
+   819→                        goToModule(r.module)
+   820→                      }}
+   821→                    >
+   822→                      <Search className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
+   823→                      <span className="truncate">{r.label}</span>
+   824→                      {r.sub && <span className="ml-auto text-[10px] text-muted-foreground truncate max-w-[140px]">{r.sub}</span>}
+   825→                    </CommandItem>
+   826→                  ))}
+   827→                </CommandGroup>
+   828→              </React.Fragment>
+   829→            )
+   830→          })}
+   831→        </CommandList>
+   832→        <div className="border-t px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground shrink-0">
+   833→          <span className="flex items-center gap-1"><Kbd>↑</Kbd><Kbd>↓</Kbd> navigate</span>
+   834→          <span className="flex items-center gap-1"><Kbd>↵</Kbd> open</span>
+   835→          <span className="flex items-center gap-1"><Kbd>Esc</Kbd> close</span>
+   836→          <span className="hidden sm:flex items-center gap-1"><Kbd>g</Kbd>+<Kbd>d</Kbd> go to module</span>
+   837→          <button className="ml-auto flex items-center gap-1 hover:text-foreground" onClick={() => { setPaletteOpen(false); setHelpOpen(true) }}>
+   838→            <Kbd>?</Kbd> all shortcuts
+   839→          </button>
+   840→        </div>
+   841→      </CommandDialog>
+   842→
+   843→      {/* Keyboard shortcuts help */}
+   844→      <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
+   845→
+   846→      {/* Change password */}
+   847→      <ChangePasswordDialog
+   848→        open={pwdOpen}
+   849→        onOpenChange={setPwdOpen}
+   850→        userId={session.user.id}
+   851→        userName={session.user.name}
+   852→      />
+   853→    </div>
+   854→  )
+   855→}
+   856→

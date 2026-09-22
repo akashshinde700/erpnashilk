@@ -3,13 +3,13 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { BadgeIndianRupee, Plus, Printer, Trash2, X } from 'lucide-react'
+import { BadgeIndianRupee, MessageCircle, Plus, Printer, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
-import { PAYMENT_MODES, fmtMoney } from '@/lib/erp-constants'
+import { PAYMENT_MODES, fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
@@ -48,6 +48,14 @@ const esc = (v?: string | null) =>
 // Join non-empty address parts with ', ' (raw — wrap the result in esc() before injecting).
 const joinAddr = (...parts: (string | null | undefined)[]) =>
   parts.filter((p): p is string => !!p && p.trim() !== '').join(', ')
+
+// Build a wa.me deep link: 10-digit numbers get the '91' prefix, already-prefixed
+// 12-digit numbers pass through, anything else (or no phone) opens WhatsApp's chat chooser.
+function waUrl(phone: string | null | undefined, message: string): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  const valid = digits.length === 10 || (digits.length === 12 && digits.startsWith('91'))
+  return `https://wa.me/${valid ? digits : ''}?text=${encodeURIComponent(message)}`
+}
 
 export default function SalesInvoicesModule({ companyId }: { companyId: string }) {
   const highlightId = useRowHighlight('sales-invoices')
@@ -148,6 +156,18 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
       await apiPatch(`/api/sales-invoices/${row.id}`, { action: 'cancel', companyId })
       toast.success(`Invoice ${row.number} cancelled`); void list.refetch()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to cancel') }
+  }
+
+  async function shareInvoice(row: InvoiceRow) {
+    // Company profile is only needed for the UPI line + signature — best-effort fetch.
+    let company: CompanyRow | undefined
+    try {
+      company = await apiGet<CompanyRow>(`/api/settings?companyId=${companyId}`)
+    } catch { /* omit the UPI line if the profile can't be fetched */ }
+    const customerName = row.customer?.name || 'Customer'
+    const message = `Namaste ${customerName},\n\nTax Invoice ${row.number} dated ${fmtDate(row.date)} — Amount ${fmtMoney(row.grandTotal)}.\n${row.paidAmount < row.grandTotal ? `Balance due: ${fmtMoney(r2(row.grandTotal - row.paidAmount))}${row.dueDate ? ` (due ${fmtDate(row.dueDate)})` : ''}\n` : ''}${company?.bankUpiId ? `Pay via UPI: ${company.bankUpiId}\n` : ''}Thank you,\n${company?.name || 'Accounts'}`
+    if (!row.customer?.phone) toast.info('No phone saved for this customer — choose a chat in WhatsApp')
+    window.open(waUrl(row.customer?.phone, message), '_blank', 'noopener,noreferrer')
   }
 
   async function printInvoice(row: InvoiceRow) {
@@ -324,6 +344,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="sm" className="h-7" title="Print tax invoice" onClick={() => void printInvoice(r)}><Printer className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send on WhatsApp" onClick={() => void shareInvoice(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
           {!r.irn && r.status !== 'CANCELLED' && (
             <Button variant="ghost" size="sm" className="h-7" title="Generate IRN" onClick={() => void generateIrn(r)}><BadgeIndianRupee className="h-3.5 w-3.5" /></Button>
           )}
@@ -349,7 +370,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
         description="GST tax invoices, payments received and e-invoicing"
         actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Invoice</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search invoices…" highlightId={highlightId} />
+      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search invoices…" highlightId={highlightId} moduleKey="sales-invoices" savedViewsKey={`${companyId}:sales-invoices`} />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide title="New Sales Invoice" submitLabel="Create Invoice"

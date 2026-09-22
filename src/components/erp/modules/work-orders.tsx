@@ -196,7 +196,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
         <StatCard title="Total Planned Qty" value={fmtNum(stats.totalQty)} sub="Across all WOs" />
       </div>
 
-      <DataTable columns={columns} rows={woRows} loading={list.loading} searchPlaceholder="Search work orders…" highlightId={highlightId} />
+      <DataTable columns={columns} rows={woRows} loading={list.loading} searchPlaceholder="Search work orders…" highlightId={highlightId} moduleKey="work-orders" savedViewsKey={`${companyId}:work-orders`} />
 
       {/* ---- Create dialog ---- */}
       <FormDialog

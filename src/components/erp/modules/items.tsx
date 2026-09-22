@@ -261,6 +261,8 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         rows={rows}
         loading={loading}
         highlightId={highlightId}
+        moduleKey="items"
+        savedViewsKey={`${companyId}:items`}
         searchPlaceholder="Search items…"
         emptyText="No items yet"
         csvExport={{

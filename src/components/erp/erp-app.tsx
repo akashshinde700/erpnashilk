@@ -254,7 +254,14 @@ export default function ErpApp() {
     return Array.from(map.entries())
   }, [searchResults])
 
-  function goToModule(key: string) {
+  function goToModule(key: string, preset?: { q?: string }) {
+    // Filter preset: sessionStorage covers not-yet-mounted modules, the live event covers the already-mounted one
+    if (preset && typeof preset.q === 'string' && preset.q.length > 0) {
+      try {
+        window.sessionStorage.setItem('erp_filter_preset', JSON.stringify({ module: key, q: preset.q, ts: Date.now() }))
+      } catch { /* private mode */ }
+      window.dispatchEvent(new CustomEvent('erp:filter-preset', { detail: { module: key, q: preset.q } }))
+    }
     setActiveKey(key)
     setPaletteOpen(false)
     setPaletteQuery('') // programmatic close bypasses onOpenChange — clear stale query/results
@@ -267,11 +274,23 @@ export default function ErpApp() {
     })
   }
 
-  // Module navigation events (dashboard quick actions, future widgets)
+  // Module navigation events (dashboard quick actions / KPI + chart drill-down) —
+  // detail may be a plain module key string or { key, preset? }
   React.useEffect(() => {
     const handler = (e: Event) => {
-      const key = (e as CustomEvent<string>).detail
-      if (typeof key === 'string' && findModule(key)) goToModule(key)
+      const detail: unknown = (e as CustomEvent).detail
+      if (typeof detail === 'string') {
+        if (findModule(detail)) goToModule(detail)
+        return
+      }
+      if (detail && typeof detail === 'object') {
+        const key = (detail as { key?: unknown }).key
+        if (typeof key !== 'string' || !findModule(key)) return
+        const preset = (detail as { preset?: unknown }).preset
+        goToModule(key, preset && typeof preset === 'object' && typeof (preset as { q?: unknown }).q === 'string'
+          ? (preset as { q?: string })
+          : undefined)
+      }
     }
     window.addEventListener('erp:goto', handler)
     return () => window.removeEventListener('erp:goto', handler)

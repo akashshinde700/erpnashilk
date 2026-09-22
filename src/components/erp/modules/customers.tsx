@@ -223,6 +223,8 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         rows={rows}
         loading={loading}
         highlightId={highlightId}
+        moduleKey="customers"
+        savedViewsKey={`${companyId}:customers`}
         searchPlaceholder="Search customers…"
         emptyText="No customers yet"
         csvExport={{

@@ -12,9 +12,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { fmtDate, fmtMoney, fmtNum, tone } from '@/lib/erp-constants'
-import { Download, FileSpreadsheet, Inbox, Search, Printer } from 'lucide-react'
+import { Bookmark, BookmarkPlus, Download, FileSpreadsheet, Inbox, Search, Printer, Trash2, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 // ---------- Page header ----------
@@ -185,6 +186,38 @@ export function useRowHighlight(moduleKey: string | null | undefined): string | 
   return highlightId
 }
 
+// ---------- Saved views (per-module localStorage search presets) ----------
+
+interface SavedView { name: string; q: string; ts: number }
+
+const VIEWS_STORAGE_PREFIX = 'manuflow:views:'
+
+/** Reads + sanitizes the saved-view list for a storage key. Private-mode safe (returns [] on any failure). */
+function loadSavedViews(key: string): SavedView[] {
+  try {
+    const raw = localStorage.getItem(VIEWS_STORAGE_PREFIX + key)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((v): v is SavedView =>
+        !!v && typeof v === 'object' &&
+        typeof (v as SavedView).name === 'string' && typeof (v as SavedView).q === 'string')
+      .map((v) => ({ name: v.name, q: v.q, ts: typeof v.ts === 'number' ? v.ts : 0 }))
+  } catch {
+    return []
+  }
+}
+
+/** Writes the saved-view list for a storage key. Private-mode safe (silently no-ops). */
+function persistSavedViews(key: string, views: SavedView[]) {
+  try {
+    localStorage.setItem(VIEWS_STORAGE_PREFIX + key, JSON.stringify(views))
+  } catch {
+    // Storage unavailable (private mode / quota) — views stay in-memory for this session.
+  }
+}
+
 // ---------- Generic data table ----------
 
 export interface Column<T> {
@@ -196,7 +229,7 @@ export interface Column<T> {
 }
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -212,8 +245,13 @@ export function DataTable<T extends { id: string }>({
   xlsxExport?: { filename: string; headers?: string[]; pick: (row: T) => (string | number)[] }
   /** Deep-linked record id (from useRowHighlight) — page-jumps to + scrolls the row into view and highlights it. */
   highlightId?: string | null
+  /** Opts into the dashboard filter-preset channel: on mount consumes sessionStorage 'erp_filter_preset' ({ module, q, ts }) when its module matches, and live-listens for 'erp:filter-preset' CustomEvents (detail { module, q }). Pass the module's key (e.g. 'items'). No effect when omitted. */
+  moduleKey?: string
+  /** Enables the "Views" saved-search control. Views persist in localStorage under `manuflow:views:<savedViewsKey>` — pass `${companyId}:<moduleKey>` so views are scoped per company + module. No effect when omitted. */
+  savedViewsKey?: string
 }) {
   const [q, setQ] = React.useState('')
+  const [appliedView, setAppliedView] = React.useState<string | null>(null)
   const [page, setPage] = React.useState(0)
   const wrapperRef = React.useRef<HTMLDivElement | null>(null)
 
@@ -260,39 +298,171 @@ export function DataTable<T extends { id: string }>({
     return () => timers.forEach(clearTimeout)
   }, [highlightId, filtered, pageSize])
 
+  // ---- Dashboard filter presets (moduleKey) ----
+  // One-shot: read + consume sessionStorage 'erp_filter_preset' ({ module, q, ts })
+  // on mount, exactly like the deep-link pattern above.
+  React.useEffect(() => {
+    if (!moduleKey) return
+    try {
+      const raw = sessionStorage.getItem('erp_filter_preset')
+      if (!raw) return
+      const d = JSON.parse(raw) as { module?: unknown; q?: unknown; ts?: unknown }
+      sessionStorage.removeItem('erp_filter_preset')
+      if (d && d.module === moduleKey && typeof d.q === 'string') setQ(d.q)
+    } catch {
+      // Malformed / unavailable preset — best-effort, ignore.
+    }
+  }, [moduleKey])
+
+  // Same-module live presets while already mounted (no remount happens): the
+  // emitter also broadcasts 'erp:filter-preset' with detail { module, q }.
+  React.useEffect(() => {
+    if (!moduleKey) return
+    const handler = (e: Event) => {
+      try {
+        const d = (e as CustomEvent<{ module?: unknown; q?: unknown }>).detail
+        if (d && d.module === moduleKey && typeof d.q === 'string') {
+          const next = String(d.q)
+          setQ((prev) => (next === prev ? prev : next))
+          setAppliedView(null) // an external preset replaces any applied view
+        }
+      } catch {
+        // best-effort — ignore
+      }
+    }
+    window.addEventListener('erp:filter-preset', handler)
+    return () => window.removeEventListener('erp:filter-preset', handler)
+  }, [moduleKey])
+
+  // ---- Saved views (savedViewsKey) ----
+  const [views, setViews] = React.useState<SavedView[]>([])
+  const [saveDialogOpen, setSaveDialogOpen] = React.useState(false)
+  const [viewName, setViewName] = React.useState('')
+
+  // Load (re-load on key change) from localStorage after mount — hydration safe.
+  React.useEffect(() => {
+    if (!savedViewsKey) return
+    setViews(loadSavedViews(savedViewsKey))
+    setAppliedView(null)
+  }, [savedViewsKey])
+
+  const applyView = (v: SavedView) => {
+    setQ(v.q)
+    setAppliedView(v.name)
+  }
+
+  const deleteView = (name: string) => {
+    if (!savedViewsKey) return
+    const next = views.filter((v) => v.name !== name)
+    setViews(next)
+    persistSavedViews(savedViewsKey, next)
+    setAppliedView((cur) => (cur === name ? null : cur))
+  }
+
+  const saveCurrentView = () => {
+    if (!savedViewsKey) return
+    const name = viewName.trim() || 'All records'
+    const view: SavedView = { name, q, ts: Date.now() }
+    const idx = views.findIndex((v) => v.name === name)
+    const next = idx === -1 ? [...views, view] : views.map((v, i) => (i === idx ? view : v))
+    setViews(next)
+    persistSavedViews(savedViewsKey, next)
+    setAppliedView(name)
+    setSaveDialogOpen(false)
+  }
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize)
 
   return (
     <div className="space-y-3">
-      {(searchPlaceholder || csvExport || xlsxExport) && (
+      {(searchPlaceholder || csvExport || xlsxExport || savedViewsKey) && (
         <div className="flex items-center justify-between gap-2">
           {searchPlaceholder ? (
             <div className="relative max-w-xs flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="pl-8 h-9" />
+              <Input value={q} onChange={(e) => { setQ(e.target.value); setAppliedView(null) }} placeholder={searchPlaceholder} className="pl-8 h-9" />
             </div>
           ) : <div />}
-          {csvExport && rows.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 shrink-0"
-              onClick={() => downloadCsv(csvExport.filename, columns.map((c) => c.header), filtered.map(csvExport.pick))}
-            >
-              <Download className="h-4 w-4 mr-1.5" />CSV
-            </Button>
-          )}
-          {xlsxExport && rows.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 shrink-0"
-              onClick={() => downloadXlsx(xlsxExport.filename, xlsxExport.headers ?? columns.map((c) => c.header), filtered.map(xlsxExport.pick))}
-            >
-              <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600 dark:text-emerald-400" />Excel
-            </Button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {csvExport && rows.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => downloadCsv(csvExport.filename, columns.map((c) => c.header), filtered.map(csvExport.pick))}
+              >
+                <Download className="h-4 w-4 mr-1.5" />CSV
+              </Button>
+            )}
+            {xlsxExport && rows.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => downloadXlsx(xlsxExport.filename, xlsxExport.headers ?? columns.map((c) => c.header), filtered.map(xlsxExport.pick))}
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600 dark:text-emerald-400" />Excel
+              </Button>
+            )}
+            {savedViewsKey && (
+              <div className="flex items-center gap-1.5">
+                {appliedView && (
+                  <span
+                    className="inline-flex items-center gap-1 max-w-40 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 text-[11px] font-medium"
+                    title={`Applied view: ${appliedView}`}
+                  >
+                    <span className="truncate">{appliedView}</span>
+                    <button
+                      type="button"
+                      title="Clear applied view"
+                      className="rounded-full p-0.5 hover:bg-amber-200/70 dark:hover:bg-amber-900/60"
+                      onClick={() => { setQ(''); setAppliedView(null) }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9" title="Saved views">
+                      <Bookmark className="h-4 w-4 mr-1.5" />
+                      <span className="hidden sm:inline">Views</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-64">
+                    {views.length === 0 ? (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">No saved views yet</div>
+                    ) : (
+                      views.map((v) => (
+                        <DropdownMenuItem key={v.name} onSelect={() => applyView(v)} className="items-start gap-2">
+                          <div className="min-w-0 flex-1 py-0.5">
+                            <div className="font-medium truncate">{v.name}</div>
+                            {v.q.trim() !== '' && <div className="text-xs text-muted-foreground truncate">“{v.q}”</div>}
+                          </div>
+                          <button
+                            type="button"
+                            title={`Delete view “${v.name}”`}
+                            className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteView(v.name) }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={() => { setViewName(q.trim() || 'All records'); setSaveDialogOpen(true) }}
+                    >
+                      <BookmarkPlus className="h-4 w-4 mr-2" />
+                      Save current search…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+          </div>
         </div>
       )}
       <div ref={wrapperRef} className="rounded-lg border overflow-hidden bg-card">
@@ -355,6 +525,31 @@ export function DataTable<T extends { id: string }>({
             <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Next</Button>
           </div>
         </div>
+      )}
+      {savedViewsKey && (
+        <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Save current search</DialogTitle>
+              <DialogDescription>
+                {q.trim() !== ''
+                  ? <>Saves the current search text: <span className="font-medium">“{q}”</span></>
+                  : 'Saves an empty search (shows all records)'}
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); saveCurrentView() }}>
+              <div className="grid gap-4 py-2">
+                <Field label="View name" required>
+                  <Input value={viewName} onChange={(e) => setViewName(e.target.value)} placeholder="All records" autoFocus />
+                </Field>
+              </div>
+              <DialogFooter className="mt-2">
+                <Button type="button" variant="outline" onClick={() => setSaveDialogOpen(false)}>Cancel</Button>
+                <Button type="submit">Save</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   )

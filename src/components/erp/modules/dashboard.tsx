@@ -78,8 +78,8 @@ interface DashboardData {
     lowStockCount?: number
   }
   charts?: {
-    salesTrend?: { month: string; value: number }[]
-    productionTrend?: { month: string; value?: number; qty?: number }[]
+    salesTrend?: { month: string; key?: string; value: number }[]
+    productionTrend?: { month: string; key?: string; value?: number; qty?: number }[]
   }
   lists?: {
     recentSalesOrders?: RecentSalesOrder[]
@@ -118,6 +118,14 @@ function shortApprovalType(t?: string): string {
   return s.slice(0, 2) || '—'
 }
 
+/** Extract a trend point's yyyy-mm key from a Recharts click datum (v2 wraps the point in .payload). */
+function trendKeyFromChartDatum(datum: unknown): string | undefined {
+  if (!datum || typeof datum !== 'object') return undefined
+  const d = datum as { payload?: unknown }
+  const point = (d.payload && typeof d.payload === 'object' ? d.payload : datum) as { key?: unknown }
+  return typeof point.key === 'string' && point.key ? point.key : undefined
+}
+
 function levelDotCls(level?: string): string {
   switch ((level || '').toUpperCase()) {
     case 'CRITICAL':
@@ -154,13 +162,7 @@ const QUICK_ACTIONS: { key: string; label: string; icon: React.ReactNode }[] = [
   { key: 'expenses', label: 'Add Expense', icon: <CreditCard className="h-4 w-4" /> },
 ]
 
-function QuickActions() {
-  const role = React.useMemo(() => {
-    try {
-      const raw = window.localStorage.getItem('erp_user')
-      return raw ? (JSON.parse(raw) as { user?: { role?: string } }).user?.role || '' : ''
-    } catch { return '' }
-  }, [])
+function QuickActions({ role }: { role: string }) {
   const actions = QUICK_ACTIONS.filter((a) => canAccessModule(role, a.key))
   if (!actions.length) return null
   return (
@@ -187,25 +189,60 @@ function QuickActions() {
 export default function DashboardModule({ companyId }: { companyId: string }) {
   const { data, loading, error, refetch } = useList<DashboardData>(`/api/dashboard?companyId=${companyId}`)
 
+  // Role read lifted here (localStorage 'erp_user') — gates every widget below
+  const role = React.useMemo(() => {
+    try {
+      const raw = window.localStorage.getItem('erp_user')
+      return raw ? (JSON.parse(raw) as { user?: { role?: string } }).user?.role || '' : ''
+    } catch { return '' }
+  }, [])
+
+  const canReceivables = canAccessModule(role, 'receivables')
+  const canPayables = canAccessModule(role, 'payables')
+  const canStock = canAccessModule(role, 'stock')
+  const canWorkOrders = canAccessModule(role, 'work-orders')
+  const canSalesOrders = canAccessModule(role, 'sales-orders')
+  const canApprovals = canAccessModule(role, 'purchase-orders') || canAccessModule(role, 'requisitions')
+  const canNotifications = canAccessModule(role, 'notifications')
+
+  /** Navigate via the global erp:goto event (string detail, or { key, preset } to seed a search filter). */
+  function openModule(key: string, preset?: { q?: string }) {
+    window.dispatchEvent(new CustomEvent('erp:goto', { detail: preset ? { key, preset } : key }))
+  }
+
+  /** Palette-style deep-link highlight + navigate — list rows that target a specific record. */
+  function openWithHighlight(module: string, id: string) {
+    try {
+      window.sessionStorage.setItem('erp_deep_link', JSON.stringify({ module, id, ts: Date.now() }))
+      window.dispatchEvent(new CustomEvent('erp:deep-link', { detail: { module, id } }))
+    } catch { /* ignore */ }
+    openModule(module)
+  }
+
   const k = data?.kpis
   const lists = data?.lists
   const salesTrend = data?.charts?.salesTrend ?? []
-  const productionTrend = (data?.charts?.productionTrend ?? []).map((r) => ({ month: r.month, qty: r.qty ?? r.value ?? 0 }))
+  const productionTrend = (data?.charts?.productionTrend ?? []).map((r) => ({ month: r.month, key: r.key, qty: r.qty ?? r.value ?? 0 }))
   const recentOrders = lists?.recentSalesOrders ?? []
   const approvals = lists?.pendingApprovals ?? []
   const lowStock = lists?.lowStock ?? []
   const notifications = lists?.notifications ?? []
 
-  const stats: { title: string; value: string; icon: React.ReactNode; cls: string }[] = [
-    { title: 'Sales This Month', value: fmtMoney(k?.salesThisMonth), icon: <IndianRupee className="h-4 w-4" />, cls: TONE.emerald },
-    { title: 'Purchases This Month', value: fmtMoney(k?.purchasesThisMonth), icon: <ShoppingCart className="h-4 w-4" />, cls: TONE.violet },
-    { title: 'Receivables', value: fmtMoney(k?.receivables), icon: <HandCoins className="h-4 w-4" />, cls: TONE.sky },
-    { title: 'Payables', value: fmtMoney(k?.payables), icon: <CreditCard className="h-4 w-4" />, cls: TONE.rose },
-    { title: 'Stock Value', value: fmtMoney(k?.stockValue), icon: <Boxes className="h-4 w-4" />, cls: TONE.amber },
-    { title: 'Open Sales Orders', value: fmtNum(k?.openSalesOrders ?? k?.openOrders), icon: <ClipboardList className="h-4 w-4" />, cls: TONE.sky },
-    { title: 'WIP Qty', value: fmtNum(k?.wipQty), icon: <Factory className="h-4 w-4" />, cls: TONE.violet },
-    { title: 'Low Stock Items', value: fmtNum(k?.lowStockCount), icon: <AlertTriangle className="h-4 w-4" />, cls: TONE.rose },
+  const stats: { title: string; value: string; icon: React.ReactNode; cls: string; to: string; hint: string; allow?: boolean }[] = [
+    { title: 'Sales This Month', value: fmtMoney(k?.salesThisMonth), icon: <IndianRupee className="h-4 w-4" />, cls: TONE.emerald, to: 'sales-invoices', hint: 'Open sales invoices' },
+    { title: 'Purchases This Month', value: fmtMoney(k?.purchasesThisMonth), icon: <ShoppingCart className="h-4 w-4" />, cls: TONE.violet, to: 'purchase-invoices', hint: 'Open purchase invoices' },
+    { title: 'Receivables', value: fmtMoney(k?.receivables), icon: <HandCoins className="h-4 w-4" />, cls: TONE.sky, to: 'receivables', hint: 'Open receivables', allow: canReceivables },
+    { title: 'Payables', value: fmtMoney(k?.payables), icon: <CreditCard className="h-4 w-4" />, cls: TONE.rose, to: 'payables', hint: 'Open payables', allow: canPayables },
+    { title: 'Stock Value', value: fmtMoney(k?.stockValue), icon: <Boxes className="h-4 w-4" />, cls: TONE.amber, to: 'stock', hint: 'Open stock balances', allow: canStock },
+    { title: 'Open Sales Orders', value: fmtNum(k?.openSalesOrders ?? k?.openOrders), icon: <ClipboardList className="h-4 w-4" />, cls: TONE.sky, to: 'sales-orders', hint: 'Open sales orders' },
+    { title: 'WIP Qty', value: fmtNum(k?.wipQty), icon: <Factory className="h-4 w-4" />, cls: TONE.violet, to: 'work-orders', hint: 'Open work orders', allow: canWorkOrders },
+    { title: 'Low Stock Items', value: fmtNum(k?.lowStockCount), icon: <AlertTriangle className="h-4 w-4" />, cls: TONE.rose, to: 'stock', hint: 'Open stock balances', allow: canStock },
   ]
+  const visibleStats = stats.filter((s) => s.allow !== false)
+
+  // List grid columns adapt to how many top-level list sections the role can see
+  const listSlots = [canSalesOrders, canApprovals, canStock || canNotifications].filter(Boolean).length
+  const listCols = listSlots >= 3 ? 'lg:grid-cols-3' : listSlots === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-1'
 
   if (error && !data) {
     return (
@@ -253,19 +290,29 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
         </div>
       )}
 
-      {/* KPI cards */}
+      {/* KPI cards — clickable, drill into the owning module */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {stats.map((s) => (
-          <StatCard key={s.title} title={s.title} value={s.value} icon={s.icon} toneClass={s.cls} />
+        {visibleStats.map((s) => (
+          <button
+            key={s.title}
+            type="button"
+            onClick={() => openModule(s.to)}
+            className="text-left w-full rounded-xl transition hover:ring-2 hover:ring-emerald-300 dark:hover:ring-emerald-700 focus:outline-none focus-visible:ring-2 cursor-pointer"
+            aria-label={s.hint}
+            title={s.hint}
+          >
+            <StatCard title={s.title} value={s.value} icon={s.icon} toneClass={s.cls} />
+          </button>
         ))}
       </div>
 
       {/* Quick actions */}
-      <QuickActions />
+      <QuickActions role={role} />
 
-      {/* Charts */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Charts — production card only for work-order roles */}
+      <div className={cn('grid gap-4', canWorkOrders ? 'lg:grid-cols-2' : 'lg:grid-cols-1')}>
         <SectionCard title="Sales Trend (6 months)">
+          <p className="-mt-1 mb-2 text-xs text-muted-foreground">Click a bar to open that month's invoices</p>
           {salesTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={salesTrend} margin={{ top: 8, right: 8, left: -4, bottom: 0 }}>
@@ -279,7 +326,18 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                   tickFormatter={(v) => compact(Number(v))}
                 />
                 <Tooltip cursor={{ fill: 'rgba(5, 150, 105, 0.08)' }} formatter={(v) => fmtMoney(Number(v))} />
-                <Bar dataKey="value" name="Sales" fill={EMERALD} radius={[4, 4, 0, 0]} maxBarSize={42} />
+                <Bar
+                  dataKey="value"
+                  name="Sales"
+                  fill={EMERALD}
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={42}
+                  className="cursor-pointer"
+                  onClick={(datum: unknown) => {
+                    const key = trendKeyFromChartDatum(datum)
+                    if (key) openModule('sales-invoices', { q: key })
+                  }}
+                />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -287,7 +345,9 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
           )}
         </SectionCard>
 
+        {canWorkOrders && (
         <SectionCard title="Production Output (6 months)">
+          <p className="-mt-1 mb-2 text-xs text-muted-foreground">Click a point to open that month's work orders</p>
           {productionTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <AreaChart data={productionTrend} margin={{ top: 8, right: 8, left: -4, bottom: 0 }}>
@@ -307,24 +367,45 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                   tickFormatter={(v) => compact(Number(v))}
                 />
                 <Tooltip cursor={{ stroke: AMBER, strokeDasharray: '3 3' }} formatter={(v) => `${fmtNum(Number(v))} qty`} />
-                <Area type="monotone" dataKey="qty" name="Output" stroke={TEAL} strokeWidth={2} fill="url(#mfl-prod-fill)" />
+                <Area
+                  type="monotone"
+                  dataKey="qty"
+                  name="Output"
+                  stroke={TEAL}
+                  strokeWidth={2}
+                  fill="url(#mfl-prod-fill)"
+                  className="cursor-pointer"
+                  onClick={(datum: unknown) => {
+                    const key = trendKeyFromChartDatum(datum)
+                    if (key) openModule('work-orders', { q: key })
+                  }}
+                />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
             <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">No production data yet</div>
           )}
         </SectionCard>
+        )}
       </div>
 
-      {/* Lists */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      {/* Lists — role-gated */}
+      <div className={cn('grid gap-4', listCols)}>
+        {canSalesOrders && (
         <SectionCard title="Recent Sales Orders">
           {recentOrders.length === 0 ? (
             <EmptyList text="No sales orders yet" />
           ) : (
             <div>
               {recentOrders.slice(0, 6).map((o) => (
-                <div key={o.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => openWithHighlight('sales-orders', o.id)}
+                  className="flex w-full items-center justify-between gap-3 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                  aria-label={`Open sales order ${o.number ?? ''}`}
+                  title="Open this sales order"
+                >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{o.number ?? '—'}</p>
                     <p className="truncate text-xs text-muted-foreground">
@@ -337,12 +418,14 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                       <StatusBadge status={o.status} />
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
         </SectionCard>
+        )}
 
+        {canApprovals && (
         <SectionCard
           title="Pending Approvals"
           actions={
@@ -357,25 +440,46 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
             <EmptyList text="Nothing pending approval" />
           ) : (
             <div>
-              {approvals.slice(0, 6).map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
-                      {shortApprovalType(a.type)}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{a.number ?? '—'}</p>
-                      <p className="text-xs text-muted-foreground">{fmtDate(a.date)}</p>
+              {approvals.slice(0, 6).map((a) => {
+                const kind = shortApprovalType(a.type)
+                const body = (
+                  <>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                        {kind}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{a.number ?? '—'}</p>
+                        <p className="text-xs text-muted-foreground">{fmtDate(a.date)}</p>
+                      </div>
                     </div>
-                  </div>
-                  <Money value={a.grandTotal ?? a.amount} className="shrink-0 text-sm font-medium" />
-                </div>
-              ))}
+                    <Money value={a.grandTotal ?? a.amount} className="shrink-0 text-sm font-medium" />
+                  </>
+                )
+                if (kind !== 'PR' && kind !== 'PO') {
+                  return <div key={a.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">{body}</div>
+                }
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => (kind === 'PO' ? openWithHighlight('purchase-orders', a.id) : openModule('requisitions'))}
+                    className="flex w-full items-center justify-between gap-3 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                    aria-label={`Open ${kind === 'PO' ? 'purchase order' : 'requisition'} ${a.number ?? ''}`}
+                    title={kind === 'PO' ? 'Open purchase order' : 'Open requisition'}
+                  >
+                    {body}
+                  </button>
+                )
+              })}
             </div>
           )}
         </SectionCard>
+        )}
 
+        {(canStock || canNotifications) && (
         <div className="space-y-4">
+          {canStock && (
           <SectionCard title="Low Stock">
             {lowStock.length === 0 ? (
               <EmptyList text="All items above reorder level" />
@@ -383,8 +487,16 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
               <div>
                 {lowStock.slice(0, 5).map((r) => {
                   const onHand = r.onHand ?? r.qty ?? 0
+                  const code = (r.item?.code || '').trim()
                   return (
-                    <div key={r.item?.code || r.id || r.item?.name || Math.random()} className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
+                    <button
+                      key={r.item?.code || r.id || r.item?.name || Math.random()}
+                      type="button"
+                      onClick={() => (code ? openModule('stock', { q: code }) : openModule('stock'))}
+                      className="flex w-full items-center justify-between gap-3 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                      aria-label={`Check stock for ${r.item?.name ?? 'item'}`}
+                      title="Check stock for this item"
+                    >
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{r.item?.name ?? '—'}</p>
                         <p className="truncate text-xs text-muted-foreground">
@@ -394,20 +506,29 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                       <span className={cn('shrink-0 text-sm font-semibold tabular-nums', onHand <= 0 ? 'text-red-600' : 'text-amber-600')}>
                         {fmtNum(onHand)}
                       </span>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
             )}
           </SectionCard>
+          )}
 
+          {canNotifications && (
           <SectionCard title="Notifications">
             {notifications.length === 0 ? (
               <EmptyList text="No notifications" />
             ) : (
               <div>
                 {notifications.slice(0, 5).map((n) => (
-                  <div key={n.id} className="flex items-start gap-2.5 border-b py-2 last:border-0">
+                  <button
+                    key={n.id}
+                    type="button"
+                    onClick={() => openModule('notifications')}
+                    className="flex w-full items-start gap-2.5 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                    aria-label="Open notifications"
+                    title="Open notifications"
+                  >
                     <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', levelDotCls(n.level))} />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{n.title ?? '—'}</p>
@@ -416,12 +537,14 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                         {fmtDateTime(n.createdAt)}
                       </p>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
           </SectionCard>
+          )}
         </div>
+        )}
       </div>
     </div>
   )
