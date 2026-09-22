@@ -23,8 +23,11 @@ const ACTION_FILTERS = ['ALL', 'CREATE', 'UPDATE', 'DELETE', 'APPROVE', 'POST', 
 }))
 
 export default function AuditLogModule({ companyId }: { companyId: string }) {
-  const { data, loading, refetch, error } = useList<{ items?: AuditRow[] }>(
-    `/api/audit-logs?companyId=${companyId}&limit=200`,
+  // Server-side pagination + server-side text search (action filter below stays client-side).
+  const [page, setPage] = React.useState(0)
+  const [serverQ, setServerQ] = React.useState('')
+  const { data, loading, refetch, error } = useList<{ items?: AuditRow[]; total?: number }>(
+    `/api/audit-logs?companyId=${companyId}&page=${page + 1}&pageSize=50${serverQ ? `&q=${encodeURIComponent(serverQ)}` : ''}`,
   )
   const [action, setAction] = React.useState('ALL')
 
@@ -51,7 +54,7 @@ export default function AuditLogModule({ companyId }: { companyId: string }) {
     <div>
       <PageHeader
         title="Audit Log"
-        description="Every important action, tenant-scoped (latest 200)"
+        description="Every important action, tenant-scoped, newest first"
         actions={
           <>
             <div className="w-40">
@@ -76,6 +79,16 @@ export default function AuditLogModule({ companyId }: { companyId: string }) {
         searchPlaceholder="Search audit trail…"
         emptyText="No audit entries yet"
         pageSize={15}
+        serverPagination={{
+          page,
+          pageSize: 50,
+          total: data?.total ?? rows.length,
+          onPageChange: setPage,
+          onSearchChange: (s) => {
+            setServerQ(s)
+            setPage(0)
+          },
+        }}
         csvExport={{
           filename: 'audit-log',
           pick: (r) => [new Date(r.createdAt).toISOString(), r.userName || '', r.action, r.entity, r.entityId || '', r.details || ''],

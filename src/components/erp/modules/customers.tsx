@@ -79,7 +79,12 @@ const emptyForm: FormState = {
 
 export default function CustomersModule({ companyId }: { companyId: string }) {
   const highlightId = useRowHighlight('customers')
-  const { data, loading, refetch } = useList<CustomersResponse>(`/api/customers?companyId=${companyId}`)
+  // Server-side pagination: the API filters + slices, so page/serverQ drive the url.
+  const [page, setPage] = React.useState(0)
+  const [serverQ, setServerQ] = React.useState('')
+  const { data, loading, refetch } = useList<CustomersResponse>(
+    `/api/customers?companyId=${companyId}&page=${page + 1}&pageSize=200${serverQ ? `&q=${encodeURIComponent(serverQ)}` : ''}`,
+  )
   const rows = data?.items ?? []
 
   const [open, setOpen] = React.useState(false)
@@ -227,6 +232,16 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         savedViewsKey={`${companyId}:customers`}
         searchPlaceholder="Search customers…"
         emptyText="No customers yet"
+        serverPagination={{
+          page,
+          pageSize: 200,
+          total: data?.total ?? rows.length,
+          onPageChange: setPage,
+          onSearchChange: (s) => {
+            setServerQ(s)
+            setPage(0)
+          },
+        }}
         csvExport={{
           filename: 'customers',
           pick: (r) => [r.code, r.name, r.gstin || '', r.contactPerson || '', r.phone || '', r.email || '', r.city || '', r.state || '', r.paymentTermsDays ?? 0, r.creditLimit ?? 0, r.status],

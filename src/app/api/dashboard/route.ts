@@ -10,10 +10,10 @@ interface MonthBucket {
   end: Date
 }
 
-/** Last 6 months including current, as [start, end) windows with short labels. */
-function lastSixMonths(now: Date): MonthBucket[] {
+/** Last `n` months (3 | 6 | 12) including current, as [start, end) windows with short labels. */
+function lastNMonths(now: Date, n: number): MonthBucket[] {
   const months: MonthBucket[] = []
-  for (let i = 5; i >= 0; i--) {
+  for (let i = n - 1; i >= 0; i--) {
     const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
     const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
     months.push({
@@ -43,7 +43,10 @@ export async function GET(req: Request) {
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-    const months = lastSixMonths(now)
+    // Trend span: ?months= accepts 3 | 6 | 12 only — anything else (incl. NaN) falls back to 6
+    const spanRaw = Number.parseInt(new URL(req.url).searchParams.get('months') ?? '', 10)
+    const span = spanRaw === 3 || spanRaw === 6 || spanRaw === 12 ? spanRaw : 6
+    const months = lastNMonths(now, span)
     const trendStart = months[0].start
     const notCancelled = { not: 'CANCELLED' }
 
@@ -131,12 +134,12 @@ export async function GET(req: Request) {
         take: 5,
         select: { id: true, title: true, message: true, level: true, createdAt: true },
       }),
-      // 6-month sales trend rows
+      // trend-window sales rows (span = 3/6/12 months incl. current)
       db.salesInvoice.findMany({
         where: { companyId, status: notCancelled, date: { gte: trendStart, lt: monthEnd } },
         select: { date: true, grandTotal: true },
       }),
-      // 6-month production trend rows
+      // trend-window production rows (same span)
       db.productionEntry.findMany({
         where: { companyId, date: { gte: trendStart, lt: monthEnd } },
         select: { date: true, producedQty: true },

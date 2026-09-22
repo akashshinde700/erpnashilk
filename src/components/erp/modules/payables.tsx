@@ -275,6 +275,8 @@ export default function PayablesModule({ companyId }: { companyId: string }) {
           loading={loading}
           searchPlaceholder="Search invoices…"
           emptyText="No outstanding payables — all supplier invoices settled"
+          moduleKey="payables"
+          savedViewsKey={`${companyId}:payables`}
         />
       </SectionCard>
     </div>

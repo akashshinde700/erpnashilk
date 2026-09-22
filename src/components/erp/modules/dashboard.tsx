@@ -184,10 +184,39 @@ function QuickActions({ role }: { role: string }) {
   )
 }
 
+// ---------- trend span (3M / 6M / 12M) ----------
+
+const TREND_SPANS = [3, 6, 12] as const
+
+type TrendSpan = (typeof TREND_SPANS)[number]
+
+function TrendSpanControl({ span, onChange }: { span: TrendSpan; onChange: (s: TrendSpan) => void }) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <span className="text-xs text-muted-foreground">Trend span</span>
+      <div role="group" aria-label="Trend span" className="flex items-center gap-1">
+        {TREND_SPANS.map((s) => (
+          <Button
+            key={s}
+            size="sm"
+            variant={s === span ? 'default' : 'outline'}
+            aria-pressed={s === span}
+            className={s === span ? 'h-8 bg-emerald-600 text-white hover:bg-emerald-600' : 'h-8'}
+            onClick={() => onChange(s)}
+          >
+            {s}M
+          </Button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ---------- module ----------
 
 export default function DashboardModule({ companyId }: { companyId: string }) {
-  const { data, loading, error, refetch } = useList<DashboardData>(`/api/dashboard?companyId=${companyId}`)
+  const [span, setSpan] = React.useState<TrendSpan>(6)
+  const { data, loading, error, refetch } = useList<DashboardData>(`/api/dashboard?companyId=${companyId}&months=${span}`)
 
   // Role read lifted here (localStorage 'erp_user') — gates every widget below
   const role = React.useMemo(() => {
@@ -309,9 +338,18 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
       {/* Quick actions */}
       <QuickActions role={role} />
 
-      {/* Charts — production card only for work-order roles */}
-      <div className={cn('grid gap-4', canWorkOrders ? 'lg:grid-cols-2' : 'lg:grid-cols-1')}>
-        <SectionCard title="Sales Trend (6 months)">
+      {/* Trend span control — changing it refetches with the chosen window */}
+      <TrendSpanControl span={span} onChange={setSpan} />
+
+      {/* Charts — production card only for work-order roles (dimmed while a span refetch is in flight) */}
+      <div
+        className={cn(
+          'grid gap-4',
+          canWorkOrders ? 'lg:grid-cols-2' : 'lg:grid-cols-1',
+          loading && data ? 'opacity-60 transition-opacity' : undefined,
+        )}
+      >
+        <SectionCard title={`Sales Trend (${span} months)`}>
           <p className="-mt-1 mb-2 text-xs text-muted-foreground">Click a bar to open that month's invoices</p>
           {salesTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
@@ -346,7 +384,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
         </SectionCard>
 
         {canWorkOrders && (
-        <SectionCard title="Production Output (6 months)">
+        <SectionCard title={`Production Output (${span} months)`}>
           <p className="-mt-1 mb-2 text-xs text-muted-foreground">Click a point to open that month's work orders</p>
           {productionTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>

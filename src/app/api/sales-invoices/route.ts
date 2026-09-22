@@ -36,7 +36,7 @@ export async function GET(req: Request) {
       where,
       orderBy: { date: 'desc' },
       include: {
-        customer: { select: { name: true, gstin: true, phone: true, state: true, stateCode: true } },
+        customer: { select: { name: true, gstin: true, phone: true, email: true, state: true, stateCode: true } },
         salesOrder: { select: { number: true } },
       },
     })

@@ -229,7 +229,7 @@ export interface Column<T> {
 }
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey, serverPagination,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -249,6 +249,19 @@ export function DataTable<T extends { id: string }>({
   moduleKey?: string
   /** Enables the "Views" saved-search control. Views persist in localStorage under `manuflow:views:<savedViewsKey>` — pass `${companyId}:<moduleKey>` so views are scoped per company + module. No effect when omitted. */
   savedViewsKey?: string
+  /** Opts into server-side pagination: `rows` must then be exactly the page slice the API returned (already filtered + paginated). The local text filter and internal page state are bypassed — Prev/Next and the "Showing …" footer are driven by `page`/`onPageChange`/`total`, and (with `onSearchChange`) the search text is pushed to the module debounced by 300ms (mount run skipped). Omit for the default fully client-side behavior (zero change). */
+  serverPagination?: {
+    /** 0-based page index, controlled by the module (Prev → onPageChange(page - 1), Next → onPageChange(page + 1)). */
+    page: number
+    /** Rows per server page — the module must fetch exactly this many. */
+    pageSize: number
+    /** Full filtered row count from the server (across all pages). */
+    total: number
+    /** Called when the user pages (Prev/Next) or a highlight page-jump targets another page. */
+    onPageChange: (page: number) => void
+    /** Debounced (300ms) search-text push; the module should store it as its server-side q filter and reset to page 0. */
+    onSearchChange?: (q: string) => void
+  }
 }) {
   const [q, setQ] = React.useState('')
   const [appliedView, setAppliedView] = React.useState<string | null>(null)
@@ -256,10 +269,11 @@ export function DataTable<T extends { id: string }>({
   const wrapperRef = React.useRef<HTMLDivElement | null>(null)
 
   const filtered = React.useMemo(() => {
+    if (serverPagination) return rows // server mode: the API already filtered + sliced — rows are the page as-is
     if (!q.trim()) return rows
     const needle = q.toLowerCase()
     return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(needle))
-  }, [rows, q])
+  }, [rows, q, serverPagination])
 
   React.useEffect(() => setPage(0), [q, rows.length])
 
@@ -269,6 +283,15 @@ export function DataTable<T extends { id: string }>({
   // highlight id makes each jump a strict one-shot that never fights the
   // user's own paging/filtering afterwards.
   const jumpStateRef = React.useRef<{ id: string | null; jumped: boolean; scrolled: boolean }>({ id: null, jumped: false, scrolled: false })
+
+  // Latest serverPagination config, readable inside effects below without
+  // re-triggering them on every render (the object is recreated per render).
+  // Synced in a bare effect (runs after every render, before the consumers
+  // declared after it) so effects always read the freshest config.
+  const serverPaginationRef = React.useRef(serverPagination)
+  React.useEffect(() => {
+    serverPaginationRef.current = serverPagination
+  })
 
   React.useEffect(() => {
     if (!highlightId) return
@@ -284,7 +307,9 @@ export function DataTable<T extends { id: string }>({
         const idx = filtered.findIndex((r) => String(r.id) === highlightId)
         if (idx === -1) return // not in filtered yet (rows still loading) or filtered out by the text filter — do nothing
         st.jumped = true
-        setPage(Math.floor(idx / pageSize))
+        const sp = serverPaginationRef.current
+        if (sp) sp.onPageChange(Math.floor(idx / sp.pageSize))
+        else setPage(Math.floor(idx / pageSize))
       }
       if (!st.scrolled) {
         const el = wrapperRef.current?.querySelector(`[data-row-id="${cssAttrEscape(highlightId)}"]`)
@@ -371,8 +396,46 @@ export function DataTable<T extends { id: string }>({
     setSaveDialogOpen(false)
   }
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
-  const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize)
+  // ---- Server-side search (serverPagination.onSearchChange) ----
+  // The search input still owns the local `q` (saved views + presets keep
+  // working visually); when an onSearchChange callback is wired, q is pushed
+  // to the module debounced by 300ms. The very first run after mount is
+  // skipped, and values already sent are suppressed — so programmatic setQ
+  // (views/presets) to the same text never triggers a redundant refetch.
+  const onSearchChangeRef = React.useRef(serverPagination?.onSearchChange)
+  React.useEffect(() => {
+    onSearchChangeRef.current = serverPagination?.onSearchChange
+  })
+  const serverSearchArmedRef = React.useRef(false)
+  const serverSearchLastSentRef = React.useRef<string | null>(null)
+
+  React.useEffect(() => {
+    const cb = onSearchChangeRef.current
+    if (!cb) return
+    if (!serverSearchArmedRef.current) {
+      serverSearchArmedRef.current = true
+      serverSearchLastSentRef.current = q
+      return
+    }
+    if (q === serverSearchLastSentRef.current) return
+    const timer = setTimeout(() => {
+      serverSearchLastSentRef.current = q
+      cb(q)
+    }, 300)
+    return () => clearTimeout(timer) // re-armed per q change; cleared on unmount
+  }, [q])
+
+  const totalPages = serverPagination
+    ? Math.max(1, Math.ceil(serverPagination.total / serverPagination.pageSize))
+    : Math.max(1, Math.ceil(filtered.length / pageSize))
+  const pageRows = serverPagination ? filtered : filtered.slice(page * pageSize, page * pageSize + pageSize)
+  const pagerPage = serverPagination ? serverPagination.page : page
+  const pagerPageSize = serverPagination ? serverPagination.pageSize : pageSize
+  const pagerTotal = serverPagination ? serverPagination.total : filtered.length
+  const gotoPage = (p: number) => {
+    if (serverPagination) serverPagination.onPageChange(p)
+    else setPage(p)
+  }
 
   return (
     <div className="space-y-3">
@@ -517,12 +580,12 @@ export function DataTable<T extends { id: string }>({
           </Table>
         </ScrollArea>
       </div>
-      {filtered.length > pageSize && (
+      {pagerTotal > pagerPageSize && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, filtered.length)} of {filtered.length}</span>
+          <span>Showing {pagerPage * pagerPageSize + 1}–{Math.min((pagerPage + 1) * pagerPageSize, pagerTotal)} of {pagerTotal}</span>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Next</Button>
+            <Button variant="outline" size="sm" disabled={pagerPage === 0} onClick={() => gotoPage(pagerPage - 1)}>Prev</Button>
+            <Button variant="outline" size="sm" disabled={pagerPage >= totalPages - 1} onClick={() => gotoPage(pagerPage + 1)}>Next</Button>
           </div>
         </div>
       )}

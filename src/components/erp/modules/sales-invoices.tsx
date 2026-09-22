@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { BadgeIndianRupee, MessageCircle, Plus, Printer, Trash2, X } from 'lucide-react'
+import { BadgeIndianRupee, Mail, MessageCircle, Plus, Printer, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
@@ -55,6 +55,17 @@ function waUrl(phone: string | null | undefined, message: string): string {
   const digits = (phone || '').replace(/\D/g, '')
   const valid = digits.length === 10 || (digits.length === 12 && digits.startsWith('91'))
   return `https://wa.me/${valid ? digits : ''}?text=${encodeURIComponent(message)}`
+}
+
+// Build a mailto: deep link — a missing recipient opens the user's mail app with a blank To: field.
+function mailtoUrl(email: string | null | undefined, subject: string, body: string): string {
+  return `mailto:${email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
+// Share text for the WhatsApp and email actions on a sales invoice.
+function invoiceMessage(row: InvoiceRow, company?: CompanyRow): string {
+  const customerName = row.customer?.name || 'Customer'
+  return `Namaste ${customerName},\n\nTax Invoice ${row.number} dated ${fmtDate(row.date)} — Amount ${fmtMoney(row.grandTotal)}.\n${row.paidAmount < row.grandTotal ? `Balance due: ${fmtMoney(r2(row.grandTotal - row.paidAmount))}${row.dueDate ? ` (due ${fmtDate(row.dueDate)})` : ''}\n` : ''}${company?.bankUpiId ? `Pay via UPI: ${company.bankUpiId}\n` : ''}Thank you,\n${company?.name || 'Accounts'}`
 }
 
 export default function SalesInvoicesModule({ companyId }: { companyId: string }) {
@@ -164,10 +175,21 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     try {
       company = await apiGet<CompanyRow>(`/api/settings?companyId=${companyId}`)
     } catch { /* omit the UPI line if the profile can't be fetched */ }
-    const customerName = row.customer?.name || 'Customer'
-    const message = `Namaste ${customerName},\n\nTax Invoice ${row.number} dated ${fmtDate(row.date)} — Amount ${fmtMoney(row.grandTotal)}.\n${row.paidAmount < row.grandTotal ? `Balance due: ${fmtMoney(r2(row.grandTotal - row.paidAmount))}${row.dueDate ? ` (due ${fmtDate(row.dueDate)})` : ''}\n` : ''}${company?.bankUpiId ? `Pay via UPI: ${company.bankUpiId}\n` : ''}Thank you,\n${company?.name || 'Accounts'}`
+    const message = invoiceMessage(row, company)
     if (!row.customer?.phone) toast.info('No phone saved for this customer — choose a chat in WhatsApp')
     window.open(waUrl(row.customer?.phone, message), '_blank', 'noopener,noreferrer')
+  }
+
+  async function emailInvoice(row: InvoiceRow) {
+    // Company profile is only needed for the subject sign-off + UPI line — best-effort fetch.
+    let company: CompanyRow | undefined
+    try {
+      company = await apiGet<CompanyRow>(`/api/settings?companyId=${companyId}`)
+    } catch { /* subject falls back to the generic name without the profile */ }
+    const subject = `Tax Invoice ${row.number} — ${company?.name || 'Accounts'}`
+    // The list API's customer select has no email — the mail app opens with a blank recipient.
+    if (!row.customer?.email) toast.info('No email saved for this customer — your mail app will open with a blank recipient')
+    window.location.href = mailtoUrl(row.customer?.email, subject, invoiceMessage(row, company))
   }
 
   async function printInvoice(row: InvoiceRow) {
@@ -345,6 +367,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="sm" className="h-7" title="Print tax invoice" onClick={() => void printInvoice(r)}><Printer className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send on WhatsApp" onClick={() => void shareInvoice(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7" title="Email invoice" onClick={() => void emailInvoice(r)}><Mail className="h-3.5 w-3.5" /></Button>
           {!r.irn && r.status !== 'CANCELLED' && (
             <Button variant="ghost" size="sm" className="h-7" title="Generate IRN" onClick={() => void generateIrn(r)}><BadgeIndianRupee className="h-3.5 w-3.5" /></Button>
           )}

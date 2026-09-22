@@ -96,7 +96,12 @@ const emptyForm: FormState = {
 
 export default function ItemsModule({ companyId }: { companyId: string }) {
   const highlightId = useRowHighlight('items')
-  const { data, loading, refetch } = useList<ItemsResponse>(`/api/items?companyId=${companyId}`)
+  // Server-side pagination: the API filters + slices, so page/serverQ drive the url.
+  const [page, setPage] = React.useState(0)
+  const [serverQ, setServerQ] = React.useState('')
+  const { data, loading, refetch } = useList<ItemsResponse>(
+    `/api/items?companyId=${companyId}&page=${page + 1}&pageSize=200${serverQ ? `&q=${encodeURIComponent(serverQ)}` : ''}`,
+  )
   const rows = data?.items ?? []
 
   const [open, setOpen] = React.useState(false)
@@ -265,6 +270,16 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         savedViewsKey={`${companyId}:items`}
         searchPlaceholder="Search items…"
         emptyText="No items yet"
+        serverPagination={{
+          page,
+          pageSize: 200,
+          total: data?.total ?? rows.length,
+          onPageChange: setPage,
+          onSearchChange: (s) => {
+            setServerQ(s)
+            setPage(0)
+          },
+        }}
         csvExport={{
           filename: 'items',
           pick: (r) => [r.code, r.name, r.type, r.uom, r.hsn || '', r.gstRate ?? 0, r.purchasePrice ?? 0, r.sellingPrice ?? 0, r.standardCost ?? 0, r.reorderLevel ?? 0, r.status],

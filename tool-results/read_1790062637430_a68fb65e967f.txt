@@ -1,0 +1,738 @@
+     1→'use client'
+     2→
+     3→import * as React from 'react'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     6→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+     7→import { Input } from '@/components/ui/input'
+     8→import { Label } from '@/components/ui/label'
+     9→import { Skeleton } from '@/components/ui/skeleton'
+    10→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    11→import { Textarea } from '@/components/ui/textarea'
+    12→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    13→import { ScrollArea } from '@/components/ui/scroll-area'
+    14→import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
+    15→import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+    16→import { cn } from '@/lib/utils'
+    17→import { fmtDate, fmtMoney, fmtNum, tone } from '@/lib/erp-constants'
+    18→import { Bookmark, BookmarkPlus, Download, FileSpreadsheet, Inbox, Search, Printer, Trash2, X } from 'lucide-react'
+    19→import * as XLSX from 'xlsx'
+    20→
+    21→// ---------- Page header ----------
+    22→
+    23→export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) {
+    24→  return (
+    25→    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+    26→      <div>
+    27→        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+    28→        {description && <p className="text-sm text-muted-foreground mt-0.5">{description}</p>}
+    29→      </div>
+    30→      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    31→    </div>
+    32→  )
+    33→}
+    34→
+    35→// ---------- Status badge ----------
+    36→
+    37→export function StatusBadge({ status }: { status?: string | null }) {
+    38→  const t = tone(status)
+    39→  const cls: Record<string, string> = {
+    40→    gray: 'bg-muted text-muted-foreground',
+    41→    green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+    42→    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+    43→    red: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+    44→    blue: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+    45→    purple: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
+    46→    teal: 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300',
+    47→  }
+    48→  const label = (status || '—').replaceAll('_', ' ')
+    49→  return <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap', cls[t])}>{label}</span>
+    50→}
+    51→
+    52→// ---------- Stat card ----------
+    53→
+    54→export function StatCard({ title, value, sub, icon, toneClass }: { title: string; value: string | number; sub?: string; icon?: React.ReactNode; toneClass?: string }) {
+    55→  return (
+    56→    <Card className="py-4">
+    57→      <CardContent className="flex items-start justify-between gap-2 px-4">
+    58→        <div className="min-w-0">
+    59→          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
+    60→          <p className="text-xl sm:text-2xl font-bold mt-1 truncate">{value}</p>
+    61→          {sub && <p className="text-xs text-muted-foreground mt-0.5 truncate">{sub}</p>}
+    62→        </div>
+    63→        {icon && <div className={cn('rounded-lg p-2 shrink-0', toneClass || 'bg-primary/10 text-primary')}>{icon}</div>}
+    64→      </CardContent>
+    65→    </Card>
+    66→  )
+    67→}
+    68→
+    69→// ---------- CSV export ----------
+    70→
+    71→function csvEscape(v: string | number): string {
+    72→  const s = String(v ?? '')
+    73→  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
+    74→}
+    75→
+    76→export function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
+    77→  const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n')
+    78→  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+    79→  const url = URL.createObjectURL(blob)
+    80→  const a = document.createElement('a')
+    81→  a.href = url
+    82→  a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`
+    83→  a.click()
+    84→  URL.revokeObjectURL(url)
+    85→}
+    86→
+    87→// ---------- XLSX export ----------
+    88→
+    89→/**
+    90→ * Builds a real Excel workbook (one sheet) from a 2-D array — first data row is
+    91→ * the header row. Numbers stay number cells (Excel can sum/filter them) and each
+    92→ * column gets a width derived from its longest content (capped). Browser-only:
+    93→ * XLSX.writeFile triggers the file download.
+    94→ */
+    95→export function downloadXlsx(filename: string, headers: string[], rows: (string | number)[][]) {
+    96→  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+    97→  ws['!cols'] = headers.map((h, col) => {
+    98→    let max = String(h ?? '').length
+    99→    for (const row of rows) {
+   100→      const len = String(row[col] ?? '').length
+   101→      if (len > max) max = len
+   102→    }
+   103→    return { wch: Math.min(Math.max(max + 2, 10), 45) }
+   104→  })
+   105→  const wb = XLSX.utils.book_new()
+   106→  XLSX.utils.book_append_sheet(wb, ws, 'Data')
+   107→  XLSX.writeFile(wb, `${filename}.xlsx`)
+   108→}
+   109→
+   110→// ---------- Kbd (keyboard key chip) ----------
+   111→
+   112→export function Kbd({ children, className }: { children: React.ReactNode; className?: string }) {
+   113→  return (
+   114→    <kbd
+   115→      className={cn(
+   116→        'inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-semibold text-muted-foreground',
+   117→        className,
+   118→      )}
+   119→    >
+   120→      {children}
+   121→    </kbd>
+   122→  )
+   123→}
+   124→
+   125→// ---------- Deep-link row highlight (global search → module table) ----------
+   126→
+   127→/** Escape a string for safe use inside a CSS attribute selector (ids are plain cuids — defensive only). */
+   128→function cssAttrEscape(s: string): string {
+   129→  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+   130→    ? CSS.escape(s)
+   131→    : s.replace(/["\\]/g, '\\$&')
+   132→}
+   133→
+   134→/**
+   135→ * Reads the deep-link written by the global search palette (sessionStorage key
+   136→ * 'erp_deep_link': { module, id, ts }) and returns the record id that should be
+   137→ * highlighted in this module's table — or null. The entry is consumed (removed)
+   138→ * on first read and the highlight auto-clears after ~8s, making it a one-shot pulse.
+   139→ * Pass the module's key (e.g. 'items', 'sales-orders'); deep links for other
+   140→ * modules are ignored (and consumed) by the first mounted module that reads them.
+   141→ */
+   142→export function useRowHighlight(moduleKey: string | null | undefined): string | null {
+   143→  const [highlightId, setHighlightId] = React.useState<string | null>(null)
+   144→
+   145→  // Read once per mount. The sessionStorage key is removed on every successful
+   146→  // read, so effect re-runs (moduleKey change without a remount) are no-ops.
+   147→  React.useEffect(() => {
+   148→    try {
+   149→      const raw = sessionStorage.getItem('erp_deep_link')
+   150→      if (!raw) return
+   151→      const d = JSON.parse(raw) as { module?: unknown; id?: unknown; ts?: unknown }
+   152→      sessionStorage.removeItem('erp_deep_link')
+   153→      if (d && d.module === moduleKey && typeof d.id === 'string' && d.id.trim() !== '') {
+   154→        setHighlightId(String(d.id))
+   155→      }
+   156→    } catch {
+   157→      // Malformed / unavailable deep link — best-effort UX nicety, ignore.
+   158→    }
+   159→  }, [moduleKey])
+   160→
+   161→  // Auto-clear the pulse so a stale highlight never sticks around.
+   162→  React.useEffect(() => {
+   163→    if (!highlightId) return
+   164→    const t = setTimeout(() => setHighlightId(null), 8000)
+   165→    return () => clearTimeout(t)
+   166→  }, [highlightId])
+   167→
+   168→  // Same-module deep link while already mounted (no remount happens): the palette
+   169→  // also broadcasts 'erp:deep-link' so we re-highlight live.
+   170→  React.useEffect(() => {
+   171→    const handler = (e: Event) => {
+   172→      try {
+   173→        const d = (e as CustomEvent<{ module?: unknown; id?: unknown }>).detail
+   174→        if (d && d.module === moduleKey && typeof d.id === 'string' && d.id.trim() !== '') {
+   175→          setHighlightId(null) // restart the pulse even for the same row
+   176→          window.setTimeout(() => setHighlightId(String(d.id)), 0)
+   177→        }
+   178→      } catch {
+   179→        // best-effort UX nicety — ignore
+   180→      }
+   181→    }
+   182→    window.addEventListener('erp:deep-link', handler)
+   183→    return () => window.removeEventListener('erp:deep-link', handler)
+   184→  }, [moduleKey])
+   185→
+   186→  return highlightId
+   187→}
+   188→
+   189→// ---------- Saved views (per-module localStorage search presets) ----------
+   190→
+   191→interface SavedView { name: string; q: string; ts: number }
+   192→
+   193→const VIEWS_STORAGE_PREFIX = 'manuflow:views:'
+   194→
+   195→/** Reads + sanitizes the saved-view list for a storage key. Private-mode safe (returns [] on any failure). */
+   196→function loadSavedViews(key: string): SavedView[] {
+   197→  try {
+   198→    const raw = localStorage.getItem(VIEWS_STORAGE_PREFIX + key)
+   199→    if (!raw) return []
+   200→    const parsed: unknown = JSON.parse(raw)
+   201→    if (!Array.isArray(parsed)) return []
+   202→    return parsed
+   203→      .filter((v): v is SavedView =>
+   204→        !!v && typeof v === 'object' &&
+   205→        typeof (v as SavedView).name === 'string' && typeof (v as SavedView).q === 'string')
+   206→      .map((v) => ({ name: v.name, q: v.q, ts: typeof v.ts === 'number' ? v.ts : 0 }))
+   207→  } catch {
+   208→    return []
+   209→  }
+   210→}
+   211→
+   212→/** Writes the saved-view list for a storage key. Private-mode safe (silently no-ops). */
+   213→function persistSavedViews(key: string, views: SavedView[]) {
+   214→  try {
+   215→    localStorage.setItem(VIEWS_STORAGE_PREFIX + key, JSON.stringify(views))
+   216→  } catch {
+   217→    // Storage unavailable (private mode / quota) — views stay in-memory for this session.
+   218→  }
+   219→}
+   220→
+   221→// ---------- Generic data table ----------
+   222→
+   223→export interface Column<T> {
+   224→  key: string
+   225→  header: string
+   226→  render: (row: T) => React.ReactNode
+   227→  className?: string
+   228→  hideOnMobile?: boolean
+   229→}
+   230→
+   231→export function DataTable<T extends { id: string }>({
+   232→  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey,
+   233→}: {
+   234→  columns: Column<T>[]
+   235→  rows: T[]
+   236→  loading?: boolean
+   237→  emptyText?: string
+   238→  searchPlaceholder?: string
+   239→  onRowClick?: (row: T) => void
+   240→  maxHeight?: string
+   241→  pageSize?: number
+   242→  /** When provided, shows an "Export CSV" button exporting all filtered rows. */
+   243→  csvExport?: { filename: string; pick: (row: T) => (string | number)[] }
+   244→  /** When provided, shows an "Excel" button (beside the CSV one) exporting the same filtered rows as a real .xlsx. Headers default to the column labels — identical columns to the CSV. */
+   245→  xlsxExport?: { filename: string; headers?: string[]; pick: (row: T) => (string | number)[] }
+   246→  /** Deep-linked record id (from useRowHighlight) — page-jumps to + scrolls the row into view and highlights it. */
+   247→  highlightId?: string | null
+   248→  /** Opts into the dashboard filter-preset channel: on mount consumes sessionStorage 'erp_filter_preset' ({ module, q, ts }) when its module matches, and live-listens for 'erp:filter-preset' CustomEvents (detail { module, q }). Pass the module's key (e.g. 'items'). No effect when omitted. */
+   249→  moduleKey?: string
+   250→  /** Enables the "Views" saved-search control. Views persist in localStorage under `manuflow:views:<savedViewsKey>` — pass `${companyId}:<moduleKey>` so views are scoped per company + module. No effect when omitted. */
+   251→  savedViewsKey?: string
+   252→}) {
+   253→  const [q, setQ] = React.useState('')
+   254→  const [appliedView, setAppliedView] = React.useState<string | null>(null)
+   255→  const [page, setPage] = React.useState(0)
+   256→  const wrapperRef = React.useRef<HTMLDivElement | null>(null)
+   257→
+   258→  const filtered = React.useMemo(() => {
+   259→    if (!q.trim()) return rows
+   260→    const needle = q.toLowerCase()
+   261→    return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(needle))
+   262→  }, [rows, q])
+   263→
+   264→  React.useEffect(() => setPage(0), [q, rows.length])
+   265→
+   266→  // Deep-link: page-jump to + scroll the highlighted row into view. Rows may
+   267→  // arrive async (table can be loading when the highlight first applies), so
+   268→  // attempts are retried across a few ticks; state kept in a ref keyed by the
+   269→  // highlight id makes each jump a strict one-shot that never fights the
+   270→  // user's own paging/filtering afterwards.
+   271→  const jumpStateRef = React.useRef<{ id: string | null; jumped: boolean; scrolled: boolean }>({ id: null, jumped: false, scrolled: false })
+   272→
+   273→  React.useEffect(() => {
+   274→    if (!highlightId) return
+   275→    const st = jumpStateRef.current
+   276→    if (st.id !== highlightId) {
+   277→      st.id = highlightId
+   278→      st.jumped = false
+   279→      st.scrolled = false
+   280→    }
+   281→    const timers: ReturnType<typeof setTimeout>[] = []
+   282→    const attempt = () => {
+   283→      if (!st.jumped) {
+   284→        const idx = filtered.findIndex((r) => String(r.id) === highlightId)
+   285→        if (idx === -1) return // not in filtered yet (rows still loading) or filtered out by the text filter — do nothing
+   286→        st.jumped = true
+   287→        setPage(Math.floor(idx / pageSize))
+   288→      }
+   289→      if (!st.scrolled) {
+   290→        const el = wrapperRef.current?.querySelector(`[data-row-id="${cssAttrEscape(highlightId)}"]`)
+   291→        if (el) {
+   292→          el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+   293→          st.scrolled = true
+   294→        }
+   295→      }
+   296→    }
+   297→    for (const delay of [0, 150, 400, 900]) timers.push(setTimeout(attempt, delay))
+   298→    return () => timers.forEach(clearTimeout)
+   299→  }, [highlightId, filtered, pageSize])
+   300→
+   301→  // ---- Dashboard filter presets (moduleKey) ----
+   302→  // One-shot: read + consume sessionStorage 'erp_filter_preset' ({ module, q, ts })
+   303→  // on mount, exactly like the deep-link pattern above.
+   304→  React.useEffect(() => {
+   305→    if (!moduleKey) return
+   306→    try {
+   307→      const raw = sessionStorage.getItem('erp_filter_preset')
+   308→      if (!raw) return
+   309→      const d = JSON.parse(raw) as { module?: unknown; q?: unknown; ts?: unknown }
+   310→      sessionStorage.removeItem('erp_filter_preset')
+   311→      if (d && d.module === moduleKey && typeof d.q === 'string') setQ(d.q)
+   312→    } catch {
+   313→      // Malformed / unavailable preset — best-effort, ignore.
+   314→    }
+   315→  }, [moduleKey])
+   316→
+   317→  // Same-module live presets while already mounted (no remount happens): the
+   318→  // emitter also broadcasts 'erp:filter-preset' with detail { module, q }.
+   319→  React.useEffect(() => {
+   320→    if (!moduleKey) return
+   321→    const handler = (e: Event) => {
+   322→      try {
+   323→        const d = (e as CustomEvent<{ module?: unknown; q?: unknown }>).detail
+   324→        if (d && d.module === moduleKey && typeof d.q === 'string') {
+   325→          const next = String(d.q)
+   326→          setQ((prev) => (next === prev ? prev : next))
+   327→          setAppliedView(null) // an external preset replaces any applied view
+   328→        }
+   329→      } catch {
+   330→        // best-effort — ignore
+   331→      }
+   332→    }
+   333→    window.addEventListener('erp:filter-preset', handler)
+   334→    return () => window.removeEventListener('erp:filter-preset', handler)
+   335→  }, [moduleKey])
+   336→
+   337→  // ---- Saved views (savedViewsKey) ----
+   338→  const [views, setViews] = React.useState<SavedView[]>([])
+   339→  const [saveDialogOpen, setSaveDialogOpen] = React.useState(false)
+   340→  const [viewName, setViewName] = React.useState('')
+   341→
+   342→  // Load (re-load on key change) from localStorage after mount — hydration safe.
+   343→  React.useEffect(() => {
+   344→    if (!savedViewsKey) return
+   345→    setViews(loadSavedViews(savedViewsKey))
+   346→    setAppliedView(null)
+   347→  }, [savedViewsKey])
+   348→
+   349→  const applyView = (v: SavedView) => {
+   350→    setQ(v.q)
+   351→    setAppliedView(v.name)
+   352→  }
+   353→
+   354→  const deleteView = (name: string) => {
+   355→    if (!savedViewsKey) return
+   356→    const next = views.filter((v) => v.name !== name)
+   357→    setViews(next)
+   358→    persistSavedViews(savedViewsKey, next)
+   359→    setAppliedView((cur) => (cur === name ? null : cur))
+   360→  }
+   361→
+   362→  const saveCurrentView = () => {
+   363→    if (!savedViewsKey) return
+   364→    const name = viewName.trim() || 'All records'
+   365→    const view: SavedView = { name, q, ts: Date.now() }
+   366→    const idx = views.findIndex((v) => v.name === name)
+   367→    const next = idx === -1 ? [...views, view] : views.map((v, i) => (i === idx ? view : v))
+   368→    setViews(next)
+   369→    persistSavedViews(savedViewsKey, next)
+   370→    setAppliedView(name)
+   371→    setSaveDialogOpen(false)
+   372→  }
+   373→
+   374→  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+   375→  const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize)
+   376→
+   377→  return (
+   378→    <div className="space-y-3">
+   379→      {(searchPlaceholder || csvExport || xlsxExport || savedViewsKey) && (
+   380→        <div className="flex items-center justify-between gap-2">
+   381→          {searchPlaceholder ? (
+   382→            <div className="relative max-w-xs flex-1">
+   383→              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+   384→              <Input value={q} onChange={(e) => { setQ(e.target.value); setAppliedView(null) }} placeholder={searchPlaceholder} className="pl-8 h-9" />
+   385→            </div>
+   386→          ) : <div />}
+   387→          <div className="flex items-center gap-2 shrink-0">
+   388→            {csvExport && rows.length > 0 && (
+   389→              <Button
+   390→                variant="outline"
+   391→                size="sm"
+   392→                className="h-9"
+   393→                onClick={() => downloadCsv(csvExport.filename, columns.map((c) => c.header), filtered.map(csvExport.pick))}
+   394→              >
+   395→                <Download className="h-4 w-4 mr-1.5" />CSV
+   396→              </Button>
+   397→            )}
+   398→            {xlsxExport && rows.length > 0 && (
+   399→              <Button
+   400→                variant="outline"
+   401→                size="sm"
+   402→                className="h-9"
+   403→                onClick={() => downloadXlsx(xlsxExport.filename, xlsxExport.headers ?? columns.map((c) => c.header), filtered.map(xlsxExport.pick))}
+   404→              >
+   405→                <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600 dark:text-emerald-400" />Excel
+   406→              </Button>
+   407→            )}
+   408→            {savedViewsKey && (
+   409→              <div className="flex items-center gap-1.5">
+   410→                {appliedView && (
+   411→                  <span
+   412→                    className="inline-flex items-center gap-1 max-w-40 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 text-[11px] font-medium"
+   413→                    title={`Applied view: ${appliedView}`}
+   414→                  >
+   415→                    <span className="truncate">{appliedView}</span>
+   416→                    <button
+   417→                      type="button"
+   418→                      title="Clear applied view"
+   419→                      className="rounded-full p-0.5 hover:bg-amber-200/70 dark:hover:bg-amber-900/60"
+   420→                      onClick={() => { setQ(''); setAppliedView(null) }}
+   421→                    >
+   422→                      <X className="h-3 w-3" />
+   423→                    </button>
+   424→                  </span>
+   425→                )}
+   426→                <DropdownMenu>
+   427→                  <DropdownMenuTrigger asChild>
+   428→                    <Button variant="outline" size="sm" className="h-9" title="Saved views">
+   429→                      <Bookmark className="h-4 w-4 mr-1.5" />
+   430→                      <span className="hidden sm:inline">Views</span>
+   431→                    </Button>
+   432→                  </DropdownMenuTrigger>
+   433→                  <DropdownMenuContent align="end" className="w-64">
+   434→                    {views.length === 0 ? (
+   435→                      <div className="px-2 py-1.5 text-xs text-muted-foreground">No saved views yet</div>
+   436→                    ) : (
+   437→                      views.map((v) => (
+   438→                        <DropdownMenuItem key={v.name} onSelect={() => applyView(v)} className="items-start gap-2">
+   439→                          <div className="min-w-0 flex-1 py-0.5">
+   440→                            <div className="font-medium truncate">{v.name}</div>
+   441→                            {v.q.trim() !== '' && <div className="text-xs text-muted-foreground truncate">“{v.q}”</div>}
+   442→                          </div>
+   443→                          <button
+   444→                            type="button"
+   445→                            title={`Delete view “${v.name}”`}
+   446→                            className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+   447→                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteView(v.name) }}
+   448→                          >
+   449→                            <Trash2 className="h-3.5 w-3.5" />
+   450→                          </button>
+   451→                        </DropdownMenuItem>
+   452→                      ))
+   453→                    )}
+   454→                    <DropdownMenuSeparator />
+   455→                    <DropdownMenuItem
+   456→                      onSelect={() => { setViewName(q.trim() || 'All records'); setSaveDialogOpen(true) }}
+   457→                    >
+   458→                      <BookmarkPlus className="h-4 w-4 mr-2" />
+   459→                      Save current search…
+   460→                    </DropdownMenuItem>
+   461→                  </DropdownMenuContent>
+   462→                </DropdownMenu>
+   463→              </div>
+   464→            )}
+   465→          </div>
+   466→        </div>
+   467→      )}
+   468→      <div ref={wrapperRef} className="rounded-lg border overflow-hidden bg-card">
+   469→        <ScrollArea className={maxHeight !== 'auto' ? maxHeight : undefined} style={maxHeight !== 'auto' ? { height: maxHeight } : undefined}>
+   470→          <Table>
+   471→            <TableHeader>
+   472→              <TableRow className="bg-muted/50 hover:bg-muted/50">
+   473→                {columns.map((c) => (
+   474→                  <TableHead key={c.key} className={cn('font-medium whitespace-nowrap', c.hideOnMobile && 'hidden md:table-cell', c.className)}>{c.header}</TableHead>
+   475→                ))}
+   476→              </TableRow>
+   477→            </TableHeader>
+   478→            <TableBody>
+   479→              {loading ? (
+   480→                Array.from({ length: 5 }).map((_, i) => (
+   481→                  <TableRow key={`sk-${i}`}>
+   482→                    {columns.map((c) => (
+   483→                      <TableCell key={c.key} className={cn(c.hideOnMobile && 'hidden md:table-cell')}><Skeleton className="h-4 w-full max-w-24" /></TableCell>
+   484→                    ))}
+   485→                  </TableRow>
+   486→                ))
+   487→              ) : pageRows.length === 0 ? (
+   488→                <TableRow>
+   489→                  <TableCell colSpan={columns.length} className="h-40 text-center">
+   490→                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+   491→                      <Inbox className="h-8 w-8" />
+   492→                      <p className="text-sm">{emptyText}</p>
+   493→                    </div>
+   494→                  </TableCell>
+   495→                </TableRow>
+   496→              ) : (
+   497→                pageRows.map((row) => {
+   498→                  const highlighted = highlightId !== null && highlightId !== undefined && String(row.id) === highlightId
+   499→                  return (
+   500→                    <TableRow
+   501→                      key={row.id}
+   502→                      data-row-id={String(row.id)}
+   503→                      onClick={() => onRowClick?.(row)}
+   504→                      className={cn(
+   505→                        onRowClick && 'cursor-pointer',
+   506→                        highlighted && 'bg-amber-50 dark:bg-amber-500/10 ring-2 ring-inset ring-amber-300 dark:ring-amber-500/40',
+   507→                      )}
+   508→                    >
+   509→                      {columns.map((c) => (
+   510→                        <TableCell key={c.key} className={cn('align-middle', c.hideOnMobile && 'hidden md:table-cell', c.className)}>{c.render(row)}</TableCell>
+   511→                      ))}
+   512→                    </TableRow>
+   513→                  )
+   514→                })
+   515→              )}
+   516→            </TableBody>
+   517→          </Table>
+   518→        </ScrollArea>
+   519→      </div>
+   520→      {filtered.length > pageSize && (
+   521→        <div className="flex items-center justify-between text-sm text-muted-foreground">
+   522→          <span>Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, filtered.length)} of {filtered.length}</span>
+   523→          <div className="flex gap-2">
+   524→            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</Button>
+   525→            <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Next</Button>
+   526→          </div>
+   527→        </div>
+   528→      )}
+   529→      {savedViewsKey && (
+   530→        <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+   531→          <DialogContent className="sm:max-w-sm">
+   532→            <DialogHeader>
+   533→              <DialogTitle>Save current search</DialogTitle>
+   534→              <DialogDescription>
+   535→                {q.trim() !== ''
+   536→                  ? <>Saves the current search text: <span className="font-medium">“{q}”</span></>
+   537→                  : 'Saves an empty search (shows all records)'}
+   538→              </DialogDescription>
+   539→            </DialogHeader>
+   540→            <form onSubmit={(e) => { e.preventDefault(); saveCurrentView() }}>
+   541→              <div className="grid gap-4 py-2">
+   542→                <Field label="View name" required>
+   543→                  <Input value={viewName} onChange={(e) => setViewName(e.target.value)} placeholder="All records" autoFocus />
+   544→                </Field>
+   545→              </div>
+   546→              <DialogFooter className="mt-2">
+   547→                <Button type="button" variant="outline" onClick={() => setSaveDialogOpen(false)}>Cancel</Button>
+   548→                <Button type="submit">Save</Button>
+   549→              </DialogFooter>
+   550→            </form>
+   551→          </DialogContent>
+   552→        </Dialog>
+   553→      )}
+   554→    </div>
+   555→  )
+   556→}
+   557→
+   558→// ---------- Form dialog ----------
+   559→
+   560→export function FormDialog({ open, onOpenChange, title, description, children, onSubmit, submitLabel = 'Save', loading, wide }: {
+   561→  open: boolean
+   562→  onOpenChange: (o: boolean) => void
+   563→  title: string
+   564→  description?: string
+   565→  children: React.ReactNode
+   566→  onSubmit: () => void | Promise<void>
+   567→  submitLabel?: string
+   568→  loading?: boolean
+   569→  wide?: boolean
+   570→}) {
+   571→  return (
+   572→    <Dialog open={open} onOpenChange={onOpenChange}>
+   573→      <DialogContent className={cn('max-h-[90vh] overflow-y-auto', wide ? 'sm:max-w-3xl' : 'sm:max-w-lg')}>
+   574→        <DialogHeader>
+   575→          <DialogTitle>{title}</DialogTitle>
+   576→          {description && <DialogDescription>{description}</DialogDescription>}
+   577→        </DialogHeader>
+   578→        <form onSubmit={(e) => { e.preventDefault(); void onSubmit() }}>
+   579→          <div className="grid gap-4 py-2">{children}</div>
+   580→          <DialogFooter className="mt-4">
+   581→            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+   582→            <Button type="submit" disabled={loading}>{loading ? 'Saving…' : submitLabel}</Button>
+   583→          </DialogFooter>
+   584→        </form>
+   585→      </DialogContent>
+   586→    </Dialog>
+   587→  )
+   588→}
+   589→
+   590→// ---------- Fields ----------
+   591→
+   592→export function Field({ label, children, required, className }: { label: string; children: React.ReactNode; required?: boolean; className?: string }) {
+   593→  return (
+   594→    <div className={cn('grid gap-1.5', className)}>
+   595→      <Label className="text-xs font-medium text-muted-foreground">
+   596→        {label}{required && <span className="text-red-500"> *</span>}
+   597→      </Label>
+   598→      {children}
+   599→    </div>
+   600→  )
+   601→}
+   602→
+   603→export function TextInput(props: React.ComponentProps<typeof Input>) {
+   604→  return <Input {...props} className={cn('h-9', props.className)} />
+   605→}
+   606→
+   607→export function NumberInput({ value, onChange, ...props }: { value: number; onChange: (n: number) => void } & Omit<React.ComponentProps<typeof Input>, 'value' | 'onChange'>) {
+   608→  return (
+   609→    <Input
+   610→      {...props}
+   611→      type="number"
+   612→      inputMode="decimal"
+   613→      className={cn('h-9', props.className)}
+   614→      value={Number.isFinite(value) ? value : 0}
+   615→      onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+   616→    />
+   617→  )
+   618→}
+   619→
+   620→export function DateInput({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
+   621→  return <Input type="date" value={value} onChange={(e) => onChange(e.target.value)} className={cn('h-9', className)} />
+   622→}
+   623→
+   624→export function SelectInput({ value, onChange, options, placeholder = 'Select…', disabled }: {
+   625→  value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; placeholder?: string; disabled?: boolean
+   626→}) {
+   627→  // Radix Select forbids empty string item values — map '' to a sentinel transparently
+   628→  const EMPTY = '__EMPTY__'
+   629→  const safeOptions = options.map((o) => (o.value === '' ? { ...o, value: EMPTY } : o))
+   630→  const safeValue = value === '' ? EMPTY : (value || undefined)
+   631→  return (
+   632→    <Select value={safeValue} onValueChange={(v) => onChange(v === EMPTY ? '' : v)} disabled={disabled}>
+   633→      <SelectTrigger className="h-9 w-full"><SelectValue placeholder={placeholder} /></SelectTrigger>
+   634→      <SelectContent className="max-h-72">
+   635→        {safeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+   636→      </SelectContent>
+   637→    </Select>
+   638→  )
+   639→}
+   640→
+   641→// ---------- Confirm action button ----------
+   642→
+   643→export function ConfirmAction({ trigger, title, message, onConfirm, tone = 'default' }: {
+   644→  trigger: React.ReactNode
+   645→  title: string
+   646→  message: string
+   647→  onConfirm: () => void | Promise<void>
+   648→  tone?: 'default' | 'destructive'
+   649→}) {
+   650→  return (
+   651→    <AlertDialog>
+   652→      <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
+   653→      <AlertDialogContent>
+   654→        <AlertDialogHeader>
+   655→          <AlertDialogTitle>{title}</AlertDialogTitle>
+   656→          <AlertDialogDescription>{message}</AlertDialogDescription>
+   657→        </AlertDialogHeader>
+   658→        <AlertDialogFooter>
+   659→          <AlertDialogCancel>Cancel</AlertDialogCancel>
+   660→          <AlertDialogAction
+   661→            className={tone === 'destructive' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
+   662→            onClick={(e) => { e.preventDefault(); void onConfirm() }}
+   663→          >
+   664→            Confirm
+   665→          </AlertDialogAction>
+   666→        </AlertDialogFooter>
+   667→      </AlertDialogContent>
+   668→    </AlertDialog>
+   669→  )
+   670→}
+   671→
+   672→// ---------- Section card ----------
+   673→
+   674→export function SectionCard({ title, children, actions, className }: { title?: string; children: React.ReactNode; actions?: React.ReactNode; className?: string }) {
+   675→  return (
+   676→    <Card className={className}>
+   677→      {(title || actions) && (
+   678→        <CardHeader className="pb-3">
+   679→          <div className="flex items-center justify-between">
+   680→            {title && <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>}
+   681→            {actions}
+   682→          </div>
+   683→        </CardHeader>
+   684→      )}
+   685→      <CardContent className={title ? 'pt-0' : undefined}>{children}</CardContent>
+   686→    </Card>
+   687→  )
+   688→}
+   689→
+   690→// ---------- Money / qty cells ----------
+   691→
+   692→export function Money({ value, className }: { value: number | null | undefined; className?: string }) {
+   693→  return <span className={cn('whitespace-nowrap tabular-nums', className)}>{fmtMoney(value)}</span>
+   694→}
+   695→
+   696→export function Qty({ value, uom }: { value: number | null | undefined; uom?: string }) {
+   697→  return <span className="tabular-nums whitespace-nowrap">{fmtNum(value)}{uom ? ` ${uom}` : ''}</span>
+   698→}
+   699→
+   700→export function DateCell({ value }: { value: string | Date | null | undefined }) {
+   701→  return <span className="whitespace-nowrap text-muted-foreground">{fmtDate(value)}</span>
+   702→}
+   703→
+   704→// ---------- Print helper ----------
+   705→
+   706→export function printHtml(title: string, html: string) {
+   707→  const w = window.open('', '_blank', 'width=900,height=700')
+   708→  if (!w) return
+   709→  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+   710→  <style>
+   711→    * { box-sizing: border-box; }
+   712→    body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; color: #111; padding: 28px; font-size: 13px; }
+   713→    h1 { font-size: 20px; margin: 0 0 2px; }
+   714→    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+   715→    th, td { border: 1px solid #ddd; padding: 7px 9px; text-align: left; font-size: 12px; }
+   716→    th { background: #f4f4f5; font-weight: 600; }
+   717→    .num { text-align: right; }
+   718→    .muted { color: #666; font-size: 11px; }
+   719→    .totals td { border: none; padding: 3px 8px; }
+   720→    .totals .num { font-weight: 600; }
+   721→    .grand { font-size: 14px; font-weight: 700; border-top: 2px solid #111; }
+   722→    .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; }
+   723→    .badge { display: inline-block; border: 1px solid #999; border-radius: 4px; padding: 2px 8px; font-size: 10px; letter-spacing: 1px; }
+   724→    @media print { body { padding: 12px; } }
+   725→  </style></head><body>${html}
+   726→  <script>window.onload = function(){ window.print(); }</script>
+   727→  </body></html>`)
+   728→  w.document.close()
+   729→}
+   730→
+   731→export function PrintButton({ onClick, label = 'Print' }: { onClick: () => void; label?: string }) {
+   732→  return (
+   733→    <Button variant="outline" size="sm" onClick={onClick}>
+   734→      <Printer className="h-4 w-4 mr-1.5" />{label}
+   735→    </Button>
+   736→  )
+   737→}
+   738→

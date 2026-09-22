@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, FileText, IndianRupee, MessageCircle, ReceiptText } from 'lucide-react'
+import { AlertTriangle, FileText, IndianRupee, Mail, MessageCircle, ReceiptText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Column, DataTable, DateCell, DateInput, Money, PageHeader, PrintButton, SectionCard, StatCard, StatusBadge, printHtml,
@@ -20,7 +20,7 @@ interface InvoiceRow {
   grandTotal: number
   paidAmount: number
   status: string
-  customer?: { name?: string | null; phone?: string | null } | null
+  customer?: { name?: string | null; phone?: string | null; email?: string | null } | null
 }
 
 interface CompanyProfile {
@@ -63,6 +63,11 @@ function waUrl(phone: string | null | undefined, message: string): string {
   return `https://wa.me/${valid ? digits : ''}?text=${encodeURIComponent(message)}`
 }
 
+// Build a mailto: deep link — a missing recipient opens the user's mail app with a blank To: field.
+function mailtoUrl(email: string | null | undefined, subject: string, body: string): string {
+  return `mailto:${email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
 // Default statement period: current Indian financial year (1 Apr) → today (reports.tsx convention).
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const fyStartISO = () => {
@@ -97,6 +102,12 @@ function AgingBadge({ aging }: { aging: Aging }) {
       {aging}
     </span>
   )
+}
+
+// Share text for the WhatsApp and email reminder actions on an open invoice.
+function reminderMessage(row: InvoiceRow, company?: CompanyProfile): string {
+  const customerName = row.customer?.name || 'Customer'
+  return `Namaste ${customerName},\n\nGentle reminder: Invoice ${row.number} dated ${fmtDate(row.date)} — outstanding balance ${fmtMoney(outstandingOf(row))}${row.dueDate ? `, due ${fmtDate(row.dueDate)}` : ''}.\n${company?.bankUpiId ? `You can pay via UPI: ${company.bankUpiId}\n` : ''}Kindly arrange payment at the earliest.\n\nThank you,\n${company?.name || 'Accounts'}`
 }
 
 export default function ReceivablesModule({ companyId }: { companyId: string }) {
@@ -224,10 +235,21 @@ export default function ReceivablesModule({ companyId }: { companyId: string }) 
     try {
       company = await apiGet<CompanyProfile>(`/api/settings?companyId=${companyId}`)
     } catch { /* the UPI line is simply omitted without the profile */ }
-    const customerName = row.customer?.name || 'Customer'
-    const message = `Namaste ${customerName},\n\nGentle reminder: Invoice ${row.number} dated ${fmtDate(row.date)} — outstanding balance ${fmtMoney(outstandingOf(row))}${row.dueDate ? `, due ${fmtDate(row.dueDate)}` : ''}.\n${company?.bankUpiId ? `You can pay via UPI: ${company.bankUpiId}\n` : ''}Kindly arrange payment at the earliest.\n\nThank you,\n${company?.name || 'Accounts'}`
+    const message = reminderMessage(row, company)
     if (!row.customer?.phone) toast.info('No phone saved for this customer — choose a chat in WhatsApp')
     window.open(waUrl(row.customer?.phone, message), '_blank', 'noopener,noreferrer')
+  }
+
+  async function emailReminder(row: InvoiceRow) {
+    // Company profile is only needed for the UPI line + signature — best-effort fetch.
+    let company: CompanyProfile | undefined
+    try {
+      company = await apiGet<CompanyProfile>(`/api/settings?companyId=${companyId}`)
+    } catch { /* the UPI line is simply omitted without the profile */ }
+    const subject = `Payment reminder — Invoice ${row.number}`
+    // The list API's customer select has no email — the mail app opens with a blank recipient.
+    if (!row.customer?.email) toast.info('No email saved for this customer — your mail app will open with a blank recipient')
+    window.location.href = mailtoUrl(row.customer?.email, subject, reminderMessage(row, company))
   }
 
   const columns: Column<InvoiceRow>[] = [
@@ -249,6 +271,9 @@ export default function ReceivablesModule({ companyId }: { companyId: string }) 
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send payment reminder on WhatsApp" onClick={() => void remindPayment(r)}>
             <MessageCircle className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7" title="Email reminder" onClick={() => void emailReminder(r)}>
+            <Mail className="h-3.5 w-3.5" />
           </Button>
         </div>
       ),
@@ -301,6 +326,8 @@ export default function ReceivablesModule({ companyId }: { companyId: string }) 
           loading={loading}
           searchPlaceholder="Search invoices…"
           emptyText="No outstanding receivables — all invoices settled"
+          moduleKey="receivables"
+          savedViewsKey={`${companyId}:receivables`}
         />
       </SectionCard>
     </div>

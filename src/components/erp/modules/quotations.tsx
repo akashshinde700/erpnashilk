@@ -3,13 +3,13 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Pencil, Plus, Printer, Trash2 } from 'lucide-react'
+import { Mail, MessageCircle, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
 } from '@/components/erp/kit'
 import { apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
-import { fmtMoney } from '@/lib/erp-constants'
+import { fmtDate, fmtMoney } from '@/lib/erp-constants'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
 interface ItemRow { id: string; code?: string | null; name?: string | null; sellingPrice?: number | null; gstRate?: number | null }
@@ -18,9 +18,10 @@ interface QuotationRow {
   id: string; number: string; enquiryId?: string | null; customerId?: string | null; date: string; validUntil?: string | null
   status: string; subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number
   grandTotal: number; notes?: string | null
-  customer?: { name?: string | null; city?: string | null; state?: string | null; gstin?: string | null } | null
+  customer?: { name?: string | null; city?: string | null; state?: string | null; gstin?: string | null; phone?: string | null; email?: string | null } | null
   items?: QtItem[] | null
 }
+interface CompanyInfo { name?: string | null }
 interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
@@ -35,6 +36,25 @@ function computeTotals(lines: DraftLine[]) {
     subtotal += gross; discount += disc; gst += net * ((l.gstRate || 0) / 100)
   }
   return { subtotal: r2(subtotal), discount: r2(discount), cgst: r2(gst / 2), sgst: r2(gst / 2), grand: r2(subtotal - discount + gst) }
+}
+
+// Build a wa.me deep link: 10-digit numbers get the '91' prefix, already-prefixed
+// 12-digit numbers pass through, anything else (or no phone) opens WhatsApp's chat chooser.
+function waUrl(phone: string | null | undefined, message: string): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  const valid = digits.length === 10 || (digits.length === 12 && digits.startsWith('91'))
+  return `https://wa.me/${valid ? digits : ''}?text=${encodeURIComponent(message)}`
+}
+
+// Build a mailto: deep link — a missing recipient opens the user's mail app with a blank To: field.
+function mailtoUrl(email: string | null | undefined, subject: string, body: string): string {
+  return `mailto:${email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
+// Share text for both the WhatsApp and email actions on a quotation.
+function quotationMessage(q: QuotationRow, company?: CompanyInfo): string {
+  const customerName = q.customer?.name || 'Customer'
+  return `Namaste ${customerName},\n\nQuotation ${q.number} dated ${fmtDate(q.date)} — Amount ${fmtMoney(q.grandTotal)}${q.validUntil ? `\nValid till: ${fmtDate(q.validUntil)}` : ''}\n\nThank you,\n${company?.name || 'Sales'}`
 }
 
 export default function QuotationsModule({ companyId }: { companyId: string }) {
@@ -111,6 +131,28 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to delete') }
   }
 
+  async function shareQuotation(row: QuotationRow) {
+    // Company profile is only needed for the signature — best-effort fetch.
+    let company: CompanyInfo | undefined
+    try {
+      company = await apiGet<CompanyInfo>(`/api/settings?companyId=${companyId}`)
+    } catch { /* signature falls back to 'Sales' without the profile */ }
+    const message = quotationMessage(row, company)
+    if (!row.customer?.phone) toast.info('No phone saved for this customer — choose a chat in WhatsApp')
+    window.open(waUrl(row.customer?.phone, message), '_blank', 'noopener,noreferrer')
+  }
+
+  async function emailQuotation(row: QuotationRow) {
+    // Company profile is only needed for the subject sign-off — best-effort fetch.
+    let company: CompanyInfo | undefined
+    try {
+      company = await apiGet<CompanyInfo>(`/api/settings?companyId=${companyId}`)
+    } catch { /* subject falls back to the generic name without the profile */ }
+    const subject = `Quotation ${row.number} — ${company?.name || 'Quotation'}`
+    if (!row.customer?.email) toast.info('No email saved for this customer — your mail app will open with a blank recipient')
+    window.location.href = mailtoUrl(row.customer?.email, subject, quotationMessage(row, company))
+  }
+
   function printQuotation(q: QuotationRow) {
     const items2 = q.items ?? []
     const body = `
@@ -164,6 +206,8 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="sm" className="h-7" onClick={() => printQuotation(r)} title="Print"><Printer className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send on WhatsApp" onClick={() => void shareQuotation(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7" title="Email quotation" onClick={() => void emailQuotation(r)}><Mail className="h-3.5 w-3.5" /></Button>
           {r.status === 'DRAFT' && (
             <>
               <Button variant="ghost" size="sm" className="h-7" onClick={() => void openEdit(r)} title="Edit"><Pencil className="h-3.5 w-3.5" /></Button>
