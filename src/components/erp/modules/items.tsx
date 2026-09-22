@@ -267,6 +267,10 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
           filename: 'items',
           pick: (r) => [r.code, r.name, r.type, r.uom, r.hsn || '', r.gstRate ?? 0, r.purchasePrice ?? 0, r.sellingPrice ?? 0, r.standardCost ?? 0, r.reorderLevel ?? 0, r.status],
         }}
+        xlsxExport={{
+          filename: 'items',
+          pick: (r) => [r.code, r.name, r.type, r.uom, r.hsn || '', r.gstRate ?? 0, r.purchasePrice ?? 0, r.sellingPrice ?? 0, r.standardCost ?? 0, r.reorderLevel ?? 0, r.status],
+        }}
       />
 
       <FormDialog

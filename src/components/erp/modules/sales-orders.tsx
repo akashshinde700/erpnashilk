@@ -172,6 +172,10 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
           filename: 'sales-orders',
           pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.customer?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],
         }}
+        xlsxExport={{
+          filename: 'sales-orders',
+          pick: (r) => [r.number, new Date(r.orderDate).toISOString().slice(0, 10), r.customer?.name || '', r.status, r.items?.length ?? 0, r.subtotal, r.discountTotal, r.cgst, r.sgst, r.igst, r.grandTotal],
+        }}
       />
 
       <FormDialog

@@ -14,7 +14,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 import { fmtDate, fmtMoney, fmtNum, tone } from '@/lib/erp-constants'
-import { Download, Inbox, Search, Printer } from 'lucide-react'
+import { Download, FileSpreadsheet, Inbox, Search, Printer } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 // ---------- Page header ----------
 
@@ -80,6 +81,29 @@ export function downloadCsv(filename: string, headers: string[], rows: (string |
   a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// ---------- XLSX export ----------
+
+/**
+ * Builds a real Excel workbook (one sheet) from a 2-D array — first data row is
+ * the header row. Numbers stay number cells (Excel can sum/filter them) and each
+ * column gets a width derived from its longest content (capped). Browser-only:
+ * XLSX.writeFile triggers the file download.
+ */
+export function downloadXlsx(filename: string, headers: string[], rows: (string | number)[][]) {
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  ws['!cols'] = headers.map((h, col) => {
+    let max = String(h ?? '').length
+    for (const row of rows) {
+      const len = String(row[col] ?? '').length
+      if (len > max) max = len
+    }
+    return { wch: Math.min(Math.max(max + 2, 10), 45) }
+  })
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Data')
+  XLSX.writeFile(wb, `${filename}.xlsx`)
 }
 
 // ---------- Kbd (keyboard key chip) ----------
@@ -172,7 +196,7 @@ export interface Column<T> {
 }
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, highlightId,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -184,6 +208,8 @@ export function DataTable<T extends { id: string }>({
   pageSize?: number
   /** When provided, shows an "Export CSV" button exporting all filtered rows. */
   csvExport?: { filename: string; pick: (row: T) => (string | number)[] }
+  /** When provided, shows an "Excel" button (beside the CSV one) exporting the same filtered rows as a real .xlsx. Headers default to the column labels — identical columns to the CSV. */
+  xlsxExport?: { filename: string; headers?: string[]; pick: (row: T) => (string | number)[] }
   /** Deep-linked record id (from useRowHighlight) — page-jumps to + scrolls the row into view and highlights it. */
   highlightId?: string | null
 }) {
@@ -239,7 +265,7 @@ export function DataTable<T extends { id: string }>({
 
   return (
     <div className="space-y-3">
-      {(searchPlaceholder || csvExport) && (
+      {(searchPlaceholder || csvExport || xlsxExport) && (
         <div className="flex items-center justify-between gap-2">
           {searchPlaceholder ? (
             <div className="relative max-w-xs flex-1">
@@ -255,6 +281,16 @@ export function DataTable<T extends { id: string }>({
               onClick={() => downloadCsv(csvExport.filename, columns.map((c) => c.header), filtered.map(csvExport.pick))}
             >
               <Download className="h-4 w-4 mr-1.5" />CSV
+            </Button>
+          )}
+          {xlsxExport && rows.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 shrink-0"
+              onClick={() => downloadXlsx(xlsxExport.filename, xlsxExport.headers ?? columns.map((c) => c.header), filtered.map(xlsxExport.pick))}
+            >
+              <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600 dark:text-emerald-400" />Excel
             </Button>
           )}
         </div>

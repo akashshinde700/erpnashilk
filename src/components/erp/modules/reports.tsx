@@ -309,6 +309,7 @@ export default function ReportsModule({ companyId }: { companyId: string }) {
             searchPlaceholder="Search customers…"
             emptyText="No sales in this period — adjust the date range"
             csvExport={{ filename: 'sales-by-customer', pick: (r) => [r.name, r.invoices, r.base, r.tax, r.grand, r.received ?? 0, r.outstanding] }}
+            xlsxExport={{ filename: 'sales-by-customer', pick: (r) => [r.name, r.invoices, r.base, r.tax, r.grand, r.received ?? 0, r.outstanding] }}
           />
         </TabsContent>
 
@@ -327,6 +328,7 @@ export default function ReportsModule({ companyId }: { companyId: string }) {
             searchPlaceholder="Search suppliers…"
             emptyText="No purchases in this period — adjust the date range"
             csvExport={{ filename: 'purchase-by-supplier', pick: (r) => [r.name, r.invoices, r.base, r.tax, r.grand, r.paid ?? 0, r.outstanding] }}
+            xlsxExport={{ filename: 'purchase-by-supplier', pick: (r) => [r.name, r.invoices, r.base, r.tax, r.grand, r.paid ?? 0, r.outstanding] }}
           />
         </TabsContent>
 
@@ -375,6 +377,7 @@ export default function ReportsModule({ companyId }: { companyId: string }) {
             searchPlaceholder="Search stock…"
             emptyText="No stock balances for the selected filters"
             csvExport={{ filename: 'stock-valuation', pick: (r) => [r.code, r.name, r.type, r.uom, r.totalQty, r.avgRate, r.value, whSummary(r), r.low ? 'LOW' : ''] }}
+            xlsxExport={{ filename: 'stock-valuation', pick: (r) => [r.code, r.name, r.type, r.uom, r.totalQty, r.avgRate, r.value, whSummary(r), r.low ? 'LOW' : ''] }}
           />
         </TabsContent>
 
@@ -393,6 +396,7 @@ export default function ReportsModule({ companyId }: { companyId: string }) {
             searchPlaceholder="Search lines…"
             emptyText="No invoice lines in this period — adjust the date range"
             csvExport={{ filename: 'profitability', pick: (r) => [r.date.slice(0, 10), r.invoiceNumber, r.customerName, r.itemCode, r.qty, r.rate, r.taxable, r.cost, r.margin, r.marginPct] }}
+            xlsxExport={{ filename: 'profitability', pick: (r) => [r.date.slice(0, 10), r.invoiceNumber, r.customerName, r.itemCode, r.qty, r.rate, r.taxable, r.cost, r.margin, r.marginPct] }}
           />
           <p className="text-xs text-muted-foreground">
             Cost uses the item master standard cost at report time; up to 300 lines shown (totals cover the full period).

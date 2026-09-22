@@ -132,6 +132,10 @@ export default function StockModule({ companyId }: { companyId: string }) {
           filename: 'stock-balances',
           pick: (r) => [r.item?.code || '', r.item?.name || '', r.item?.type || '', r.warehouse?.code || '', r.qty, r.avgRate, Math.round(r.qty * r.avgRate * 100) / 100, r.item?.reorderLevel ?? 0],
         }}
+        xlsxExport={{
+          filename: 'stock-balances',
+          pick: (r) => [r.item?.code || '', r.item?.name || '', r.item?.type || '', r.warehouse?.code || '', r.qty, r.avgRate, Math.round(r.qty * r.avgRate * 100) / 100, r.item?.reorderLevel ?? 0],
+        }}
       />
     </div>
   )

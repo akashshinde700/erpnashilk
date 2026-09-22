@@ -229,6 +229,10 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
           filename: 'customers',
           pick: (r) => [r.code, r.name, r.gstin || '', r.contactPerson || '', r.phone || '', r.email || '', r.city || '', r.state || '', r.paymentTermsDays ?? 0, r.creditLimit ?? 0, r.status],
         }}
+        xlsxExport={{
+          filename: 'customers',
+          pick: (r) => [r.code, r.name, r.gstin || '', r.contactPerson || '', r.phone || '', r.email || '', r.city || '', r.state || '', r.paymentTermsDays ?? 0, r.creditLimit ?? 0, r.status],
+        }}
       />
 
       <FormDialog

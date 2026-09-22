@@ -80,6 +80,10 @@ export default function AuditLogModule({ companyId }: { companyId: string }) {
           filename: 'audit-log',
           pick: (r) => [new Date(r.createdAt).toISOString(), r.userName || '', r.action, r.entity, r.entityId || '', r.details || ''],
         }}
+        xlsxExport={{
+          filename: 'audit-log',
+          pick: (r) => [new Date(r.createdAt).toISOString(), r.userName || '', r.action, r.entity, r.entityId || '', r.details || ''],
+        }}
       />
     </div>
   )

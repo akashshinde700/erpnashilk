@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
@@ -19,9 +19,27 @@ export const metadata: Metadata = {
   description: "Multi-tenant manufacturing ERP: Sales, Purchase, Inventory, Production, QC, GST invoicing & finance for Indian manufacturers.",
   keywords: ["ERP", "Manufacturing", "SaaS", "GST", "India", "Inventory", "Production"],
   authors: [{ name: "ManuFlow" }],
+  applicationName: "ManuFlow",
+  manifest: "/manifest.webmanifest",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "ManuFlow",
+  },
+  formatDetection: { telephone: false },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#047857",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

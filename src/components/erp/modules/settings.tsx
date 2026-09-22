@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { CheckCheck, Hash, Save } from 'lucide-react'
+import { CheckCheck, Download, Hash, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Column, DataTable, Field, PageHeader, SectionCard, StatusBadge, TextInput } from '@/components/erp/kit'
@@ -58,6 +58,15 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
   const [form, setForm] = React.useState<ProfileForm>(EMPTY_PROFILE)
   const [saving, setSaving] = React.useState(false)
   const [markingAll, setMarkingAll] = React.useState(false)
+  const [downloading, setDownloading] = React.useState(false)
+
+  const isAdmin = React.useMemo(() => {
+    try {
+      const raw = window.localStorage.getItem('erp_user')
+      const role = raw ? (JSON.parse(raw) as { user?: { role?: string } }).user?.role || '' : ''
+      return ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN'].includes(role)
+    } catch { return false }
+  }, [])
 
   React.useEffect(() => {
     const d = settings.data
@@ -108,6 +117,50 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
       toast.error(e instanceof Error ? e.message : 'Failed to mark notifications read')
     } finally {
       setMarkingAll(false)
+    }
+  }
+
+  async function downloadBackup() {
+    setDownloading(true)
+    try {
+      // Plain fetch (api() helper expects the ok() envelope, the backup returns a
+      // raw JSON attachment) with the same x-erp-* identity headers.
+      const headers: Record<string, string> = {}
+      try {
+        const raw = window.localStorage.getItem('erp_user')
+        const u = raw ? (JSON.parse(raw) as { user?: { id?: string; name?: string; role?: string } }).user : undefined
+        if (u?.id) headers['x-erp-user-id'] = u.id
+        if (u?.name) headers['x-erp-user-name'] = encodeURIComponent(u.name)
+        if (u?.role) headers['x-erp-role'] = u.role
+      } catch { /* no session — server will 401 */ }
+
+      const res = await fetch(`/api/companies/${companyId}/backup?companyId=${companyId}`, { headers })
+      if (!res.ok) {
+        let msg = `Backup failed (${res.status})`
+        try {
+          const j = (await res.json()) as { error?: { message?: string } }
+          if (j?.error?.message) msg = j.error.message
+        } catch { /* non-JSON error */ }
+        throw new Error(msg)
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('content-disposition') || ''
+      const m = cd.match(/filename="([^"]+)"/)
+      const d = new Date()
+      const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = m?.[1] || `manuflow-backup-${companyId}-${ymd}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.success(`Backup downloaded (${(blob.size / 1024).toFixed(1)} KB)`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Backup download failed')
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -254,6 +307,23 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
             Shown on printed GST invoices.
           </p>
         </SectionCard>
+
+        {isAdmin && (
+          <SectionCard
+            title="Data & Backup"
+            actions={
+              <Button size="sm" onClick={() => void downloadBackup()} disabled={downloading}>
+                <Download className="h-4 w-4 mr-1.5" />
+                {downloading ? 'Preparing…' : 'Download backup (JSON)'}
+              </Button>
+            }
+          >
+            <p className="text-sm text-muted-foreground">
+              Exports a complete snapshot of this company&apos;s data — masters, transactions, inventory,
+              notifications and audit logs — as a single JSON file. Administrators only.
+            </p>
+          </SectionCard>
+        )}
 
         <SectionCard
           title="Document Numbering"

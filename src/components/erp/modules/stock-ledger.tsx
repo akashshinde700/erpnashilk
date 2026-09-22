@@ -136,6 +136,10 @@ export default function StockLedgerModule({ companyId }: { companyId: string }) 
           filename: 'stock-ledger',
           pick: (r) => [new Date(r.date).toISOString().slice(0, 10), r.type, r.item?.code || '', r.item?.name || '', r.warehouse?.code || '', r.qtyIn ?? 0, r.qtyOut ?? 0, r.rate ?? 0, r.refType || '', r.refNumber || ''],
         }}
+        xlsxExport={{
+          filename: 'stock-ledger',
+          pick: (r) => [new Date(r.date).toISOString().slice(0, 10), r.type, r.item?.code || '', r.item?.name || '', r.warehouse?.code || '', r.qtyIn ?? 0, r.qtyOut ?? 0, r.rate ?? 0, r.refType || '', r.refNumber || ''],
+        }}
       />
     </div>
   )
