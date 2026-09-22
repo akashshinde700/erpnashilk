@@ -3,7 +3,8 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Mail, MessageCircle, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ArrowRightCircle, Mail, MessageCircle, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
@@ -72,6 +73,8 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
   const [validUntil, setValidUntil] = React.useState('')
   const [notes, setNotes] = React.useState('')
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
+  const [convertRow, setConvertRow] = React.useState<QuotationRow | null>(null)
+  const [converting, setConverting] = React.useState(false)
 
   const rows = list.data?.items ?? []
   const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.id }))
@@ -129,6 +132,40 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
       await apiDelete(`/api/quotations/${row.id}?companyId=${companyId}`)
       toast.success('Quotation deleted'); void list.refetch()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to delete') }
+  }
+
+  // One-click conversion: POST /api/sales-orders with quotationId — the API creates a
+  // CONFIRMED sales order and flips the quotation to CONVERTED inside one transaction.
+  async function submitConvert() {
+    const row = convertRow
+    const valid = row ? convertibleLines(row) : []
+    if (!row || !row.customerId || !valid.length) {
+      toast.error('This quotation has no billable lines')
+      return
+    }
+    setConverting(true)
+    try {
+      const so = await apiPost<{ id: string; number: string }>('/api/sales-orders', {
+        companyId,
+        quotationId: row.id,
+        customerId: row.customerId,
+        notes: row.notes || undefined,
+        items: valid.map((l) => ({ itemId: l.itemId, qty: l.qty, rate: l.rate, discountPct: l.discountPct, gstRate: l.gstRate })),
+      })
+      setConvertRow(null)
+      toast.success(`Sales order ${so.number} created from ${row.number}`)
+      void list.refetch()
+      // Deep-link jump: land on the sales-orders module with the new order row highlighted.
+      try {
+        window.sessionStorage.setItem('erp_deep_link', JSON.stringify({ module: 'sales-orders', id: so.id, ts: Date.now() }))
+        window.dispatchEvent(new CustomEvent('erp:deep-link', { detail: { module: 'sales-orders', id: so.id } }))
+      } catch { /* private mode */ }
+      window.dispatchEvent(new CustomEvent('erp:goto', { detail: 'sales-orders' }))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to convert quotation')
+    } finally {
+      setConverting(false)
+    }
   }
 
   async function shareQuotation(row: QuotationRow) {
@@ -189,9 +226,9 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
   const columns: Column<QuotationRow>[] = [
     { key: 'number', header: 'Quotation #', render: (r) => <span className="font-medium">{r.number}</span> },
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
-    { key: 'customer', header: 'Customer', render: (r) => r.customer?.name || '—' },
-    { key: 'total', header: 'Grand Total', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
-    { key: 'valid', header: 'Valid Until', hideOnMobile: true, render: (r) => <DateCell value={r.validUntil} /> },
+    { key: 'customer', header: 'Customer', sortValue: (r) => r.customer?.name || '', render: (r) => r.customer?.name || '—' },
+    { key: 'total', header: 'Grand Total', sortValue: (r) => r.grandTotal || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
+    { key: 'valid', header: 'Valid Until', hideOnMobile: true, sortValue: (r) => r.validUntil || '', render: (r) => <DateCell value={r.validUntil} /> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'status-action', header: 'Move To', hideOnMobile: true,
@@ -205,6 +242,9 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
       key: 'actions', header: 'Actions',
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {['DRAFT', 'SENT', 'APPROVED'].includes(r.status) && (
+            <Button variant="ghost" size="sm" className="h-7" onClick={() => setConvertRow(r)} title="Convert to Sales Order" aria-label="Convert to Sales Order"><ArrowRightCircle className="h-3.5 w-3.5" /></Button>
+          )}
           <Button variant="ghost" size="sm" className="h-7" onClick={() => printQuotation(r)} title="Print"><Printer className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send on WhatsApp" onClick={() => void shareQuotation(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="sm" className="h-7" title="Email quotation" onClick={() => void emailQuotation(r)}><Mail className="h-3.5 w-3.5" /></Button>
@@ -229,7 +269,7 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
         description="Prepare, send and approve price quotations"
         actions={<Button onClick={openCreate}><Plus className="h-4 w-4 mr-1.5" />New Quotation</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading || saving} searchPlaceholder="Search quotations…" />
+      <DataTable columns={columns} rows={rows} loading={list.loading || saving} searchPlaceholder="Search quotations…" sortable moduleKey="quotations" savedViewsKey={`${companyId}:quotations`} />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide
@@ -291,11 +331,69 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
           </div>
         </div>
       </FormDialog>
+
+      {convertRow && convertibleLines(convertRow).length > 0 && (
+        <FormDialog
+          open
+          onOpenChange={(o) => { if (!o) setConvertRow(null) }}
+          title="Convert to Sales Order"
+          description={`Creates a confirmed sales order from quotation ${convertRow.number} and marks it CONVERTED.`}
+          submitLabel="Create Sales Order"
+          loading={converting}
+          onSubmit={submitConvert}
+        >
+          <div className="grid gap-2 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Customer</span>
+              <span className="font-medium">{convertRow.customer?.name || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Quotation date</span>
+              <DateCell value={convertRow.date} />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Grand Total</span>
+              <Money value={convertRow.grandTotal} className="font-bold" />
+            </div>
+          </div>
+
+          <div className="rounded-md border max-h-48 overflow-y-auto">
+            {convertibleLines(convertRow).map((l) => (
+              <div key={l.id} className="flex items-center justify-between gap-3 border-b px-2.5 py-1.5 text-sm last:border-b-0">
+                <span className="min-w-0 truncate">{l.item?.code ? `${l.item.code} — ` : ''}{l.item?.name || l.itemId}</span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">{l.qty} × {fmtMoney(l.rate)} = {fmtMoney(l.lineTotal)}</span>
+              </div>
+            ))}
+          </div>
+        </FormDialog>
+      )}
+
+      {convertRow && convertibleLines(convertRow).length === 0 && (
+        <Dialog open onOpenChange={(o) => { if (!o) setConvertRow(null) }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Convert to Sales Order</DialogTitle>
+              <DialogDescription>Quotation {convertRow.number} has no billable lines.</DialogDescription>
+            </DialogHeader>
+            <p className="text-sm text-amber-600 dark:text-amber-400">
+              This quotation has no item lines with a selected item, so it cannot be converted to a sales order. Edit the draft and add at least one item line first.
+            </p>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setConvertRow(null)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
 
 function emptyLine(): DraftLine { return { itemId: '', qty: 1, rate: 0, discountPct: 0, gstRate: 18 } }
+
+// Lines that can actually be billed on conversion — a line without an item is skipped.
+function convertibleLines(q: QuotationRow): QtItem[] {
+  return (q.items ?? []).filter((l) => l.itemId)
+}
 
 function nextStatuses(status: string): string[] {
   if (status === 'DRAFT') return ['SENT']

@@ -4,7 +4,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Plus, Printer, Trash2, X } from 'lucide-react'
+import { Factory, Plus, Printer, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
@@ -23,6 +23,7 @@ interface SoRow {
   items?: SoItem[] | null
 }
 interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
+interface BomRow { id: string; code?: string | null; version?: string | null; outputItemId?: string | null }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 const today = () => new Date().toISOString().slice(0, 10)
@@ -46,6 +47,8 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
   const customers = useList<{ items: PartyRow[] }>(`/api/customers?companyId=${companyId}`)
   const items = useList<{ items: ItemRow[] }>(`/api/items?companyId=${companyId}`)
   const quotations = useList<{ items: { id: string; number: string }[] }>(`/api/quotations?companyId=${companyId}`)
+  const warehouses = useList<{ items: PartyRow[] }>(`/api/warehouses?companyId=${companyId}`)
+  const boms = useList<{ items: BomRow[] }>(`/api/boms?companyId=${companyId}`)
 
   const [open, setOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
@@ -58,10 +61,31 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
   const [detail, setDetail] = React.useState<SoRow | null>(null)
 
+  // ---- plan work order dialog ----
+  const [woRow, setWoRow] = React.useState<SoRow | null>(null)
+  const [planning, setPlanning] = React.useState(false)
+  const [woItemId, setWoItemId] = React.useState('')
+  const [woBomId, setWoBomId] = React.useState('')
+  const [woWarehouseId, setWoWarehouseId] = React.useState('')
+  const [woQty, setWoQty] = React.useState(0)
+  const [woStartDate, setWoStartDate] = React.useState(today)
+  const [woDueDate, setWoDueDate] = React.useState('')
+  const [woPriority, setWoPriority] = React.useState('NORMAL')
+  const [woNotes, setWoNotes] = React.useState('')
+
   const rows = list.data?.items ?? []
   const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.id }))
   const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.id }))
   const quotationOpts = (quotations.data?.items ?? []).filter((q) => q.number).map((q) => ({ value: q.id, label: q.number }))
+  const whOpts = (warehouses.data?.items ?? []).map((w) => ({ value: w.id, label: w.code && w.name ? `${w.code} — ${w.name}` : w.name || w.code || w.id }))
+  const woItemOpts = (woRow?.items ?? []).filter((l) => l.itemId).map((l) => {
+    const it = (items.data?.items ?? []).find((o) => o.id === l.itemId)
+    const code = l.item?.code || it?.code || ''
+    const name = l.item?.name || it?.name || ''
+    return { value: l.itemId, label: code && name ? `${code} — ${name}` : name || l.itemId }
+  })
+  // /api/boms GET has no itemId filter — filter client-side to the selected item's output
+  const woBomOpts = (boms.data?.items ?? []).filter((b) => b.outputItemId === woItemId)
 
   function resetForm() {
     setCustomerId(''); setQuotationId(''); setOrderDate(today()); setDeliveryDate(''); setNotes(''); setStatus('CONFIRMED')
@@ -129,6 +153,48 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
     printHtml(`Sales Order ${so.number}`, html)
   }
 
+  function resetWoPlan() {
+    setWoItemId(''); setWoQty(0); setWoBomId(''); setWoWarehouseId('')
+    setWoStartDate(today()); setWoDueDate(''); setWoPriority('NORMAL'); setWoNotes('')
+  }
+
+  function openWo(row: SoRow) {
+    resetWoPlan()
+    const first = (row.items ?? []).find((l) => l.itemId)
+    setWoRow(row); setWoItemId(first?.itemId || ''); setWoQty(first?.qty || 0)
+  }
+
+  function onWoItemChange(v: string) {
+    setWoItemId(v)
+    const line = (woRow?.items ?? []).find((l) => l.itemId === v)
+    setWoQty(line?.qty || 0)
+    setWoBomId('')
+  }
+
+  async function submitWo() {
+    if (!woRow) return
+    if (!woItemId) { toast.error('Select an item'); return }
+    if (!woWarehouseId) { toast.error('Select a warehouse'); return }
+    if (!(woQty > 0)) { toast.error('Planned qty must be greater than 0'); return }
+    setPlanning(true)
+    try {
+      const wo = await apiPost<{ id: string; number: string }>('/api/work-orders', {
+        companyId, itemId: woItemId, bomId: woBomId || undefined, salesOrderId: woRow.id,
+        warehouseId: woWarehouseId, plannedQty: woQty, startDate: woStartDate,
+        dueDate: woDueDate || undefined, priority: woPriority || undefined, notes: woNotes || undefined,
+      })
+      setWoRow(null); resetWoPlan()
+      toast.success(`Work order ${wo.number} planned from ${woRow.number}`)
+      try {
+        window.sessionStorage.setItem('erp_deep_link', JSON.stringify({ module: 'work-orders', id: wo.id, ts: Date.now() }))
+        window.dispatchEvent(new CustomEvent('erp:deep-link', { detail: { module: 'work-orders', id: wo.id } }))
+      } catch { /* private mode */ }
+      window.dispatchEvent(new CustomEvent('erp:goto', { detail: 'work-orders' }))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to plan work order')
+    } finally { setPlanning(false) }
+  }
+
   const totals = computeTotals(lines)
 
   const columns: Column<SoRow>[] = [
@@ -143,6 +209,11 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="sm" className="h-7" title="Print" onClick={() => printSo(r)}><Printer className="h-3.5 w-3.5" /></Button>
+          {r.status === 'CONFIRMED' && (
+            <Button variant="ghost" size="sm" className="h-7" title="Plan Work Order" aria-label="Plan Work Order" onClick={() => openWo(r)}>
+              <Factory className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {r.status === 'DRAFT' && (
             <>
               <Button variant="outline" size="sm" className="h-7" onClick={() => void action(r, 'confirm', `Sales order ${r.number} confirmed`)}>Confirm</Button>
@@ -237,6 +308,45 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
             <TotCell label="SGST (preview)" value={totals.sgst} />
             <TotCell label="Grand Total" value={totals.grand} bold />
           </div>
+        </div>
+      </FormDialog>
+
+      <FormDialog
+        open={!!woRow} onOpenChange={(o) => { if (!o) { setWoRow(null); resetWoPlan() } }}
+        title="Plan Work Order"
+        description={woRow ? `Creates a PLANNED work order linked to ${woRow.number}.` : ''}
+        submitLabel="Create Work Order" loading={planning} onSubmit={submitWo}
+      >
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Item" required>
+            <SelectInput value={woItemId} onChange={onWoItemChange} options={woItemOpts} placeholder="Select item…" />
+          </Field>
+          <Field label="Planned Qty" required>
+            <NumberInput value={woQty} onChange={setWoQty} min={0} step="any" placeholder="0" />
+          </Field>
+          <Field label="Warehouse" required>
+            <SelectInput value={woWarehouseId} onChange={setWoWarehouseId} options={whOpts} placeholder="Select warehouse…" />
+          </Field>
+          <Field label="BOM (optional)">
+            <SelectInput
+              value={woBomId} onChange={setWoBomId} disabled={!woItemId}
+              options={[
+                { value: '', label: '— Auto (latest ACTIVE) —' },
+                ...woBomOpts.map((b) => ({ value: b.id, label: `${b.code || 'BOM'} ${b.version || ''}`.trim() })),
+              ]}
+            />
+          </Field>
+          <Field label="Start Date" required><DateInput value={woStartDate} onChange={setWoStartDate} /></Field>
+          <Field label="Due Date"><DateInput value={woDueDate} onChange={setWoDueDate} /></Field>
+          <Field label="Priority">
+            <SelectInput
+              value={woPriority} onChange={setWoPriority}
+              options={[{ value: 'NORMAL', label: 'Normal' }, { value: 'HIGH', label: 'High' }, { value: 'URGENT', label: 'Urgent' }]}
+            />
+          </Field>
+          <Field label="Notes">
+            <TextInput value={woNotes} onChange={(e) => setWoNotes(e.target.value)} placeholder="Optional remarks" />
+          </Field>
         </div>
       </FormDialog>
 

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -15,7 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { fmtDate, fmtMoney, fmtNum, tone } from '@/lib/erp-constants'
-import { Bookmark, BookmarkPlus, Download, FileSpreadsheet, Inbox, Search, Printer, Trash2, X } from 'lucide-react'
+import { Bookmark, BookmarkPlus, ChevronDown, ChevronUp, Download, FileSpreadsheet, Inbox, Search, Printer, Trash2, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 // ---------- Page header ----------
@@ -226,10 +226,35 @@ export interface Column<T> {
   render: (row: T) => React.ReactNode
   className?: string
   hideOnMobile?: boolean
+  /** Override extractor for the value behind this column — used by DataTable column sorting (`sortable`) and the totals footer (`sum`). Needed for computed columns whose key has no raw row field. */
+  sortValue?: (row: T) => string | number
+  /** Includes this column in the totals footer row: finite numeric values are summed (client mode: all filtered rows; server mode: current page rows). */
+  sum?: boolean
+  /** Footer total format — 'money' renders via fmtMoney, 'num' (default) via fmtNum. */
+  sumFormat?: 'money' | 'num'
+}
+
+/** Raw value behind a column for sorting/summing: the column's sortValue override when set, else the row's own field under the column key. */
+function columnValue<T>(row: T, col: Column<T>): unknown {
+  return col.sortValue ? col.sortValue(row) : (row as Record<string, unknown>)[col.key]
+}
+
+/**
+ * Three-way compare for extracted column values: numbers compare numerically,
+ * strings lexicographically (ISO date strings order correctly), mixed types
+ * fall back to a String() compare. undefined/null never reach this — the sort
+ * comparator pulls empties to the end in both directions (empties-always-last).
+ */
+function compareSortValues(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b
+  if (typeof a === 'string' && typeof b === 'string') return a.localeCompare(b)
+  const sa = String(a)
+  const sb = String(b)
+  return sa < sb ? -1 : sa > sb ? 1 : 0
 }
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey, serverPagination,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey, serverPagination, sortable,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -249,6 +274,8 @@ export function DataTable<T extends { id: string }>({
   moduleKey?: string
   /** Enables the "Views" saved-search control. Views persist in localStorage under `manuflow:views:<savedViewsKey>` — pass `${companyId}:<moduleKey>` so views are scoped per company + module. No effect when omitted. */
   savedViewsKey?: string
+  /** Opts the whole table into column sorting: every column with usable values (a sortValue extractor, or at least one row with a non-null raw value under its key) gets a clickable header cycling asc → desc → off. Client mode sorts the full filtered set before pagination (filter → sort → paginate); server mode only reorders the current page slice (the API owns the real order). undefined/null values sort last in both directions. Sort state persists across refetches. No effect when omitted. */
+  sortable?: boolean
   /** Opts into server-side pagination: `rows` must then be exactly the page slice the API returned (already filtered + paginated). The local text filter and internal page state are bypassed — Prev/Next and the "Showing …" footer are driven by `page`/`onPageChange`/`total`, and (with `onSearchChange`) the search text is pushed to the module debounced by 300ms (mount run skipped). Omit for the default fully client-side behavior (zero change). */
   serverPagination?: {
     /** 0-based page index, controlled by the module (Prev → onPageChange(page - 1), Next → onPageChange(page + 1)). */
@@ -277,6 +304,48 @@ export function DataTable<T extends { id: string }>({
 
   React.useEffect(() => setPage(0), [q, rows.length])
 
+  // ---- Column sorting (sortable) ----
+  // Active sort: { key, dir } cycling asc → desc → off per header click; null
+  // = unsorted. Persists across refetches — deliberately no reset on data change.
+  const [sort, setSort] = React.useState<{ key: string; dir: 'asc' | 'desc' } | null>(null)
+
+  // Columns with usable values: a column is sortable when it declares a
+  // sortValue extractor or at least one display row has a non-null raw value
+  // under its key (keeps 'actions'-style render-only columns inert).
+  const sortableKeys = React.useMemo(() => {
+    const set = new Set<string>()
+    if (!sortable) return set
+    for (const c of columns) {
+      if (c.sortValue) { set.add(c.key); continue }
+      for (const row of filtered) {
+        const v = (row as Record<string, unknown>)[c.key]
+        if (v !== undefined && v !== null) { set.add(c.key); break }
+      }
+    }
+    return set
+  }, [sortable, columns, filtered])
+
+  // Display pipeline: filter (above) → sort (here) → paginate (pageRows
+  // below). Sorting is opt-in; without `sortable` (or an active sort) this is
+  // `filtered` verbatim. Server mode sorts nothing — `rows` are the API's page
+  // slice, so header clicks only reorder the current page.
+  const displayRows = React.useMemo(() => {
+    if (serverPagination || !sortable || !sort) return filtered
+    const col = columns.find((c) => c.key === sort.key)
+    if (!col) return filtered
+    const dirMul = sort.dir === 'asc' ? 1 : -1
+    return filtered
+      .map((row, i) => ({ row, i, v: columnValue(row, col) }))
+      .sort((a, b) => {
+        const aEmpty = a.v === undefined || a.v === null
+        const bEmpty = b.v === undefined || b.v === null
+        if (aEmpty !== bEmpty) return aEmpty ? 1 : -1 // empties always last, asc + desc
+        const c = compareSortValues(a.v, b.v)
+        return c !== 0 ? dirMul * c : a.i - b.i // stable ties keep the filtered order
+      })
+      .map((x) => x.row)
+  }, [filtered, columns, sortable, sort, serverPagination])
+
   // Deep-link: page-jump to + scroll the highlighted row into view. Rows may
   // arrive async (table can be loading when the highlight first applies), so
   // attempts are retried across a few ticks; state kept in a ref keyed by the
@@ -304,7 +373,7 @@ export function DataTable<T extends { id: string }>({
     const timers: ReturnType<typeof setTimeout>[] = []
     const attempt = () => {
       if (!st.jumped) {
-        const idx = filtered.findIndex((r) => String(r.id) === highlightId)
+        const idx = displayRows.findIndex((r) => String(r.id) === highlightId)
         if (idx === -1) return // not in filtered yet (rows still loading) or filtered out by the text filter — do nothing
         st.jumped = true
         const sp = serverPaginationRef.current
@@ -321,7 +390,7 @@ export function DataTable<T extends { id: string }>({
     }
     for (const delay of [0, 150, 400, 900]) timers.push(setTimeout(attempt, delay))
     return () => timers.forEach(clearTimeout)
-  }, [highlightId, filtered, pageSize])
+  }, [highlightId, displayRows, pageSize])
 
   // ---- Dashboard filter presets (moduleKey) ----
   // One-shot: read + consume sessionStorage 'erp_filter_preset' ({ module, q, ts })
@@ -428,7 +497,7 @@ export function DataTable<T extends { id: string }>({
   const totalPages = serverPagination
     ? Math.max(1, Math.ceil(serverPagination.total / serverPagination.pageSize))
     : Math.max(1, Math.ceil(filtered.length / pageSize))
-  const pageRows = serverPagination ? filtered : filtered.slice(page * pageSize, page * pageSize + pageSize)
+  const pageRows = serverPagination ? displayRows : displayRows.slice(page * pageSize, page * pageSize + pageSize)
   const pagerPage = serverPagination ? serverPagination.page : page
   const pagerPageSize = serverPagination ? serverPagination.pageSize : pageSize
   const pagerTotal = serverPagination ? serverPagination.total : filtered.length
@@ -436,6 +505,29 @@ export function DataTable<T extends { id: string }>({
     if (serverPagination) serverPagination.onPageChange(p)
     else setPage(p)
   }
+
+  // ---- Totals footer (per-column opt-in via Column.sum) ----
+  // Sums all client-side filtered rows (pre-pagination); server mode sums only
+  // the current page rows (the API owns the full set). Rendered only when at
+  // least one column opts in and there is something to sum.
+  const sumRows = serverPagination ? pageRows : displayRows
+  const hasSum = columns.some((c) => c.sum)
+  const totals = React.useMemo(() => {
+    if (!hasSum) return null
+    const map = new Map<string, number | null>()
+    for (const c of columns) {
+      if (!c.sum) continue
+      let total = 0
+      let any = false
+      for (const row of sumRows) {
+        const v = columnValue(row, c)
+        if (typeof v === 'number' && Number.isFinite(v)) { total += v; any = true }
+      }
+      map.set(c.key, any ? total : null) // null → nothing summable, footer renders '—'
+    }
+    return map
+  }, [hasSum, columns, sumRows])
+  const showFooter = hasSum && !loading && sumRows.length > 0
 
   return (
     <div className="space-y-3">
@@ -533,9 +625,29 @@ export function DataTable<T extends { id: string }>({
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                {columns.map((c) => (
-                  <TableHead key={c.key} className={cn('font-medium whitespace-nowrap', c.hideOnMobile && 'hidden md:table-cell', c.className)}>{c.header}</TableHead>
-                ))}
+                {columns.map((c) => {
+                  const canSort = !!sortable && sortableKeys.has(c.key)
+                  const sortedDir = sort && sort.key === c.key ? sort.dir : null
+                  return (
+                    <TableHead
+                      key={c.key}
+                      aria-sort={sortedDir === 'asc' ? 'ascending' : sortedDir === 'desc' ? 'descending' : undefined}
+                      className={cn('font-medium whitespace-nowrap', c.hideOnMobile && 'hidden md:table-cell', c.className)}
+                    >
+                      {canSort ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center cursor-pointer select-none hover:text-foreground"
+                          onClick={() => setSort((cur) => (cur && cur.key === c.key ? (cur.dir === 'asc' ? { key: c.key, dir: 'desc' } : null) : { key: c.key, dir: 'asc' }))}
+                        >
+                          {c.header}
+                          {sortedDir === 'asc' && <ChevronUp className="h-3 w-3 ml-1 text-muted-foreground" />}
+                          {sortedDir === 'desc' && <ChevronDown className="h-3 w-3 ml-1 text-muted-foreground" />}
+                        </button>
+                      ) : c.header}
+                    </TableHead>
+                  )
+                })}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -577,6 +689,29 @@ export function DataTable<T extends { id: string }>({
                 })
               )}
             </TableBody>
+            {showFooter && totals && (
+              <TableFooter>
+                <TableRow>
+                  {columns.map((c, ci) => {
+                    const total = c.sum ? (totals.get(c.key) ?? null) : null
+                    return (
+                      <TableCell key={c.key} className={cn(c.hideOnMobile && 'hidden md:table-cell', c.className)}>
+                        {ci === 0 && (
+                          <span className={cn('text-muted-foreground', c.sum ? 'block text-[11px] uppercase tracking-wide' : 'text-xs font-medium')}>
+                            Total ({sumRows.length})
+                          </span>
+                        )}
+                        {c.sum && (
+                          <span className="whitespace-nowrap tabular-nums font-semibold">
+                            {total === null ? '—' : c.sumFormat === 'money' ? fmtMoney(total) : fmtNum(total)}
+                          </span>
+                        )}
+                      </TableCell>
+                    )
+                  })}
+                </TableRow>
+              </TableFooter>
+            )}
           </Table>
         </ScrollArea>
       </div>

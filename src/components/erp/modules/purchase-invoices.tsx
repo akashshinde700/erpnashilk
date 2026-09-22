@@ -126,11 +126,11 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
   const columns: Column<PiRow>[] = [
     { key: 'number', header: 'Invoice #', render: (r) => <span className="font-medium">{r.number}</span> },
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
-    { key: 'supplier', header: 'Supplier', render: (r) => r.supplier?.name || '—' },
-    { key: 'total', header: 'Grand Total', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
-    { key: 'paid', header: 'Paid', hideOnMobile: true, render: (r) => <Money value={r.paidAmount} /> },
+    { key: 'supplier', header: 'Supplier', sortValue: (r) => r.supplier?.name || '', render: (r) => r.supplier?.name || '—' },
+    { key: 'total', header: 'Grand Total', sortValue: (r) => r.grandTotal || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
+    { key: 'paid', header: 'Paid', hideOnMobile: true, sortValue: (r) => r.paidAmount || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.paidAmount} /> },
     {
-      key: 'outstanding', header: 'Outstanding',
+      key: 'outstanding', header: 'Outstanding', sortValue: (r) => r2((r.grandTotal || 0) - (r.paidAmount || 0)), sum: true, sumFormat: 'money',
       render: (r) => {
         const out = r2((r.grandTotal || 0) - (r.paidAmount || 0))
         return <Money value={out} className={out > 0 ? 'text-amber-600 font-medium' : 'text-emerald-600'} />
@@ -167,7 +167,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
         description="Supplier bills against purchase orders and payments made"
         actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Invoice</Button>}
       />
-      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase invoices…" moduleKey="purchase-invoices" savedViewsKey={`${companyId}:purchase-invoices`} />
+      <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase invoices…" moduleKey="purchase-invoices" savedViewsKey={`${companyId}:purchase-invoices`} sortable />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide title="New Purchase Invoice" submitLabel="Create Invoice"
