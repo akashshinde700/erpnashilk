@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
-import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, USER_PUBLIC } from '@/lib/erp-helpers'
 import { ROLES } from '@/lib/erp-constants'
+import { hashPassword, passwordProblem } from '@/lib/password'
 
 // ============================== GET /api/users?q=&role=&active= ==============================
 export async function GET(req: Request) {
@@ -17,7 +18,7 @@ export async function GET(req: Request) {
       ...(active === 'true' ? { active: true } : active === 'false' ? { active: false } : {}),
     }
     const [items, total] = await Promise.all([
-      db.user.findMany({ where, orderBy: { name: 'asc' } }),
+      db.user.findMany({ where, orderBy: { name: 'asc' }, select: USER_PUBLIC }),
       db.user.count({ where }),
     ])
     return ok({ items, total })
@@ -26,7 +27,7 @@ export async function GET(req: Request) {
   }
 }
 
-// ============================== POST /api/users ==============================
+// ============================== POST /api/users { name, email, role, password, phone?, active? } ==============================
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'users')
@@ -35,10 +36,13 @@ export async function POST(req: Request) {
     const name = String(body.name || '').trim()
     const email = String(body.email || '').trim().toLowerCase()
     if (!name || !email) throw new ApiError('name and email are required', 400)
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError('Enter a valid email address', 400)
     const role = String(body.role || 'VIEWER')
     if (!(ROLES as readonly string[]).includes(role)) {
       throw new ApiError('Invalid role', 400)
     }
+    const problem = passwordProblem(body.password)
+    if (problem) throw new ApiError(problem, 400)
     // unique email per company — friendly message before hitting the constraint
     const dup = await db.user.findFirst({ where: { companyId, email } })
     if (dup) throw new ApiError('A user with this email already exists', 409)
@@ -50,13 +54,14 @@ export async function POST(req: Request) {
           name,
           email,
           role,
+          passwordHash: hashPassword(String(body.password)),
           phone: body.phone || null,
           active: body.active === undefined ? true : !!body.active,
         },
+        select: USER_PUBLIC,
       })
       await logAudit(tx as any, {
         companyId,
-        userName: body.userName,
         action: 'CREATE',
         entity: 'User',
         entityId: created.id,

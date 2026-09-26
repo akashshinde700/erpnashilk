@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, logAudit, ApiError, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, logAudit, ApiError, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -77,10 +77,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
         if (wo.status !== 'PLANNED') {
           throw new ApiError(`Only PLANNED work orders can be released (current status: ${wo.status})`, 400)
         }
-        const updated = await tx.workOrder.update({
-          where: { id: wo.id },
-          data: { status: 'RELEASED' },
-        })
+        await claimStatus((tx as any).workOrder, wo.id, ['PLANNED'], 'RELEASED')
+        const updated = await tx.workOrder.findUniqueOrThrow({ where: { id: wo.id } })
         await logAudit(tx as any, {
           companyId, userName: body.userName, action: 'UPDATE', entity: 'WorkOrder',
           entityId: wo.id, details: `Work order ${wo.number} released`,
@@ -92,10 +90,13 @@ export async function PATCH(req: Request, { params }: Ctx) {
         if (wo.status === 'CANCELLED') throw new ApiError('Work order is already cancelled', 400)
         if (wo.status === 'COMPLETED') throw new ApiError('Completed work orders cannot be cancelled', 400)
         if (wo.producedQty > 0) throw new ApiError('Cannot cancel: production has already been posted', 400)
-        const updated = await tx.workOrder.update({
-          where: { id: wo.id },
+        // Atomic: status and producedQty re-checked on the locked row
+        const claim = await tx.workOrder.updateMany({
+          where: { id: wo.id, status: { notIn: ['CANCELLED', 'COMPLETED'] }, producedQty: { lte: 0 } },
           data: { status: 'CANCELLED' },
         })
+        if (claim.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
+        const updated = await tx.workOrder.findUniqueOrThrow({ where: { id: wo.id } })
         await logAudit(tx as any, {
           companyId, userName: body.userName, action: 'CANCEL', entity: 'WorkOrder',
           entityId: wo.id, details: `Work order ${wo.number} cancelled`,
@@ -126,7 +127,8 @@ export async function DELETE(req: Request, { params }: Ctx) {
     }
 
     await db.$transaction(async (tx) => {
-      await tx.workOrder.delete({ where: { id: wo.id } })
+      const del = await tx.workOrder.deleteMany({ where: { id: wo.id, status: 'PLANNED' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await logAudit(tx as any, {
         companyId, userName: new URL(req.url).searchParams.get('userName') || undefined,
         action: 'DELETE', entity: 'WorkOrder', entityId: wo.id,

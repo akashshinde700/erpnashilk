@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, logAudit, notify, ApiError, r2, requireWrite,
+  ok, handleError, companyRequired, logAudit, notify, ApiError, r2, requireWrite, claimStatus,
 } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
@@ -49,6 +49,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!['PASSED', 'FAILED', 'PARTIAL'].includes(status)) {
       throw new ApiError('status must be PASSED, FAILED or PARTIAL', 400)
     }
+    if (qc.status !== 'PENDING') throw new ApiError(`Result already recorded for this inspection (current: ${qc.status})`, 400)
     const qtyAccepted = r2(Number(body.qtyAccepted) || 0)
     const qtyRejected = r2(Number(body.qtyRejected) || 0)
     if (qtyAccepted < 0 || qtyRejected < 0) throw new ApiError('Accepted/rejected qty cannot be negative', 400)
@@ -66,9 +67,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const updated = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
+      // Atomic: a result can only be recorded once, while PENDING
+      await claimStatus((tx as any).qcInspection, qc.id, ['PENDING'], status)
       const u = await tx.qcInspection.update({
         where: { id: qc.id },
-        data: { qtyAccepted, qtyRejected, status, parameters, remarks, inspector },
+        data: { qtyAccepted, qtyRejected, parameters, remarks, inspector },
       })
 
       // GRN-linked inspection → propagate result to ALL matching GrnItem rows of that GRN

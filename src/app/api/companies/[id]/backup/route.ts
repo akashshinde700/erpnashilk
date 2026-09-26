@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, fail, getActor, handleError, logAudit } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, fail, handleError, logAudit, sessionUser } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -9,18 +9,17 @@ type Ctx = { params: Promise<{ id: string }> }
 // attachment (content-disposition) instead of the standard ok() envelope.
 export async function GET(req: Request, { params }: Ctx) {
   try {
-    // (a) middleware identity headers must exist
-    const actor = getActor(req)
-    if (!actor) throw new ApiError('Unauthorized — sign in to continue', 401)
+    // (a) signed-in user, re-checked against the DB
+    const actor = await sessionUser(req)
 
     // (b) admin-only export
     if (!['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN'].includes(actor.role)) {
       throw new ApiError('Only administrators can download backups', 403)
     }
 
-    // (c) ?companyId= must resolve to a valid tenant…
-    const companyId = await companyRequired(req)
+    // (c) the tenant must be one this user may access (own company, or any for SUPER_ADMIN)…
     const { id } = await params
+    const companyId = await companyRequired(req, id)
 
     // (d) …and match the :id path param (no cross-tenant exports)
     if (companyId !== id) throw new ApiError('Company mismatch', 403)
@@ -42,7 +41,7 @@ export async function GET(req: Request, { params }: Ctx) {
       salesInvoiceItems, purchaseRequisitionItems, purchaseOrderItems, grnItems,
       purchaseInvoiceItems, materialIssueItems,
     ] = await Promise.all([
-      db.user.findMany({ where: w, orderBy: { id: 'asc' } }),
+      db.user.findMany({ where: w, orderBy: { id: 'asc' }, omit: { passwordHash: true } }),
       db.item.findMany({ where: w, orderBy: { id: 'asc' } }),
       db.customer.findMany({ where: w, orderBy: { id: 'asc' } }),
       db.supplier.findMany({ where: w, orderBy: { id: 'asc' } }),
@@ -103,7 +102,7 @@ export async function GET(req: Request, { params }: Ctx) {
     try {
       await logAudit(db as never, {
         companyId: id,
-        userName: actor.userName,
+        userName: actor.name,
         action: 'EXPORT',
         entity: 'COMPANY',
         entityId: id,

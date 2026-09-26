@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, postStock, logAudit, ApiError, r2, requireWrite,
+  ok, handleError, companyRequired, postStock, logAudit, ApiError, r2, requireWrite, claimStatus,
 } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
@@ -65,6 +65,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const posted = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
+      await claimStatus((tx as any).grn, grn.id, ['PENDING_QC'], 'POSTED')
+      // Lock the PO row so a concurrent PO cancel serializes with this post
+      const poLock = await tx.purchaseOrder.updateMany({
+        where: { id: grn.poId, companyId, status: { not: 'CANCELLED' } }, data: { updatedAt: new Date() },
+      })
+      if (poLock.count !== 1) throw new ApiError('Purchase order is cancelled — this GRN cannot be posted', 409)
       const po = await tx.purchaseOrder.findFirst({ where: { id: grn.poId, companyId }, include: { items: true } })
       if (!po) throw new ApiError('Purchase order not found', 404)
 
@@ -129,9 +135,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
+      // Conditional delete (items cascade): a concurrent post makes this a no-op → 409
+      const del = await tx.grn.deleteMany({ where: { id: grn.id, status: 'PENDING_QC' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await tx.qcInspection.deleteMany({ where: { companyId, refType: 'GRN', refId: grn.id } })
-      await tx.grnItem.deleteMany({ where: { grnId: grn.id } })
-      await tx.grn.delete({ where: { id: grn.id } })
       await logAudit(tx, {
         companyId, userName: body.userName, action: 'DELETE', entity: 'Grn',
         entityId: grn.id, details: `Deleted ${grn.number} (was PENDING_QC, no stock impact)`,

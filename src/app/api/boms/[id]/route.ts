@@ -73,7 +73,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.version !== undefined) data.version = String(body.version)
     if (body.scrapPct !== undefined) data.scrapPct = num(body.scrapPct, 0, 'scrapPct')
     if (body.notes !== undefined) data.notes = body.notes || null
-    if (body.status !== undefined) data.status = String(body.status)
+    if (body.status !== undefined) {
+      const st = String(body.status)
+      if (!['DRAFT', 'ACTIVE', 'RETIRED'].includes(st)) throw new ApiError('status must be DRAFT, ACTIVE or RETIRED', 400)
+      data.status = st
+    }
 
     // If items array is present, validate + replace all lines (deleteMany + create)
     let replaceLines: { itemId: string; qty: number; scrapPct: number }[] | null = null
@@ -128,6 +132,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const companyId = await companyRequired(req, body.companyId)
     const existing = await db.bom.findFirst({ where: { id, companyId } })
     if (!existing) throw new ApiError('BOM not found', 404)
+
+    // WorkOrder.bomId is a plain string (no FK) — block instead of orphaning work orders
+    const woRef = await db.workOrder.findFirst({ where: { bomId: id, companyId }, select: { number: true } })
+    if (woRef) throw new ApiError(`BOM is used by work order ${woRef.number}; retire it instead`, 409)
 
     await db.$transaction(async (tx) => {
       await tx.bomItem.deleteMany({ where: { bomId: id } })

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 // SalesOrderItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -58,7 +58,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (current.status !== 'DRAFT') throw new ApiError(`Only DRAFT sales orders can be confirmed (current: ${current.status})`, 400)
       const updated = await db.$transaction(async (tx) => {
         const t = tx as any
-        const u = await tx.salesOrder.update({ where: { id }, data: { status: 'CONFIRMED' } })
+        await claimStatus(t.salesOrder, id, ['DRAFT'], 'CONFIRMED')
+        const u = await tx.salesOrder.findUniqueOrThrow({ where: { id } })
         await logAudit(t, {
           companyId, userName: body.userName, action: 'APPROVE', entity: 'SalesOrder', entityId: id,
           details: `Sales order ${current.number} confirmed`,
@@ -76,7 +77,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (dispatched) throw new ApiError('Cannot cancel: one or more items already dispatched', 400)
       const updated = await db.$transaction(async (tx) => {
         const t = tx as any
-        const u = await tx.salesOrder.update({ where: { id }, data: { status: 'CANCELLED' } })
+        // Atomic: only from a pre-dispatch status, then re-check lines on the locked order
+        const claim = await tx.salesOrder.updateMany({
+          where: { id, status: { notIn: ['CANCELLED', 'COMPLETED', 'PARTIALLY_DISPATCHED', 'DISPATCHED'] } },
+          data: { status: 'CANCELLED' },
+        })
+        if (claim.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
+        const shipped = await tx.salesOrderItem.count({ where: { salesOrderId: id, dispatchedQty: { gt: 0.005 } } })
+        if (shipped) throw new ApiError('Cannot cancel: one or more items already dispatched', 400)
+        const u = await tx.salesOrder.findUniqueOrThrow({ where: { id } })
         await logAudit(t, {
           companyId, userName: body.userName, action: 'CANCEL', entity: 'SalesOrder', entityId: id,
           details: `Sales order ${current.number} cancelled`,
@@ -125,7 +134,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         db.company.findUnique({ where: { id: companyId } }),
         db.customer.findUnique({ where: { id: customerId } }),
       ])
-      const interState = isInterState(company?.state, customer?.state)
+      const interState = isInterStateParty(company ?? {}, customer ?? {})
       const t2 = computeGst(lines, interState)
       totals = t2
       itemsCreate = lines.map((l, i) => ({
@@ -140,6 +149,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const updated = await db.$transaction(async (tx) => {
       const t = tx as any
+      // Atomic DRAFT guard on the locked row (a concurrent confirm → 409)
+      const g = await tx.salesOrder.updateMany({ where: { id, status: 'DRAFT' }, data: { updatedAt: new Date() } })
+      if (g.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       const data: any = {}
       if (body.customerId !== undefined) data.customerId = customerId
       if (body.orderDate !== undefined) data.orderDate = new Date(body.orderDate)
@@ -188,7 +200,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (tx) => {
       const t = tx as any
-      await tx.salesOrder.delete({ where: { id } })
+      const del = await tx.salesOrder.deleteMany({ where: { id, status: 'DRAFT' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await logAudit(t, {
         companyId, userName: body?.userName, action: 'DELETE', entity: 'SalesOrder',
         entityId: id, details: `Deleted sales order ${current.number}`,

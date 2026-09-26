@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 interface QtLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
@@ -108,7 +108,7 @@ export async function POST(req: Request) {
     const date = body.date ? new Date(body.date) : new Date()
     const validUntil = body.validUntil ? new Date(body.validUntil) : null
 
-    const interState = isInterState(company.state, customer.state)
+    const interState = isInterStateParty(company ?? {}, customer ?? {})
     const totals = computeGst(lines, interState)
 
     const created = await db.$transaction(async (tx) => {

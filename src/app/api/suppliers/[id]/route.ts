@@ -48,7 +48,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.paymentTermsDays !== undefined) {
       data.paymentTermsDays = Math.round(num(body.paymentTermsDays, 30, 'paymentTermsDays'))
     }
-    if (body.status !== undefined) data.status = String(body.status)
+    if (body.status !== undefined) {
+      const st = String(body.status)
+      if (!['ACTIVE', 'INACTIVE'].includes(st)) throw new ApiError('status must be ACTIVE or INACTIVE', 400)
+      data.status = st
+    }
 
     const supplier = await db.$transaction(async (tx) => {
       const updated = await tx.supplier.update({ where: { id: existing.id }, data })
@@ -78,11 +82,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const existing = await db.supplier.findFirst({ where: { id, companyId } })
     if (!existing) throw new ApiError('Supplier not found', 404)
 
-    const [poRef, piRef] = await Promise.all([
-      db.purchaseOrder.findFirst({ where: { supplierId: id, companyId } }),
-      db.purchaseInvoice.findFirst({ where: { supplierId: id, companyId } }),
+    const [poRef, piRef, payRef] = await Promise.all([
+      db.purchaseOrder.findFirst({ where: { supplierId: id, companyId }, select: { id: true } }),
+      db.purchaseInvoice.findFirst({ where: { supplierId: id, companyId }, select: { id: true } }),
+      db.payment.findFirst({ where: { supplierId: id, companyId }, select: { id: true } }),
     ])
-    if (poRef || piRef) {
+    if (poRef || piRef || payRef) {
       throw new ApiError('Supplier is used in documents; deactivate instead', 409)
     }
 

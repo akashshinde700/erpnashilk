@@ -39,7 +39,7 @@ export default function ChangePasswordDialog({ open, onOpenChange, userId, userN
     e.preventDefault()
     setError(null)
     if (!current || !next || !confirm) { setError('All fields are required'); return }
-    if (next.length < 6) { setError('New password must be at least 6 characters'); return }
+    if (next.length < 8) { setError('New password must be at least 8 characters'); return }
     if (next !== confirm) { setError('New passwords do not match'); return }
     if (next === current) { setError('New password must be different from the current one'); return }
     setSaving(true)
@@ -56,7 +56,7 @@ export default function ChangePasswordDialog({ open, onOpenChange, userId, userN
     }
   }
 
-  const strength = next.length === 0 ? 0 : next.length < 6 ? 1 : next.length < 10 ? 2 : /[0-9]/.test(next) && /[a-zA-Z]/.test(next) ? 3 : 2
+  const strength = next.length === 0 ? 0 : next.length < 8 ? 1 : next.length < 10 ? 2 : /[0-9]/.test(next) && /[a-zA-Z]/.test(next) ? 3 : 2
   const strengthLabel = ['', 'Too short', 'Okay', 'Strong'][strength]
   const strengthClass = ['', 'bg-red-400', 'bg-amber-400', 'bg-emerald-500'][strength]
 
@@ -73,7 +73,7 @@ export default function ChangePasswordDialog({ open, onOpenChange, userId, userN
             <div className="relative">
               <Input
                 id="cp-current" type={show ? 'text' : 'password'} value={current} autoComplete="current-password"
-                onChange={(e) => setCurrent(e.target.value)} placeholder="demo1234" className="pr-9"
+                onChange={(e) => setCurrent(e.target.value)} placeholder="Your current password" className="pr-9"
               />
             </div>
           </div>
@@ -82,7 +82,7 @@ export default function ChangePasswordDialog({ open, onOpenChange, userId, userN
             <div className="relative">
               <Input
                 id="cp-new" type={show ? 'text' : 'password'} value={next} autoComplete="new-password"
-                onChange={(e) => setNext(e.target.value)} placeholder="At least 6 characters" className="pr-9"
+                onChange={(e) => setNext(e.target.value)} placeholder="At least 8 characters" className="pr-9"
               />
               <button
                 type="button" onClick={() => setShow((s) => !s)}

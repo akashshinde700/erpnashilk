@@ -58,7 +58,7 @@ export default function RequisitionsModule({ companyId }: { companyId: string })
 
   async function act(row: PrRow, action: string, msg: string) {
     try {
-      await apiPatch(`/api/purchase-requisitions/${row.id}`, { action, userName: 'Purchase Manager' })
+      await apiPatch(`/api/purchase-requisitions/${row.id}`, { companyId, action })
       toast.success(msg); void list.refetch()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
   }

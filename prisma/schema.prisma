@@ -1,6 +1,6 @@
 // ============================================================
 // ManuFlow ERP — Multi-tenant Manufacturing SaaS ERP
-// SQLite / Prisma schema (String-based status constants, no enums on sqlite)
+// MySQL / Prisma schema (String-based status constants)
 // ============================================================
 
 generator client {
@@ -8,7 +8,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -19,7 +19,7 @@ model Company {
   name         String
   gstin        String?
   pan          String?
-  addressLine  String?
+  addressLine  String? @db.Text
   city         String?
   state        String?
   stateCode    String? // GST state code e.g. "27" MH, "24" GJ
@@ -47,7 +47,7 @@ model Plant {
   companyId String
   code      String
   name      String
-  address   String?
+  address   String? @db.Text
   city      String?
   createdAt DateTime @default(now())
 
@@ -60,7 +60,7 @@ model User {
   name      String
   email     String
   phone     String?
-  role      String   @default("VIEWER") // SUPER_ADMIN|TENANT_ADMIN|MANAGEMENT|PLANT_MANAGER|PRODUCTION_MANAGER|PRODUCTION_SUPERVISOR|OPERATOR|PURCHASE_MANAGER|PURCHASE_EXECUTIVE|SALES_MANAGER|SALES_EXECUTIVE|STORE_MANAGER|STORE_OPERATOR|QUALITY_MANAGER|QC_INSPECTOR|ACCOUNTS_MANAGER|ACCOUNTANT|HR_MANAGER|MAINTENANCE_MANAGER|MAINTENANCE_TECHNICIAN|DISPATCH_MANAGER|VIEWER
+  role      String   @default("VIEWER") // SUPER_ADMIN|TENANT_ADMIN|MANAGEMENT|PLANT_MANAGER|PRODUCTION_MANAGER|PRODUCTION_SUPERVISOR|OPERATOR|PURCHASE_MANAGER|PURCHASE_EXECUTIVE|SALES_MANAGER|SALES_EXECUTIVE|STORE_MANAGER|STORE_OPERATOR|QUALITY_MANAGER|QC_INSPECTOR|ACCOUNTS_MANAGER|ACCOUNTANT|MAINTENANCE_MANAGER|DISPATCH_MANAGER|VIEWER
   passwordHash String? // scrypt "salt:hash" — null falls back to demo password 'demo1234' at login
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -90,7 +90,7 @@ model Item {
   purchasePrice Float    @default(0)
   sellingPrice  Float    @default(0)
   standardCost  Float    @default(0)
-  description   String?
+  description   String? @db.Text
   status        String   @default("ACTIVE") // ACTIVE|INACTIVE
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -112,7 +112,7 @@ model Customer {
   contactPerson    String?
   phone            String?
   email            String?
-  addressLine      String?
+  addressLine      String? @db.Text
   city             String?
   state            String?
   stateCode        String? // for IGST/CGST-SGST decision
@@ -139,7 +139,7 @@ model Supplier {
   contactPerson    String?
   phone            String?
   email            String?
-  addressLine      String?
+  addressLine      String? @db.Text
   city             String?
   state            String?
   stateCode        String?
@@ -178,7 +178,7 @@ model Machine {
   capacityPerDay Float    @default(0)
   status         String   @default("RUNNING") // RUNNING|IDLE|MAINTENANCE|BREAKDOWN
   hourlyRate     Float    @default(0)
-  notes          String?
+  notes          String? @db.Text
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -198,7 +198,7 @@ model Bom {
   version      String   @default("V1")
   scrapPct     Float    @default(0)
   status       String   @default("ACTIVE") // DRAFT|ACTIVE|RETIRED
-  notes        String?
+  notes        String? @db.Text
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -227,7 +227,7 @@ model Enquiry {
   date        DateTime
   contactName String?
   source      String?  // WALK_IN|PHONE|WEB|REFERRAL
-  notes       String?
+  notes       String? @db.Text
   status      String   @default("OPEN") // OPEN|QUOTED|WON|LOST|CLOSED
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -237,6 +237,7 @@ model Enquiry {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, customerId])
 }
 
 model EnquiryItem {
@@ -244,7 +245,7 @@ model EnquiryItem {
   enquiryId String
   itemId    String
   qty       Float
-  notes     String?
+  notes     String? @db.Text
 
   enquiry   Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
 }
@@ -264,7 +265,7 @@ model Quotation {
   sgst          Float     @default(0)
   igst          Float     @default(0)
   grandTotal    Float     @default(0)
-  notes         String?
+  notes         String? @db.Text
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -274,6 +275,7 @@ model Quotation {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, customerId])
 }
 
 model QuotationItem {
@@ -304,7 +306,7 @@ model SalesOrder {
   sgst           Float     @default(0)
   igst           Float     @default(0)
   grandTotal     Float     @default(0)
-  notes          String?
+  notes          String? @db.Text
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -316,6 +318,8 @@ model SalesOrder {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, customerId])
+  @@index([companyId, orderDate])
 }
 
 model SalesOrderItem {
@@ -344,7 +348,7 @@ model DeliveryChallan {
   transporter   String?
   ewayBillNo    String?
   status        String      @default("DRAFT") // DRAFT|DISPATCHED|CANCELLED
-  notes         String?
+  notes         String? @db.Text
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -353,6 +357,7 @@ model DeliveryChallan {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, date])
 }
 
 model DeliveryChallanItem {
@@ -386,7 +391,7 @@ model SalesInvoice {
   status        String    @default("UNPAID") // UNPAID|PARTIALLY_PAID|PAID|CANCELLED
   irn           String?
   ewayBillNo    String?
-  notes         String?
+  notes         String? @db.Text
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -396,6 +401,8 @@ model SalesInvoice {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, customerId])
+  @@index([companyId, date])
 }
 
 model SalesInvoiceItem {
@@ -423,7 +430,7 @@ model PurchaseRequisition {
   department  String?
   raisedBy    String?
   status      String   @default("PENDING") // PENDING|APPROVED|REJECTED|CONVERTED|CLOSED
-  notes       String?
+  notes       String? @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -438,7 +445,7 @@ model PurchaseRequisitionItem {
   prId      String
   itemId    String
   qty       Float
-  notes     String?
+  notes     String? @db.Text
 
   pr        PurchaseRequisition @relation(fields: [prId], references: [id], onDelete: Cascade)
 }
@@ -460,7 +467,7 @@ model PurchaseOrder {
   grandTotal     Float     @default(0)
   approvedBy     String?
   approvedAt     DateTime?
-  notes          String?
+  notes          String? @db.Text
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -471,6 +478,8 @@ model PurchaseOrder {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, supplierId])
+  @@index([companyId, orderDate])
 }
 
 model PurchaseOrderItem {
@@ -495,7 +504,7 @@ model Grn {
   date        DateTime
   supplierInvNo String?
   status      String   @default("PENDING_QC") // PENDING_QC|PARTIALLY_ACCEPTED|POSTED|CANCELLED
-  notes       String?
+  notes       String? @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -504,6 +513,7 @@ model Grn {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, date])
 }
 
 model GrnItem {
@@ -538,7 +548,7 @@ model PurchaseInvoice {
   grandTotal    Float     @default(0)
   paidAmount    Float     @default(0)
   status        String    @default("UNPAID") // UNPAID|PARTIALLY_PAID|PAID|CANCELLED
-  notes         String?
+  notes         String? @db.Text
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -548,6 +558,8 @@ model PurchaseInvoice {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, supplierId])
+  @@index([companyId, date])
 }
 
 model PurchaseInvoiceItem {
@@ -579,12 +591,16 @@ model Payment {
   mode        String   @default("NEFT") // CASH|BANK|UPI|CHEQUE|NEFT|RTGS
   date        DateTime
   reference   String?
-  notes       String?
+  notes       String? @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@unique([companyId, number])
   @@index([companyId, type])
+  @@index([companyId, customerId])
+  @@index([companyId, supplierId])
+  @@index([invoiceId])
+  @@index([companyId, date])
 }
 
 model Expense {
@@ -593,7 +609,7 @@ model Expense {
   number      String
   date        DateTime
   category    String   @default("GENERAL") // UTILITIES|FREIGHT|RENT|SALARY|MAINTENANCE|TOOLING|OTHER
-  description String
+  description String @db.Text
   amount      Float
   paymentMode String   @default("CASH")
   paidTo      String?
@@ -604,6 +620,7 @@ model Expense {
 
   @@unique([companyId, number])
   @@index([companyId, category])
+  @@index([companyId, date])
 }
 
 // ---------------- Manufacturing ----------------
@@ -624,7 +641,7 @@ model WorkOrder {
   startDate     DateTime
   dueDate       DateTime?
   priority      String    @default("NORMAL") // NORMAL|HIGH|URGENT
-  notes         String?
+  notes         String? @db.Text
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -634,6 +651,8 @@ model WorkOrder {
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([companyId, itemId])
+  @@index([bomId])
 }
 
 model MaterialIssue {
@@ -643,7 +662,7 @@ model MaterialIssue {
   workOrderId String
   date        DateTime
   status      String    @default("POSTED") // DRAFT|POSTED|CANCELLED
-  notes       String?
+  notes       String? @db.Text
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -674,10 +693,11 @@ model ProductionEntry {
   scrapQty    Float     @default(0)
   operator    String?
   downtimeMins Int      @default(0)
-  notes       String?
+  notes       String? @db.Text
   createdAt   DateTime  @default(now())
 
   workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+  @@index([companyId, date])
 }
 
 // ---------------- Quality ----------------
@@ -694,16 +714,17 @@ model QcInspection {
   qtyChecked  Float
   qtyAccepted Float    @default(0)
   qtyRejected Float    @default(0)
-  parameters  String? // JSON: [{name, expected, actual, ok}]
+  parameters  String? @db.Text // JSON: [{name, expected, actual, ok}]
   status      String   @default("PENDING") // PENDING|PASSED|FAILED|PARTIAL
   inspector   String?
   date        DateTime
-  remarks     String?
+  remarks     String? @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@unique([companyId, number])
   @@index([companyId, status])
+  @@index([refType, refId])
 }
 
 // ---------------- Inventory ----------------
@@ -721,13 +742,15 @@ model StockLedger {
   refType      String?  // GRN|MATERIAL_ISSUE|WORK_ORDER|DELIVERY|TRANSFER|ADJUSTMENT|OPENING
   refId        String?
   refNumber    String?
-  notes        String?
+  notes        String? @db.Text
   createdAt    DateTime @default(now())
 
   item         Item     @relation(fields: [itemId], references: [id])
 
   @@index([companyId, itemId])
   @@index([companyId, date])
+  @@index([refType, refId])
+  @@index([companyId, warehouseId])
 }
 
 model StockBalance {
@@ -753,7 +776,7 @@ model AuditLog {
   action    String // CREATE|UPDATE|DELETE|APPROVE|REJECT|POST|COMPLETE|CANCEL|LOGIN|CONFIG
   entity    String
   entityId  String?
-  details   String?
+  details   String? @db.Text
   createdAt DateTime @default(now())
 
   @@index([companyId, createdAt])
@@ -763,7 +786,7 @@ model Notification {
   id        String   @id @default(cuid())
   companyId String
   title     String
-  message   String?
+  message   String? @db.Text
   level     String   @default("INFO") // INFO|WARNING|CRITICAL
   read      Boolean  @default(false)
   createdAt DateTime @default(now())

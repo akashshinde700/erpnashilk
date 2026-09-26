@@ -71,7 +71,32 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (current.paidAmount > 0.005) throw new ApiError('Cannot cancel invoice with payments recorded', 400)
       const updated = await db.$transaction(async (tx) => {
         const t = tx as any
-        const u = await tx.salesInvoice.update({ where: { id }, data: { status: 'CANCELLED' } })
+        // Atomic claim: only while still unpaid, so a payment landing concurrently can't be lost
+        const claim = await tx.salesInvoice.updateMany({
+          where: { id, status: { in: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] }, paidAmount: { lte: 0.005 } },
+          data: { status: 'CANCELLED' },
+        })
+        if (claim.count !== 1) throw new ApiError('This invoice was just changed (payment or cancel) — refresh and try again', 409)
+
+        // Roll back SO invoicedQty (POST increments it; it does not change SO status)
+        if (current.salesOrderId) {
+          const invItems = await tx.salesInvoiceItem.findMany({ where: { invoiceId: id } })
+          const soItems = await tx.salesOrderItem.findMany({ where: { salesOrderId: current.salesOrderId } })
+          const byItem = new Map<string, number>()
+          for (const l of invItems) byItem.set(l.itemId, r2((byItem.get(l.itemId) || 0) + l.qty))
+          // Reverse SO line order — mirrors the forward allocation in POST
+          for (const si of [...soItems].reverse()) {
+            const want = byItem.get(si.itemId)
+            if (!want) continue
+            const back = Math.min(want, Math.max(0, r2(si.invoicedQty)))
+            if (back > 0) {
+              await tx.salesOrderItem.update({ where: { id: si.id }, data: { invoicedQty: { decrement: back } } })
+              byItem.set(si.itemId, r2(want - back))
+            }
+          }
+        }
+
+        const u = await tx.salesInvoice.findUniqueOrThrow({ where: { id } })
         await logAudit(t, {
           companyId, userName: body.userName, action: 'CANCEL', entity: 'SalesInvoice', entityId: id,
           details: `Cancelled tax invoice ${current.number}`,
@@ -88,7 +113,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const ewayBillNo = generateEwayBillNo()
       const updated = await db.$transaction(async (tx) => {
         const t = tx as any
-        const u = await tx.salesInvoice.update({ where: { id }, data: { irn, ewayBillNo } })
+        // Only while no IRN is set and the invoice is live
+        const set = await tx.salesInvoice.updateMany({
+          where: { id, status: { not: 'CANCELLED' }, OR: [{ irn: null }, { irn: '' }] },
+          data: { irn, ewayBillNo },
+        })
+        if (set.count !== 1) throw new ApiError('This invoice was just changed by someone else — refresh and try again', 409)
+        const u = await tx.salesInvoice.findUniqueOrThrow({ where: { id } })
         await logAudit(t, {
           companyId, userName: body.userName, action: 'POST', entity: 'SalesInvoice', entityId: id,
           details: `E-Invoice generated (mock gateway) for ${current.number} • IRN ${irn} • EWB ${ewayBillNo}`,
@@ -98,14 +129,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return ok(updated, 'IRN + E-Way Bill generated')
     }
 
-    // ---- Direct set of gateway fields ----
+    // ---- Direct set of gateway fields (only fills empty fields; never overwrites) ----
     if (body.irn !== undefined || body.ewayBillNo !== undefined) {
+      const irn = typeof body.irn === 'string' ? body.irn.trim() : ''
+      const ewb = typeof body.ewayBillNo === 'string' ? body.ewayBillNo.trim() : ''
+      if (body.irn !== undefined && !irn) throw new ApiError('irn must be a non-empty string', 400)
+      if (body.ewayBillNo !== undefined && !ewb) throw new ApiError('ewayBillNo must be a non-empty string', 400)
+      if (irn && current.irn) throw new ApiError('IRN is already set on this invoice and cannot be changed', 400)
+      if (ewb && current.ewayBillNo) throw new ApiError('E-Way Bill no. is already set on this invoice and cannot be changed', 400)
       const data: any = {}
-      if (body.irn !== undefined) data.irn = body.irn ?? null
-      if (body.ewayBillNo !== undefined) data.ewayBillNo = body.ewayBillNo ?? null
+      const where: any = { id, status: { not: 'CANCELLED' }, AND: [] as any[] }
+      if (irn) { data.irn = irn; where.AND.push({ OR: [{ irn: null }, { irn: '' }] }) }
+      if (ewb) { data.ewayBillNo = ewb; where.AND.push({ OR: [{ ewayBillNo: null }, { ewayBillNo: '' }] }) }
       const updated = await db.$transaction(async (tx) => {
         const t = tx as any
-        const u = await tx.salesInvoice.update({ where: { id }, data })
+        const set = await tx.salesInvoice.updateMany({ where, data })
+        if (set.count !== 1) throw new ApiError('This invoice was just changed by someone else — refresh and try again', 409)
+        const u = await tx.salesInvoice.findUniqueOrThrow({ where: { id } })
         await logAudit(t, {
           companyId, userName: body.userName, action: 'UPDATE', entity: 'SalesInvoice', entityId: id,
           details: `Updated e-invoice refs on ${current.number}`,

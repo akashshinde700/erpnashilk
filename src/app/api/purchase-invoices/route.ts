@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, nextDocNumber, computeGst, isInterState, logAudit, ApiError, r2, requireWrite,
+  ok, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, logAudit, ApiError, r2, requireWrite,
 } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
       const company = await tx.company.findUnique({ where: { id: companyId } })
       if (!company) throw new ApiError('Company not found', 404)
 
-      const interState = isInterState(company.state, supplier.state)
+      const interState = isInterStateParty(company ?? {}, supplier ?? {})
       const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r2(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
       const totals = computeGst(taxLines, interState)
       const number = await nextDocNumber(tx, companyId, 'PINV', date)

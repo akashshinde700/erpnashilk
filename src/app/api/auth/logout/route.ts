@@ -1,26 +1,28 @@
+import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { logAudit } from '@/lib/erp-helpers'
 import { db } from '@/lib/db'
-import { handleError, logAudit, ok } from '@/lib/erp-helpers'
+import { SESSION_COOKIE, clearSessionCookie, verifySession } from '@/lib/session'
 
-// POST /api/auth/logout { userName?, companyId? } → ok({ success: true })
-// Audit row is best-effort and never blocks the sign-out.
-export async function POST(req: Request) {
-  try {
-    const body = await req.json().catch(() => ({}))
-    if (body?.userName && body?.companyId) {
-      try {
-        await logAudit(db as never, {
-          companyId: String(body.companyId),
-          userName: String(body.userName),
-          action: 'LOGOUT',
-          entity: 'USER',
-          details: 'Signed out',
-        })
-      } catch {
-        // ignore audit failures — logout must always succeed
-      }
+// POST /api/auth/logout → ok({ success: true }) and clears the session cookie.
+// The audit row uses the verified session only and never blocks the sign-out.
+export async function POST() {
+  const session = verifySession((await cookies()).get(SESSION_COOKIE)?.value)
+  if (session) {
+    try {
+      await logAudit(db as never, {
+        companyId: session.cid,
+        userName: session.name,
+        action: 'LOGOUT',
+        entity: 'USER',
+        entityId: session.uid,
+        details: 'Signed out',
+      })
+    } catch {
+      // ignore audit failures — logout must always succeed
     }
-    return ok({ success: true })
-  } catch (e) {
-    return handleError(e)
   }
+  const res = NextResponse.json({ success: true, data: { success: true }, message: '' })
+  res.headers.append('Set-Cookie', clearSessionCookie())
+  return res
 }

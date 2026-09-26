@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireWrite, ApiError, fail, handleError, logAudit, ok } from '@/lib/erp-helpers'
+import { requireWrite, ApiError, fail, handleError, logAudit, ok, sessionUser, PLATFORM_ROLE } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -11,10 +11,18 @@ const clean = (v: unknown): string | null => {
   return s === '' ? null : s
 }
 
+/** Own company, or any company for the platform SUPER_ADMIN. */
+async function assertCompanyAccess(req: Request, id: string) {
+  const me = await sessionUser(req)
+  if (me.role !== PLATFORM_ROLE && me.companyId !== id) throw new ApiError('You do not have access to this company', 403)
+  return me
+}
+
 // GET /api/companies/[id] — single tenant with counts (users, items, warehouses)
-export async function GET(_req: Request, { params }: Ctx) {
+export async function GET(req: Request, { params }: Ctx) {
   try {
     const { id } = await params
+    await assertCompanyAccess(req, id)
     const company = await db.company.findUnique({
       where: { id },
       include: { _count: { select: { users: true, items: true, warehouses: true } } },
@@ -32,6 +40,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
   try {
     requireWrite(req, 'companies')
     const { id } = await params
+    await assertCompanyAccess(req, id)
     const body = await req.json().catch(() => ({}))
     const existing = await db.company.findUnique({ where: { id }, select: { id: true } })
     if (!existing) throw new ApiError('Company not found', 404)

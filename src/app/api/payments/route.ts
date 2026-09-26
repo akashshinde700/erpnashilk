@@ -98,6 +98,10 @@ export async function POST(req: Request) {
         : await tx.purchaseInvoice.findFirst({ where: { id: body.invoiceId, companyId } })
       if (!invoice) throw new ApiError(invoiceType === 'SALES' ? 'Sales invoice not found' : 'Purchase invoice not found', 404)
       if (invoice.status === 'CANCELLED') throw new ApiError('Invoice is cancelled', 400)
+      const invParty = invoiceType === 'SALES' ? (invoice as any).customerId : (invoice as any).supplierId
+      if (invParty !== (customerId || supplierId)) {
+        throw new ApiError(`Invoice ${invoice.number} belongs to a different ${invoiceType === 'SALES' ? 'customer' : 'supplier'}`, 400)
+      }
 
       const outstanding = r2(invoice.grandTotal - invoice.paidAmount)
       if (amount > outstanding + 0.01) throw new ApiError(`Amount exceeds outstanding (₹${outstanding.toFixed(2)})`)
@@ -121,13 +125,20 @@ export async function POST(req: Request) {
         },
       })
 
-      const newPaid = r2(invoice.paidAmount + amount)
-      const newStatus = invoice.grandTotal - newPaid <= 0.01 ? 'PAID' : 'PARTIALLY_PAID'
-      if (invoiceType === 'SALES') {
-        await tx.salesInvoice.update({ where: { id: invoice.id }, data: { paidAmount: newPaid, status: newStatus } })
-      } else {
-        await tx.purchaseInvoice.update({ where: { id: invoice.id }, data: { paidAmount: newPaid, status: newStatus } })
+      // Relative increment (locks the invoice row) — concurrent payments can't overwrite each other
+      const invModel = invoiceType === 'SALES' ? t.salesInvoice : t.purchaseInvoice
+      const inc = await invModel.updateMany({
+        where: { id: invoice.id, status: { not: 'CANCELLED' } },
+        data: { paidAmount: { increment: amount } },
+      })
+      if (inc.count !== 1) throw new ApiError('Invoice was just cancelled — refresh and try again', 409)
+      const fresh = await invModel.findUniqueOrThrow({ where: { id: invoice.id } })
+      const newPaid = r2(fresh.paidAmount)
+      if (newPaid > r2(fresh.grandTotal) + 0.01) {
+        throw new ApiError(`Amount exceeds outstanding (₹${r2(fresh.grandTotal - (newPaid - amount)).toFixed(2)})`, 400)
       }
+      const newStatus = fresh.grandTotal - newPaid <= 0.01 ? 'PAID' : 'PARTIALLY_PAID'
+      await invModel.update({ where: { id: invoice.id }, data: { status: newStatus } })
 
       await logAudit(t, {
         companyId, userName: body.userName, action: 'CREATE', entity: 'Payment', entityId: payment.id,
@@ -138,7 +149,7 @@ export async function POST(req: Request) {
         ...payment,
         invoiceNumber: invoice.number,
         invoiceStatus: newStatus,
-        outstandingAfter: r2(invoice.grandTotal - newPaid),
+        outstandingAfter: r2(fresh.grandTotal - newPaid),
       }
     })
 

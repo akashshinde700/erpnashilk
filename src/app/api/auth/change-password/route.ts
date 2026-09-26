@@ -1,53 +1,46 @@
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getActor, fail, handleError, logAudit, ok } from '@/lib/erp-helpers'
-import { hashPassword, verifyPassword } from '@/lib/password'
+import { fail, handleError, logAudit, sessionUser } from '@/lib/erp-helpers'
+import { hashPassword, passwordProblem, verifyPassword } from '@/lib/password'
+import { loginBlocked, loginFailed, loginSucceeded, passwordVersion, sessionCookie, signSession } from '@/lib/session'
 
-// POST /api/auth/change-password { userId, currentPassword, newPassword, userName? }
-// → ok({ success: true }, 'Password updated successfully')
-// Legacy demo users (passwordHash null) authenticate with the shared demo password.
+// POST /api/auth/change-password { currentPassword, newPassword }
+// Changes the signed-in user's own password and re-issues their session cookie
+// (sessions issued before the change stop working).
 export async function POST(req: Request) {
   try {
+    const me = await sessionUser(req)
     const body = await req.json().catch(() => ({}))
-    const userId = typeof body?.userId === 'string' ? body.userId.trim() : ''
     const currentPassword = typeof body?.currentPassword === 'string' ? body.currentPassword : ''
-    const newPassword = typeof body?.newPassword === 'string' ? body.newPassword : ''
-    if (!userId || !currentPassword || !newPassword) {
+    const newPassword = typeof body?.newPassword === 'string' ? body.newPassword.trim() : ''
+    if (!currentPassword || !newPassword) {
       return fail('Current and new passwords are required', 400)
     }
-    if (newPassword.trim().length < 6) {
-      return fail('New password must be at least 6 characters', 400)
-    }
+    const problem = passwordProblem(newPassword)
+    if (problem) return fail(problem, 400)
 
-    // Self-service guard: a signed-in actor may only change their own password.
-    const actor = getActor(req)
-    if (actor && actor.userId !== userId) {
-      return fail('You can only change your own password', 403)
-    }
+    const throttleKey = `pwd|${me.id}`
+    if (loginBlocked(throttleKey)) return fail('Too many wrong attempts. Try again later.', 429)
 
-    const user = await db.user.findUnique({ where: { id: userId } })
+    const user = await db.user.findUnique({ where: { id: me.id } })
     if (!user) return fail('User not found', 404)
 
-    // verifyPassword falls back to the demo password when passwordHash is null
-    // (legacy users created before the auth phase).
     if (!verifyPassword(currentPassword, user.passwordHash)) {
+      loginFailed(throttleKey)
       return fail('Current password is incorrect', 401)
     }
-
-    // Reject a no-op change: the new (trimmed) password must differ from the
-    // effective current one (hashed, or the demo default for legacy users).
-    if (verifyPassword(newPassword.trim(), user.passwordHash)) {
+    loginSucceeded(throttleKey)
+    if (verifyPassword(newPassword, user.passwordHash)) {
       return fail('New password must be different from current password', 400)
     }
 
-    await db.user.update({
-      where: { id: user.id },
-      data: { passwordHash: hashPassword(newPassword.trim()) },
-    })
+    const passwordHash = hashPassword(newPassword)
+    await db.user.update({ where: { id: user.id }, data: { passwordHash } })
 
     try {
       await logAudit(db as never, {
         companyId: user.companyId,
-        userName: typeof body?.userName === 'string' && body.userName.trim() ? body.userName.trim() : user.name,
+        userName: user.name,
         action: 'CONFIG',
         entity: 'USER',
         entityId: user.id,
@@ -57,7 +50,10 @@ export async function POST(req: Request) {
       // ignore audit failures — the password change must still succeed
     }
 
-    return ok({ success: true }, 'Password updated successfully')
+    const token = signSession({ uid: user.id, cid: user.companyId, role: user.role, name: user.name, pv: passwordVersion(passwordHash) })
+    const res = NextResponse.json({ success: true, data: { success: true }, message: 'Password updated successfully' })
+    res.headers.append('Set-Cookie', sessionCookie(token))
+    return res
   } catch (e) {
     return handleError(e)
   }

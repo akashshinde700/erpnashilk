@@ -62,7 +62,7 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
   const list = useList<{ items: QuotationRow[] }>(`/api/quotations?companyId=${companyId}`)
   const customers = useList<{ items: PartyRow[] }>(`/api/customers?companyId=${companyId}`)
   const items = useList<{ items: ItemRow[] }>(`/api/items?companyId=${companyId}`)
-  const enquiries = useList<{ items: { id: string; number: string }[] }>(`/api/enquiries?companyId=${companyId}`)
+  const enquiries = useList<{ items: { id: string; number: string; customerId?: string | null; items?: { itemId: string; qty: number }[] }[] }>(`/api/enquiries?companyId=${companyId}`)
 
   const [open, setOpen] = React.useState(false)
   const [editId, setEditId] = React.useState<string | null>(null)
@@ -80,6 +80,20 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
   const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.id }))
   const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.id }))
   const enquiryOpts = (enquiries.data?.items ?? []).filter((e) => e.number).map((e) => ({ value: e.id, label: e.number }))
+
+  // Picking an enquiry fills the customer and its requested items (priced from the item master).
+  function pickEnquiry(id: string) {
+    setEnquiryId(id)
+    const enq = (enquiries.data?.items ?? []).find((e) => e.id === id)
+    if (!enq) return
+    if (enq.customerId) setCustomerId(enq.customerId)
+    const master = items.data?.items ?? []
+    const fromEnq = (enq.items ?? []).filter((l) => l.itemId).map((l) => {
+      const it = master.find((o) => o.id === l.itemId)
+      return { ...emptyLine(), itemId: l.itemId, qty: l.qty, rate: Number(it?.sellingPrice || 0), gstRate: it?.gstRate ?? emptyLine().gstRate }
+    })
+    if (fromEnq.length && !lines.some((l) => l.itemId)) setLines(fromEnq)
+  }
 
   function resetForm() {
     setEditId(null); setCustomerId(''); setEnquiryId(''); setDate(today()); setValidUntil(''); setNotes('')
@@ -280,7 +294,7 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
         <div className="grid sm:grid-cols-3 gap-4">
           <Field label="Customer" required><SelectInput value={customerId} onChange={setCustomerId} options={customerOpts} /></Field>
           <Field label="From Enquiry (optional)">
-            <SelectInput value={enquiryId} onChange={setEnquiryId} options={[{ value: '', label: '— None —' }, ...enquiryOpts]} />
+            <SelectInput value={enquiryId} onChange={pickEnquiry} options={[{ value: '', label: '— None —' }, ...enquiryOpts]} />
           </Field>
           <Field label="Date" required><DateInput value={date} onChange={setDate} /></Field>
           <Field label="Valid Until"><DateInput value={validUntil} onChange={setValidUntil} /></Field>

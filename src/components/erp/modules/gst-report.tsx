@@ -169,7 +169,7 @@ function GstInvoiceTable({
 }
 
 export default function GstReportModule({ companyId }: { companyId: string }) {
-  const months = React.useMemo(monthOptions, [])
+  const months = React.useMemo(() => monthOptions(), [])
   const [month, setMonth] = React.useState(() => monthOptions()[0]?.value || '')
 
   const sales = useList<{ items?: GstInvoiceRow[]; total?: number }>(`/api/sales-invoices?companyId=${companyId}`)

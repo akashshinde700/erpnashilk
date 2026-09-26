@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http'
 import { Server } from 'socket.io'
 
 const PORT = 3003
-const SECRET = 'manuflow-rt-secret'
+const SECRET = process.env.NOTIFY_SECRET || ''
 const LEVELS = ['INFO', 'WARNING', 'CRITICAL'] as const
 
 interface NotificationPayload {
@@ -119,7 +119,7 @@ async function handleRest(req: IncomingMessage, res: ServerResponse) {
 
   // POST /emit — { companyId, title, message?, level?, topic? }
   if (url === '/emit' && req.method === 'POST') {
-    if (req.headers['x-notify-secret'] !== SECRET) {
+    if (!SECRET || req.headers['x-notify-secret'] !== SECRET) {
       return json(res, 401, { ok: false, error: 'Unauthorized' })
     }
     let raw: string
@@ -163,7 +163,7 @@ async function handleRest(req: IncomingMessage, res: ServerResponse) {
 
 // ------------------------------ start ------------------------------
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, '127.0.0.1', () => {
   console.log(`[notify] notify-service listening on port ${PORT}`)
 })
 

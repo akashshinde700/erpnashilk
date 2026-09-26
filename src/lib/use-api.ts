@@ -1,32 +1,42 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import type { ApiResponse } from '@/lib/erp-constants'
 
 // ============ Low-level api client ============
 
-/** Attach session identity headers for server-side RBAC (middleware + requireWrite). */
-function identityHeaders(): Record<string, string> {
+/**
+ * Identity travels in the httpOnly session cookie (sent automatically on same-origin
+ * fetches). The currently selected tenant rides along as x-company-id so every call —
+ * including ones that don't pass companyId explicitly — targets the company on screen.
+ */
+function tenantHeader(): Record<string, string> {
   if (typeof window === 'undefined') return {}
   try {
-    const raw = window.localStorage.getItem('erp_user')
-    if (!raw) return {}
-    const s = JSON.parse(raw) as { user?: { id?: string; name?: string; role?: string } }
-    const u = s.user
-    const h: Record<string, string> = {}
-    if (u?.id) h['x-erp-user-id'] = u.id
-    if (u?.name) h['x-erp-user-name'] = encodeURIComponent(u.name)
-    if (u?.role) h['x-erp-role'] = u.role
-    return h
+    const cid = window.localStorage.getItem('erp_company_id')
+    return cid ? { 'x-company-id': cid } : {}
   } catch { return {} }
 }
+
+/** Fired when the server says the session is gone; the app shell signs the user out. */
+export const UNAUTHORIZED_EVENT = 'erp:unauthorized'
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...identityHeaders(), ...(init?.headers || {}) },
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...tenantHeader(), ...(init?.headers || {}) },
   })
-  const json = (await res.json()) as ApiResponse<T>
+  let json: ApiResponse<T>
+  try {
+    json = (await res.json()) as ApiResponse<T>
+  } catch {
+    throw new Error(`Request failed (${res.status})`)
+  }
+  if (res.status === 401 && !url.startsWith('/api/auth/login') && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: json.error?.message }))
+  }
   if (!json.success) throw new Error(json.error?.message || `Request failed (${res.status})`)
   return json.data as T
 }
@@ -43,7 +53,6 @@ export function useList<T>(url: string | null) {
   const [loading, setLoading] = useState(!!url)
   const [error, setError] = useState<string | null>(null)
   const urlRef = useRef(url)
-  urlRef.current = url
 
   const refetch = useCallback(async () => {
     const u = urlRef.current
@@ -54,13 +63,17 @@ export function useList<T>(url: string | null) {
       const d = await apiGet<T>(u)
       setData(d)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
+      const msg = e instanceof Error ? e.message : 'Failed to load'
+      setError(msg)
+      // Surface load failures instead of showing an empty table (one toast per URL).
+      toast.error('Could not load data', { id: `load:${u}`, description: msg })
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    urlRef.current = url
     void refetch()
   }, [url, refetch])
 

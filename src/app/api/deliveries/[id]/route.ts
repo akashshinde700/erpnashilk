@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 // DeliveryChallanItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -66,6 +66,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       const result = await db.$transaction(async (tx) => {
         const t = tx as any
+        await claimStatus(t.deliveryChallan, id, ['DRAFT'], 'DISPATCHED')
+        // Lock the SO and make sure it is still dispatchable (not cancelled/closed meanwhile).
+        const soLock = await tx.salesOrder.updateMany({
+          where: { id: current.salesOrderId, companyId, status: { in: ['CONFIRMED', 'IN_PRODUCTION', 'READY', 'PARTIALLY_DISPATCHED'] } },
+          data: { updatedAt: new Date() },
+        })
+        if (soLock.count !== 1) throw new ApiError('The sales order is no longer open for dispatch — refresh and check its status', 409)
         // rate = SO item rate, fallback item.sellingPrice
         const soItems = await tx.salesOrderItem.findMany({ where: { salesOrderId: current.salesOrderId } })
         const soItemMap = new Map(soItems.map((si) => [si.id, si]))
@@ -90,10 +97,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             notes: `Dispatched on challan ${current.number}`,
           })
           if (ci.salesOrderItemId) {
-            await tx.salesOrderItem.update({
+            const si = await tx.salesOrderItem.update({
               where: { id: ci.salesOrderItemId },
               data: { dispatchedQty: { increment: ci.qty } },
             })
+            // Several draft challans can exist for one SO line; the one that would overshoot fails here.
+            if (r2(si.dispatchedQty) > r2(si.qty) + 0.005) {
+              throw new ApiError(`Dispatch exceeds the sales order quantity for a line (ordered ${r2(si.qty)}, dispatched would be ${r2(si.dispatchedQty)})`, 409)
+            }
           }
         }
 
@@ -118,7 +129,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (current.status !== 'DRAFT') throw new ApiError(`Only DRAFT challans can be cancelled (current: ${current.status})`, 400)
       const updated = await db.$transaction(async (tx) => {
         const t = tx as any
-        const u = await tx.deliveryChallan.update({ where: { id }, data: { status: 'CANCELLED' } })
+        await claimStatus(t.deliveryChallan, id, ['DRAFT'], 'CANCELLED')
+        const u = await tx.deliveryChallan.findUniqueOrThrow({ where: { id } })
         await logAudit(t, {
           companyId, userName: body.userName, action: 'CANCEL', entity: 'DeliveryChallan', entityId: id,
           details: `Cancelled delivery challan ${current.number}`,
@@ -176,7 +188,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (tx) => {
       const t = tx as any
-      await tx.deliveryChallan.delete({ where: { id } })
+      const del = await tx.deliveryChallan.deleteMany({ where: { id, status: 'DRAFT' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await logAudit(t, {
         companyId, userName: body?.userName, action: 'DELETE', entity: 'DeliveryChallan',
         entityId: id, details: `Deleted delivery challan ${current.number}`,

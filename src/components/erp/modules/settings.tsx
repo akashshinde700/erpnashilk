@@ -124,17 +124,8 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
     setDownloading(true)
     try {
       // Plain fetch (api() helper expects the ok() envelope, the backup returns a
-      // raw JSON attachment) with the same x-erp-* identity headers.
-      const headers: Record<string, string> = {}
-      try {
-        const raw = window.localStorage.getItem('erp_user')
-        const u = raw ? (JSON.parse(raw) as { user?: { id?: string; name?: string; role?: string } }).user : undefined
-        if (u?.id) headers['x-erp-user-id'] = u.id
-        if (u?.name) headers['x-erp-user-name'] = encodeURIComponent(u.name)
-        if (u?.role) headers['x-erp-role'] = u.role
-      } catch { /* no session — server will 401 */ }
-
-      const res = await fetch(`/api/companies/${companyId}/backup?companyId=${companyId}`, { headers })
+      // raw JSON attachment); the session cookie identifies the caller.
+      const res = await fetch(`/api/companies/${companyId}/backup?companyId=${companyId}`, { credentials: 'same-origin' })
       if (!res.ok) {
         let msg = `Backup failed (${res.status})`
         try {

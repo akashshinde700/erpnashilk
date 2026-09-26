@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/command'
 import { cn } from '@/lib/utils'
 import { fmtDateTime, ROLE_LABEL, canAccessModule } from '@/lib/erp-constants'
-import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
+import { apiGet, apiPatch, apiPost, useList, UNAUTHORIZED_EVENT } from '@/lib/use-api'
 import { MODULES, MODULE_GROUPS, findModule } from '@/components/erp/registry'
 import { Kbd } from '@/components/erp/kit'
 import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp/login-screen'
@@ -71,7 +71,8 @@ const LEVEL_DOT: Record<string, string> = {
   CRITICAL: 'bg-red-500',
 }
 
-const TENANT_ADMIN_ROLES = ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN']
+// Only the platform administrator can switch between companies.
+const TENANT_ADMIN_ROLES = ['SUPER_ADMIN']
 
 /** g + key → module key (Gmail-style jump). Only fires for modules the role can access. */
 const GO_KEYS: Record<string, string> = {
@@ -137,14 +138,39 @@ export default function ErpApp() {
   // ---------- boot: restore session + prefs ----------
   React.useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(SESSION_KEY)
-      if (raw) setSession(JSON.parse(raw) as Session)
       setCollapsed(window.localStorage.getItem(COLLAPSE_KEY) === '1')
       setFavs(readJsonArray(FAV_KEY))
       setRecents(readJsonArray(RECENT_KEY))
-    } catch { /* corrupted session — ignore */ }
+    } catch { /* private mode */ }
     setThemeMounted(true)
-    setBooting(false)
+    // The httpOnly session cookie is the source of truth: confirm it with the server
+    // before showing the app (the localStorage copy only carries display data).
+    let cancelled = false
+    apiGet<Session>('/api/auth/me')
+      .then((s) => {
+        if (cancelled) return
+        window.localStorage.setItem(SESSION_KEY, JSON.stringify(s))
+        setSession(s)
+      })
+      .catch(() => {
+        try { window.localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+      })
+      .finally(() => { if (!cancelled) setBooting(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  // Server rejected the session (expired, password/role changed, deactivated) → back to login.
+  React.useEffect(() => {
+    const onUnauthorized = (e: Event) => {
+      window.localStorage.removeItem(SESSION_KEY)
+      setSession((prev) => {
+        if (prev) toast.error((e as CustomEvent<string | undefined>).detail || 'Your session has ended — sign in again')
+        return null
+      })
+      setCompanyId(null)
+    }
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
   }, [])
 
   const companies = useList<{ companies: CompanyRow[] }>(session ? '/api/companies' : null)
@@ -189,8 +215,20 @@ export default function ErpApp() {
   )
   const [notifOpen, setNotifOpen] = React.useState(false)
 
-  // ---------- realtime notifications (socket.io via gateway) ----------
+  // Without the realtime socket, poll the unread badge once a minute while the tab is visible.
   React.useEffect(() => {
+    if (process.env.NEXT_PUBLIC_REALTIME === '1' || !session || !companyId) return
+    const t = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void notifications.refetch()
+    }, 60000)
+    return () => window.clearInterval(t)
+  }, [session, companyId, notifications.refetch])
+
+  // ---------- realtime notifications (socket.io via gateway) ----------
+  // Off unless NEXT_PUBLIC_REALTIME=1: needs the notify-service behind the Caddy gateway, and its
+  // rooms are joined by companyId without auth. Notifications still refresh through the API.
+  React.useEffect(() => {
+    if (process.env.NEXT_PUBLIC_REALTIME !== '1') return
     if (!session || !companyId) return
     const socket: Socket = io('/?XTransformPort=3003', {
       transports: ['websocket', 'polling'],
@@ -382,7 +420,7 @@ export default function ErpApp() {
   }
 
   async function logout() {
-    try { await apiPost('/api/auth/logout', { userName: session?.user.name }) } catch { /* best effort */ }
+    try { await apiPost('/api/auth/logout', {}) } catch { /* best effort */ }
     window.localStorage.removeItem(SESSION_KEY)
     socketRef.current?.disconnect()
     setSession(null)

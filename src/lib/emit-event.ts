@@ -16,7 +16,7 @@ export async function emitEvent(payload: EmitEventPayload): Promise<void> {
   try {
     await fetch('http://127.0.0.1:3003/emit', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-notify-secret': 'manuflow-rt-secret' },
+      headers: { 'content-type': 'application/json', 'x-notify-secret': process.env.NOTIFY_SECRET || '' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(800),
     })

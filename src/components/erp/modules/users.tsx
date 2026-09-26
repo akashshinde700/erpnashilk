@@ -40,9 +40,10 @@ interface FormState {
   phone: string
   role: string
   active: string // 'ACTIVE' | 'INACTIVE' — mapped to boolean on submit
+  password: string // required on create; on edit, blank keeps the current password
 }
 
-const emptyForm: FormState = { name: '', email: '', phone: '', role: 'OPERATOR', active: 'ACTIVE' }
+const emptyForm: FormState = { name: '', email: '', phone: '', role: 'OPERATOR', active: 'ACTIVE', password: '' }
 
 export default function UsersModule({ companyId }: { companyId: string }) {
   const { data, loading, refetch } = useList<UsersResponse>(`/api/users?companyId=${companyId}`)
@@ -70,6 +71,7 @@ export default function UsersModule({ companyId }: { companyId: string }) {
       phone: row.phone ?? '',
       role: row.role,
       active: row.active ? 'ACTIVE' : 'INACTIVE',
+      password: '',
     })
     setOpen(true)
   }
@@ -77,6 +79,10 @@ export default function UsersModule({ companyId }: { companyId: string }) {
   async function submit() {
     if (!form.name.trim() || !form.email.trim()) {
       toast.error('Name and email are required')
+      return
+    }
+    if ((!editing || form.password) && form.password.length < 8) {
+      toast.error(editing ? 'New password must be at least 8 characters' : 'Set a password of at least 8 characters')
       return
     }
     setSaving(true)
@@ -88,6 +94,7 @@ export default function UsersModule({ companyId }: { companyId: string }) {
         phone: form.phone.trim() || null,
         role: form.role,
         active: form.active === 'ACTIVE',
+        ...(form.password ? { password: form.password } : {}),
       }
       if (editing) await apiPatch(`/api/users/${editing.id}`, body)
       else await apiPost('/api/users', body)
@@ -198,6 +205,15 @@ export default function UsersModule({ companyId }: { companyId: string }) {
               value={form.role}
               onChange={(v) => set('role', v)}
               options={ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
+            />
+          </Field>
+          <Field label={editing ? 'New password' : 'Password'} required={!editing}>
+            <TextInput
+              type="password"
+              autoComplete="new-password"
+              value={form.password}
+              onChange={(e) => set('password', e.target.value)}
+              placeholder={editing ? 'Leave blank to keep current' : 'Min. 8 characters'}
             />
           </Field>
           <Field label="Active">

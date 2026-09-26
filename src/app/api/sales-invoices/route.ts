@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
 interface InvLine { soItemId: string | null; itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
@@ -69,6 +69,10 @@ export async function POST(req: Request) {
       ? await db.salesOrder.findFirst({ where: { id: body.salesOrderId, companyId }, include: { items: true } })
       : null
     if (body.salesOrderId && !so) throw new ApiError('Sales order not found', 404)
+    if (so && (so.status === 'DRAFT' || so.status === 'CANCELLED')) {
+      throw new ApiError(`Cannot invoice a ${so.status} sales order`, 400)
+    }
+    if (so && so.customerId !== customerId) throw new ApiError('Sales order belongs to a different customer', 400)
 
     const provided: any[] | null = Array.isArray(body.lines) && body.lines.length ? body.lines : null
 
@@ -108,6 +112,7 @@ export async function POST(req: Request) {
     // HSN from item master
     const itemIds = Array.from(new Set(lines.map((l) => l.itemId)))
     const masterItems = await db.item.findMany({ where: { companyId, id: { in: itemIds } }, select: { id: true, hsn: true } })
+    if (masterItems.length !== itemIds.length) throw new ApiError('One or more line items were not found', 400)
     const hsnMap = new Map(masterItems.map((m) => [m.id, m.hsn]))
 
     const date = body.date ? new Date(body.date) : new Date()
@@ -116,7 +121,7 @@ export async function POST(req: Request) {
       : new Date(date.getTime() + (customer.paymentTermsDays || 30) * 24 * 60 * 60 * 1000)
     const placeOfSupply = body.placeOfSupply ?? customer.state ?? null
 
-    const interState = isInterState(company.stateCode, customer.stateCode)
+    const interState = isInterStateParty(company ?? {}, customer ?? {})
     const totals = computeGst(lines, interState)
 
     const created = await db.$transaction(async (tx) => {
@@ -158,7 +163,11 @@ export async function POST(req: Request) {
       if (so) {
         if (lines.every((l) => l.soItemId)) {
           for (const l of lines) {
-            await tx.salesOrderItem.update({ where: { id: l.soItemId as string }, data: { invoicedQty: { increment: l.qty } } })
+            const si = await tx.salesOrderItem.update({ where: { id: l.soItemId as string }, data: { invoicedQty: { increment: l.qty } } })
+            // A concurrent invoice on the same SO line makes the later one overshoot → roll back
+            if (r2(si.invoicedQty) > r2(si.qty) + 0.005) {
+              throw new ApiError(`Invoice exceeds the sales order quantity for a line (ordered ${r2(si.qty)}, invoiced would be ${r2(si.invoicedQty)})`, 409)
+            }
           }
         } else {
           // Explicit lines against an SO: consume remaining qty per itemId, in SO line order
@@ -170,7 +179,10 @@ export async function POST(req: Request) {
             const remaining = r2(si.qty - si.invoicedQty)
             const apply = Math.min(want, Math.max(0, remaining))
             if (apply > 0) {
-              await tx.salesOrderItem.update({ where: { id: si.id }, data: { invoicedQty: { increment: apply } } })
+              const upd = await tx.salesOrderItem.update({ where: { id: si.id }, data: { invoicedQty: { increment: apply } } })
+              if (r2(upd.invoicedQty) > r2(upd.qty) + 0.005) {
+                throw new ApiError(`Invoice exceeds the sales order quantity for a line (ordered ${r2(upd.qty)}, invoiced would be ${r2(upd.invoicedQty)})`, 409)
+              }
               byItem.set(si.itemId, r2(want - apply))
             }
           }

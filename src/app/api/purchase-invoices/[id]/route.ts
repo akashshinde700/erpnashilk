@@ -56,9 +56,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const updated = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
-      const u = await tx.purchaseInvoice.update({
-        where: { id: pinv.id }, data: { status: 'CANCELLED' }, include: { items: true },
+      // Atomic claim: only while still unpaid, so a payment landing concurrently can't be lost
+      const claim = await tx.purchaseInvoice.updateMany({
+        where: { id: pinv.id, status: { in: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] }, paidAmount: { lte: 0.005 } },
+        data: { status: 'CANCELLED' },
       })
+      if (claim.count !== 1) throw new ApiError('This invoice was just changed (payment or cancel) — refresh and try again', 409)
+      // POST moved a fully-received PO to INVOICED — revert when no other live invoice remains
+      if (pinv.poId) {
+        const others = await tx.purchaseInvoice.count({ where: { poId: pinv.poId, status: { not: 'CANCELLED' } } })
+        if (!others) await tx.purchaseOrder.updateMany({ where: { id: pinv.poId, status: 'INVOICED' }, data: { status: 'RECEIVED' } })
+      }
+      const u = await tx.purchaseInvoice.findUniqueOrThrow({ where: { id: pinv.id }, include: { items: true } })
       await logAudit(tx, {
         companyId, userName: body.userName, action: 'CANCEL', entity: 'PurchaseInvoice',
         entityId: pinv.id, details: `Cancelled ${pinv.number} (grand total ${r2(pinv.grandTotal)})`,

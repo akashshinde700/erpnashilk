@@ -44,26 +44,27 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (tx) => {
       const t = tx as any
-      // Reverse the invoice effect
+      // Conditional delete first — a concurrent void of the same payment gets 409 instead of reversing twice
+      const del = await tx.payment.deleteMany({ where: { id, companyId } })
+      if (del.count !== 1) throw new ApiError('This payment was just changed by someone else — refresh and try again', 409)
+
+      // Reverse the invoice effect (relative decrement, status derived from the updated row)
       if (current.invoiceId && current.invoiceType) {
-        if (current.invoiceType === 'SALES') {
-          const inv = await tx.salesInvoice.findFirst({ where: { id: current.invoiceId, companyId } })
-          if (inv) {
-            const newPaid = r2(inv.paidAmount - current.amount)
-            const newStatus = inv.status === 'CANCELLED' ? inv.status : (newPaid <= 0.01 ? 'UNPAID' : 'PARTIALLY_PAID')
-            await tx.salesInvoice.update({ where: { id: inv.id }, data: { paidAmount: newPaid, status: newStatus } })
-          }
-        } else {
-          const inv = await tx.purchaseInvoice.findFirst({ where: { id: current.invoiceId, companyId } })
-          if (inv) {
-            const newPaid = r2(inv.paidAmount - current.amount)
-            const newStatus = inv.status === 'CANCELLED' ? inv.status : (newPaid <= 0.01 ? 'UNPAID' : 'PARTIALLY_PAID')
-            await tx.purchaseInvoice.update({ where: { id: inv.id }, data: { paidAmount: newPaid, status: newStatus } })
-          }
+        const invModel = current.invoiceType === 'SALES' ? t.salesInvoice : t.purchaseInvoice
+        const dec = await invModel.updateMany({
+          where: { id: current.invoiceId, companyId },
+          data: { paidAmount: { decrement: current.amount } },
+        })
+        if (dec.count === 1) {
+          const inv = await invModel.findUniqueOrThrow({ where: { id: current.invoiceId } })
+          const newPaid = r2(inv.paidAmount)
+          const newStatus = inv.status === 'CANCELLED'
+            ? inv.status
+            : (newPaid <= 0.01 ? 'UNPAID' : (inv.grandTotal - newPaid <= 0.01 ? 'PAID' : 'PARTIALLY_PAID'))
+          await invModel.update({ where: { id: inv.id }, data: { paidAmount: Math.max(0, newPaid), status: newStatus } })
         }
       }
 
-      await tx.payment.delete({ where: { id } })
       await logAudit(t, {
         companyId, userName: body?.userName, action: 'CANCEL', entity: 'Payment', entityId: id,
         details: `Payment ${current.number} voided — invoice balance restored`,

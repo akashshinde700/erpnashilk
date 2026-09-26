@@ -49,7 +49,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       data.paymentTermsDays = Math.round(num(body.paymentTermsDays, 30, 'paymentTermsDays'))
     }
     if (body.creditLimit !== undefined) data.creditLimit = num(body.creditLimit, 0, 'creditLimit')
-    if (body.status !== undefined) data.status = String(body.status)
+    if (body.status !== undefined) {
+      const st = String(body.status)
+      if (!['ACTIVE', 'INACTIVE'].includes(st)) throw new ApiError('status must be ACTIVE or INACTIVE', 400)
+      data.status = st
+    }
 
     const customer = await db.$transaction(async (tx) => {
       const updated = await tx.customer.update({ where: { id: existing.id }, data })
@@ -79,11 +83,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const existing = await db.customer.findFirst({ where: { id, companyId } })
     if (!existing) throw new ApiError('Customer not found', 404)
 
-    const [soRef, invRef] = await Promise.all([
-      db.salesOrder.findFirst({ where: { customerId: id, companyId } }),
-      db.salesInvoice.findFirst({ where: { customerId: id, companyId } }),
+    const [soRef, invRef, enqRef, qtRef, payRef] = await Promise.all([
+      db.salesOrder.findFirst({ where: { customerId: id, companyId }, select: { id: true } }),
+      db.salesInvoice.findFirst({ where: { customerId: id, companyId }, select: { id: true } }),
+      db.enquiry.findFirst({ where: { customerId: id, companyId }, select: { id: true } }),
+      db.quotation.findFirst({ where: { customerId: id, companyId }, select: { id: true } }),
+      db.payment.findFirst({ where: { customerId: id, companyId }, select: { id: true } }),
     ])
-    if (soRef || invRef) {
+    if (soRef || invRef || enqRef || qtRef || payRef) {
       throw new ApiError('Customer is used in documents; deactivate instead', 409)
     }
 

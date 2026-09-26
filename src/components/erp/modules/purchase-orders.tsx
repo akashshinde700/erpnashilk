@@ -262,10 +262,17 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
             </Button>
           )}
           {r.status === 'PENDING_APPROVAL' && (
-            <Button variant="outline" size="sm" className="h-7 text-emerald-700"
-              onClick={() => void act(r, { action: 'approve', userName: 'Purchase Manager' }, `PO ${r.number} approved`)}>
-              <Check className="h-3.5 w-3.5 mr-0.5" />Approve
-            </Button>
+            <>
+              <Button variant="outline" size="sm" className="h-7 text-emerald-700"
+                onClick={() => void act(r, { action: 'approve' }, `PO ${r.number} approved`)}>
+                <Check className="h-3.5 w-3.5 mr-0.5" />Approve
+              </Button>
+              <ConfirmAction
+                trigger={<Button variant="outline" size="sm" className="h-7 text-red-600">Reject</Button>}
+                title="Reject PO?" message={`Send ${r.number} back as rejected? The buyer can revise and raise a new PO.`} tone="destructive"
+                onConfirm={() => act(r, { action: 'reject' }, `PO ${r.number} rejected`)}
+              />
+            </>
           )}
           {!['CANCELLED', 'INVOICED'].includes(r.status) && (
             <ConfirmAction

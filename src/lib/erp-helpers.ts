@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
+import { headers } from 'next/headers'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { canAccessModule } from '@/lib/erp-constants'
+import { passwordVersion } from '@/lib/session'
 
 // ============ Consistent API responses ============
 
@@ -14,11 +17,62 @@ export function fail(message: string, status = 400, code = 'ERR') {
 
 // ============ Company (tenant) resolution ============
 
+// Only the platform SUPER_ADMIN may act on a company other than their own.
+export const PLATFORM_ROLE = 'SUPER_ADMIN'
+
+/** User columns safe to return from the API (never the password hash). */
+export const USER_PUBLIC = {
+  id: true, companyId: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, updatedAt: true,
+} as const
+
+export interface SessionUser {
+  id: string
+  name: string
+  email: string
+  role: string
+  companyId: string
+}
+
+const sessionCache = new WeakMap<Request, Promise<SessionUser>>()
+
+/**
+ * The signed-in user, re-read from the DB on every request (middleware has already
+ * verified the cookie signature and set x-erp-user-id / x-erp-role). Rejects
+ * deactivated users and role changes made after the session was issued.
+ */
+export function sessionUser(req: Request): Promise<SessionUser> {
+  let p = sessionCache.get(req)
+  if (!p) {
+    p = (async () => {
+      const id = req.headers.get('x-erp-user-id')
+      if (!id) throw new ApiError('Unauthorized — sign in to continue', 401)
+      const u = await db.user.findUnique({
+        where: { id },
+        select: { id: true, name: true, email: true, role: true, companyId: true, active: true, passwordHash: true },
+      })
+      if (!u || !u.active) throw new ApiError('Your session has ended — sign in again', 401)
+      if (u.role !== req.headers.get('x-erp-role')) throw new ApiError('Your role was changed — sign in again', 401)
+      if (req.headers.get('x-erp-pv') !== passwordVersion(u.passwordHash)) throw new ApiError('Your password was changed — sign in again', 401)
+      return { id: u.id, name: u.name, email: u.email, role: u.role, companyId: u.companyId }
+    })()
+    sessionCache.set(req, p)
+  }
+  return p
+}
+
+/**
+ * Tenant for this request: the requested company (body, then ?companyId, then the
+ * x-company-id header), defaulting to the user's own company. Everyone except the
+ * platform SUPER_ADMIN is pinned to their own company.
+ */
 export async function resolveCompanyId(req: Request, bodyCompanyId?: string): Promise<string | null> {
+  const user = await sessionUser(req)
   const { searchParams } = new URL(req.url)
-  const cid = bodyCompanyId || searchParams.get('companyId') || req.headers.get('x-company-id')
-  if (!cid) return null
-  const company = await db.company.findUnique({ where: { id: cid } })
+  const cid = bodyCompanyId || searchParams.get('companyId') || req.headers.get('x-company-id') || user.companyId
+  if (cid !== user.companyId && user.role !== PLATFORM_ROLE) {
+    throw new ApiError('You do not have access to this company', 403)
+  }
+  const company = await db.company.findUnique({ where: { id: cid }, select: { id: true } })
   return company ? company.id : null
 }
 
@@ -78,11 +132,31 @@ export function requireWrite(req: Request, moduleKey: string): RequestActor {
 
 export function handleError(e: unknown) {
   if (e instanceof ApiError) return fail(e.message, e.status)
-  const msg = e instanceof Error ? e.message : 'Internal server error'
-  if (msg.includes('Unique constraint')) return fail('Duplicate record: code/number already exists', 409)
-  if (msg.includes('Record to update not found') || msg.includes('No record was found')) return fail('Record not found', 404)
-  console.error('[API]', msg)
-  return fail(msg, 500)
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    if (e.code === 'P2002') return fail('Duplicate record: code/number already exists', 409)
+    if (e.code === 'P2025') return fail('Record not found', 404)
+    if (e.code === 'P2003') return fail('This record is used by other documents and cannot be removed or changed', 409)
+    if (e.code === 'P2028' || e.code === 'P2034') return fail('The server was busy — please try again', 503)
+  }
+  if (e instanceof SyntaxError) return fail('Invalid request body', 400)
+  // Details go to the server log only; internals are never sent to the client.
+  console.error('[API]', e)
+  return fail('Something went wrong on the server — please try again', 500)
+}
+
+/**
+ * Atomically move a document from one of `from` statuses to `to` inside a transaction.
+ * The conditional update locks the row, so two concurrent post/dispatch/cancel calls
+ * cannot both pass a status check that was read earlier.
+ */
+export async function claimStatus(
+  model: { updateMany: (a: never) => Promise<{ count: number }> },
+  id: string,
+  from: string[],
+  to: string,
+) {
+  const r = await model.updateMany({ where: { id, status: { in: from } }, data: { status: to } } as never)
+  if (r.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
 }
 
 // ============ Financial year + document numbering ============
@@ -108,25 +182,27 @@ export const DOC_PREFIX: Record<string, string> = {
  * Must be called inside the same transaction/interactive tx as record creation.
  */
 export async function nextDocNumber(tx: {
-  numberSeq: {
-    findUnique: (a: unknown) => Promise<{ nextNumber: number } | null>
-    create: (a: unknown) => Promise<unknown>
-    update: (a: unknown) => Promise<unknown>
-  }
+  numberSeq: { upsert: (a: never) => Promise<{ nextNumber: number }> }
 }, companyId: string, docType: string, date: Date = new Date()): Promise<string> {
   const fy = financialYearOf(date)
   const prefix = DOC_PREFIX[docType] || docType
-  const existing = await tx.numberSeq.findUnique({
+  // Increment first, then derive the number from the row we just locked: concurrent
+  // transactions queue on the same NumberSeq row and each gets a distinct number.
+  const bump = () => tx.numberSeq.upsert({
     where: { companyId_docType_financialYear: { companyId, docType, financialYear: fy } },
-  })
-  let n: number
-  if (existing) {
-    await tx.numberSeq.update({ where: { companyId_docType_financialYear: { companyId, docType, financialYear: fy } }, data: { nextNumber: { increment: 1 } } })
-    n = existing.nextNumber
-  } else {
-    await tx.numberSeq.create({ data: { companyId, docType, prefix, financialYear: fy, nextNumber: 2 } })
-    n = 1
+    create: { companyId, docType, prefix, financialYear: fy, nextNumber: 2 },
+    update: { nextNumber: { increment: 1 } },
+  } as never)
+  let seq: { nextNumber: number }
+  try {
+    seq = await bump()
+  } catch (e) {
+    // First number of a new (company, docType, FY): a concurrent request created the row
+    // between our check and insert. The row exists now, so the retry takes the update path.
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e
+    seq = await bump()
   }
+  const n = seq.nextNumber - 1
   return `${prefix}-${fy}-${String(n).padStart(6, '0')}`
 }
 
@@ -159,7 +235,16 @@ export const r2 = (n: number) => Math.round(n * 100) / 100
 /** isInterState if company stateCode differs from party stateCode */
 export function isInterState(companyState?: string | null, partyState?: string | null): boolean {
   if (!companyState || !partyState) return false
-  return companyState !== partyState
+  return companyState.trim().toLowerCase() !== partyState.trim().toLowerCase()
+}
+
+/** Inter-state check for a company/party pair: GST state codes when both have one, else state names. */
+export function isInterStateParty(
+  company: { stateCode?: string | null; state?: string | null },
+  party: { stateCode?: string | null; state?: string | null },
+): boolean {
+  if (company.stateCode && party.stateCode) return isInterState(company.stateCode, party.stateCode)
+  return isInterState(company.state, party.state)
 }
 
 // ============ Stock posting (immutable ledger) ============
@@ -183,6 +268,7 @@ interface MinimalTx {
   stockLedger: { create: (a: unknown) => Promise<unknown> }
   stockBalance: {
     findUnique: (a: unknown) => Promise<{ id: string; qty: number; avgRate: number } | null>
+    updateMany: (a: unknown) => Promise<unknown>
     upsert: (a: unknown) => Promise<unknown>
     update: (a: unknown) => Promise<unknown>
   }
@@ -200,6 +286,12 @@ export async function postStock(tx: MinimalTx, input: StockPostInput): Promise<n
   const rate = input.rate || 0
   const date = input.date || new Date()
 
+  // The no-op write takes the row lock first, so the read below sees the latest
+  // committed balance and concurrent movements on one item+warehouse serialize.
+  await tx.stockBalance.updateMany({
+    where: { itemId: input.itemId, warehouseId: input.warehouseId },
+    data: { qty: { increment: 0 } },
+  })
   const bal = await tx.stockBalance.findUnique({
     where: { itemId_warehouseId: { itemId: input.itemId, warehouseId: input.warehouseId } },
   })
@@ -207,11 +299,17 @@ export async function postStock(tx: MinimalTx, input: StockPostInput): Promise<n
   const prevRate = bal?.avgRate || 0
   const newQty = r2(prevQty + qtyIn - qtyOut)
 
+  if (qtyOut > 0 && newQty < 0) {
+    const it = await tx.item.findUnique({ where: { id: input.itemId } })
+    throw new ApiError(
+      `Insufficient stock for ${it ? `${it.code} ${it.name}` : 'item'}: ${r2(prevQty)} available in this warehouse, ${r2(qtyOut)} required`,
+      409,
+    )
+  }
+
   let newRate = prevRate
   if (qtyIn > 0 && rate > 0) {
-    newRate = r2((prevQty * prevRate + qtyIn * rate) / (prevQty + qtyIn))
-  } else if (prevQty <= 0 && qtyIn === 0) {
-    newRate = rate
+    newRate = prevQty > 0 ? r2((prevQty * prevRate + qtyIn * rate) / (prevQty + qtyIn)) : r2(rate)
   }
 
   await tx.stockLedger.create({
@@ -265,12 +363,24 @@ export async function availableQty(tx: {
 
 // ============ Audit + notifications ============
 
+/** Name of the signed-in user for this request (set by middleware from the verified session). */
+export async function trustedUserName(): Promise<string | null> {
+  try {
+    const raw = (await headers()).get('x-erp-user-name')
+    return raw ? decodeURIComponent(raw) : null
+  } catch {
+    return null // outside a request (scripts)
+  }
+}
+
 export async function logAudit(tx: {
   auditLog: { create: (a: unknown) => Promise<unknown> }
 }, input: { companyId: string; userName?: string; action: string; entity: string; entityId?: string; details?: string }) {
+  // The session identity always wins over any client-supplied name.
+  const userName = (await trustedUserName()) || input.userName || 'system'
   await tx.auditLog.create({
     data: {
-      companyId: input.companyId, userName: input.userName || 'system', action: input.action,
+      companyId: input.companyId, userName, action: input.action,
       entity: input.entity, entityId: input.entityId, details: input.details,
     },
   })

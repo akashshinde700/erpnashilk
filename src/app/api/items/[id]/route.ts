@@ -52,7 +52,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.sellingPrice !== undefined) data.sellingPrice = num(body.sellingPrice, 0, 'sellingPrice')
     if (body.standardCost !== undefined) data.standardCost = num(body.standardCost, 0, 'standardCost')
     if (body.description !== undefined) data.description = body.description || null
-    if (body.status !== undefined) data.status = String(body.status)
+    if (body.status !== undefined) {
+      const st = String(body.status)
+      if (!['ACTIVE', 'INACTIVE'].includes(st)) throw new ApiError('status must be ACTIVE or INACTIVE', 400)
+      data.status = st
+    }
 
     const item = await db.$transaction(async (tx) => {
       const updated = await tx.item.update({ where: { id: existing.id }, data })

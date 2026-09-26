@@ -70,6 +70,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     if (bal) {
       throw new ApiError('Warehouse has stock balances; clear/move stock before deleting', 409)
     }
+    // warehouseId is a plain string on these models (no FK) — block instead of orphaning history
+    const [ledRef, woRef, grnRef, dcRef] = await Promise.all([
+      db.stockLedger.findFirst({ where: { warehouseId: id, companyId }, select: { id: true } }),
+      db.workOrder.findFirst({ where: { warehouseId: id, companyId }, select: { id: true } }),
+      db.grn.findFirst({ where: { warehouseId: id, companyId }, select: { id: true } }),
+      db.deliveryChallan.findFirst({ where: { warehouseId: id, companyId }, select: { id: true } }),
+    ])
+    if (ledRef || woRef || grnRef || dcRef) {
+      throw new ApiError('Warehouse is used in stock movements or documents and cannot be deleted', 409)
+    }
 
     await db.$transaction(async (tx) => {
       await tx.warehouse.delete({ where: { id } })

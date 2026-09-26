@@ -46,11 +46,12 @@ interface CompanyForm {
   logoText: string
   adminName: string
   adminEmail: string
+  adminPassword: string
 }
 
 const EMPTY_FORM: CompanyForm = {
   name: '', gstin: '', pan: '', addressLine: '', city: '', state: '', stateCode: '',
-  phone: '', email: '', logoText: '', adminName: '', adminEmail: '',
+  phone: '', email: '', logoText: '', adminName: '', adminEmail: '', adminPassword: '',
 }
 
 const toForm = (c: CompanyRow): CompanyForm => ({
@@ -66,6 +67,7 @@ const toForm = (c: CompanyRow): CompanyForm => ({
   logoText: c.logoText || '',
   adminName: '',
   adminEmail: '',
+  adminPassword: '',
 })
 
 // Company Setup module — tenant-scoped admin screen (ignores companyId except for display).
@@ -78,6 +80,14 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
   const [editId, setEditId] = React.useState<string | null>(null)
   const [form, setForm] = React.useState<CompanyForm>(EMPTY_FORM)
   const [saving, setSaving] = React.useState(false)
+  // Creating tenants is a platform-admin action (the server enforces this too).
+  const [isPlatformAdmin, setIsPlatformAdmin] = React.useState(false)
+  React.useEffect(() => {
+    try {
+      const s = JSON.parse(window.localStorage.getItem('erp_user') || '{}') as { user?: { role?: string } }
+      setIsPlatformAdmin(s.user?.role === 'SUPER_ADMIN')
+    } catch { /* ignore */ }
+  }, [])
 
   const set = (k: keyof CompanyForm) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
   const textProps = (k: keyof CompanyForm) => ({
@@ -120,7 +130,7 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
       logoText: form.logoText.trim(),
     }
     if (!includeAdmin) return base
-    return { ...base, adminName: form.adminName.trim(), adminEmail: form.adminEmail.trim() }
+    return { ...base, adminName: form.adminName.trim(), adminEmail: form.adminEmail.trim(), adminPassword: form.adminPassword }
   }
 
   async function submitCreate() {
@@ -130,6 +140,10 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
     }
     if (form.gstin.trim() && form.gstin.trim().length !== 15) {
       toast.error('GSTIN must be exactly 15 characters')
+      return
+    }
+    if (form.adminEmail.trim() && form.adminPassword.length < 8) {
+      toast.error('Admin password must be at least 8 characters')
       return
     }
     setSaving(true)
@@ -291,12 +305,12 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
       <PageHeader
         title="Company Setup"
         description="Manage tenant companies — profile, GST identity and admin access."
-        actions={
+        actions={isPlatformAdmin ? (
           <Button onClick={openCreate} className="h-9">
             <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
             New Tenant
           </Button>
-        }
+        ) : undefined}
       />
 
       <div className="grid gap-4 sm:grid-cols-3 mb-4">
@@ -350,7 +364,10 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
           </Field>
           <Field label="Admin email">
             <TextInput {...textProps('adminEmail')} type="email" placeholder="admin@newtenant.in" />
-            <p className="text-[11px] text-muted-foreground">An admin login is created with password demo1234</p>
+          </Field>
+          <Field label="Admin password">
+            <TextInput {...textProps('adminPassword')} type="password" autoComplete="new-password" placeholder="Min. 8 characters" />
+            <p className="text-[11px] text-muted-foreground">Share it with the admin securely; they can change it after signing in.</p>
           </Field>
         </div>
       </FormDialog>

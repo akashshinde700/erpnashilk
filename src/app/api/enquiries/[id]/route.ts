@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 // Status machine: OPEN → QUOTED | WON | LOST | CLOSED
 const NEXT_STATUSES = ['QUOTED', 'WON', 'LOST', 'CLOSED']
@@ -88,6 +88,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const updated = await db.$transaction(async (tx) => {
       const t = tx as any
+      // Atomic guard: the OPEN status read above must still hold on the locked row
+      if (statusChange) {
+        await claimStatus(t.enquiry, id, ['OPEN'], body.status)
+      } else {
+        const g = await tx.enquiry.updateMany({ where: { id, status: current.status }, data: { updatedAt: new Date() } })
+        if (g.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
+      }
       const data: any = {}
       if (body.customerId !== undefined) data.customerId = body.customerId
       if (body.date !== undefined) data.date = new Date(body.date)
@@ -132,7 +139,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (tx) => {
       const t = tx as any
-      await tx.enquiry.delete({ where: { id } })
+      const del = await tx.enquiry.deleteMany({ where: { id, status: 'OPEN' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await logAudit(t, {
         companyId, userName: body?.userName, action: 'DELETE', entity: 'Enquiry',
         entityId: id, details: `Deleted enquiry ${current.number}`,

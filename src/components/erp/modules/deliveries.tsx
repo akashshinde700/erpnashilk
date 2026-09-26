@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Plus, Printer, Trash2, Truck } from 'lucide-react'
+import { Ban, Plus, Printer, Trash2, Truck } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, NumberInput,
   PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
@@ -102,6 +102,14 @@ export default function DeliveriesModule({ companyId }: { companyId: string }) {
       toast.success(`Challan ${row.number} dispatched — stock updated`)
       void list.refetch()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to dispatch') }
+  }
+
+  async function cancel(row: DeliveryRow) {
+    try {
+      await apiPatch(`/api/deliveries/${row.id}`, { action: 'cancel', companyId })
+      toast.success(`Challan ${row.number} cancelled`)
+      void list.refetch()
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to cancel') }
   }
 
   async function remove(row: DeliveryRow) {
@@ -217,6 +225,10 @@ export default function DeliveriesModule({ companyId }: { companyId: string }) {
                 trigger={<Button size="sm" className="h-7"><Truck className="h-3.5 w-3.5 mr-1" />Dispatch</Button>}
                 title="Dispatch challan?" message={`Dispatch ${r.number}? This posts stock OUT of the warehouse.`}
                 onConfirm={() => dispatch(r)}
+              />
+              <ConfirmAction
+                trigger={<Button variant="ghost" size="sm" className="h-7" title="Cancel challan (keeps the record)"><Ban className="h-3.5 w-3.5" /></Button>}
+                title="Cancel challan?" message={`Cancel draft challan ${r.number}? It stays in the list as CANCELLED.`} tone="destructive" onConfirm={() => cancel(r)}
               />
               <ConfirmAction
                 trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><Trash2 className="h-3.5 w-3.5" /></Button>}

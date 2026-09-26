@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, computeGst, isInterState, logAudit, ApiError, r2, requireWrite,
+  ok, handleError, companyRequired, computeGst, isInterStateParty, logAudit, ApiError, r2, requireWrite, trustedUserName, claimStatus,
 } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
@@ -89,6 +89,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         if (po.status !== 'DRAFT') throw new ApiError(`Cannot submit: PO is ${po.status}`, 400)
         const updated = await db.$transaction(async (txRaw) => {
         const tx = txRaw as HelperTx
+          await claimStatus((tx as any).purchaseOrder, po.id, ['DRAFT'], 'PENDING_APPROVAL')
           const u = await tx.purchaseOrder.update({
             where: { id: po.id }, data: { status: 'PENDING_APPROVAL' }, include: { items: true },
           })
@@ -105,14 +106,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         if (po.status !== 'PENDING_APPROVAL') throw new ApiError(`Cannot approve: PO is ${po.status}`, 400)
         const updated = await db.$transaction(async (txRaw) => {
         const tx = txRaw as HelperTx
+          await claimStatus((tx as any).purchaseOrder, po.id, ['PENDING_APPROVAL'], 'APPROVED')
           const u = await tx.purchaseOrder.update({
             where: { id: po.id },
-            data: { status: 'APPROVED', approvedBy: body.userName || 'system', approvedAt: new Date() },
+            data: { status: 'APPROVED', approvedBy: (await trustedUserName()) || 'system', approvedAt: new Date() },
             include: { items: true },
           })
           await logAudit(tx, {
             companyId, userName: body.userName, action: 'APPROVE', entity: 'PurchaseOrder',
-            entityId: po.id, details: `${po.number} approved by ${body.userName || 'system'}`,
+            entityId: po.id, details: `${po.number} approved`,
           })
           return u
         })
@@ -121,9 +123,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       if (action === 'reject') {
         if (po.status !== 'PENDING_APPROVAL') throw new ApiError(`Cannot reject: PO is ${po.status}`, 400)
-        const note = `Rejected by ${body.userName || 'system'}${body.notes ? `: ${body.notes}` : ''}`
+        const note = `Rejected by ${(await trustedUserName()) || 'system'}${body.notes ? `: ${body.notes}` : ''}`
         const updated = await db.$transaction(async (txRaw) => {
         const tx = txRaw as HelperTx
+          await claimStatus((tx as any).purchaseOrder, po.id, ['PENDING_APPROVAL'], 'CANCELLED')
           const u = await tx.purchaseOrder.update({
             where: { id: po.id },
             data: { status: 'CANCELLED', notes: po.notes ? `${po.notes} | ${note}` : note },
@@ -145,6 +148,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         }
         const updated = await db.$transaction(async (txRaw) => {
         const tx = txRaw as HelperTx
+          await claimStatus((tx as any).purchaseOrder, po.id, ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'], 'CANCELLED')
           const u = await tx.purchaseOrder.update({
             where: { id: po.id }, data: { status: 'CANCELLED' }, include: { items: true },
           })
@@ -179,7 +183,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const company = await db.company.findUnique({ where: { id: companyId } })
     if (!company) throw new ApiError('Company not found', 404)
 
-    const interState = isInterState(company.state, supplier.state)
+    const interState = isInterStateParty(company ?? {}, supplier ?? {})
     const data: Prisma.PurchaseOrderUpdateInput = { supplier: { connect: { id: supplier.id } } }
     if (body.orderDate) data.orderDate = toDate(body.orderDate) || po.orderDate
     if (body.expectedDate !== undefined) data.expectedDate = toDate(body.expectedDate)
@@ -239,8 +243,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (txRaw) => {
         const tx = txRaw as HelperTx
-      await tx.purchaseOrderItem.deleteMany({ where: { poId: po.id } })
-      await tx.purchaseOrder.delete({ where: { id: po.id } })
+      // Conditional delete (items cascade) — a concurrent submit makes this a no-op → 409
+      const del = await tx.purchaseOrder.deleteMany({ where: { id: po.id, status: 'DRAFT' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await logAudit(tx, {
         companyId, userName: body.userName, action: 'DELETE', entity: 'PurchaseOrder',
         entityId: po.id, details: `Deleted ${po.number}`,

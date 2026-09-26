@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { apiPost } from '@/lib/use-api'
-import { ROLE_LABEL } from '@/lib/erp-constants'
 import { toast } from 'sonner'
 import { Eye, EyeOff, Factory, ScrollText, Loader2, Percent, ShieldCheck } from 'lucide-react'
 
@@ -25,14 +24,6 @@ export interface LoginCompany {
   gstin: string | null
   city: string | null
 }
-
-const DEMO_ACCOUNTS: { email: string; role: string }[] = [
-  { email: 'rajesh@acmeprecision.in', role: 'TENANT_ADMIN' },
-  { email: 'priya@acmeprecision.in', role: 'SALES_MANAGER' },
-  { email: 'amit@acmeprecision.in', role: 'PURCHASE_MANAGER' },
-  { email: 'suresh@acmeprecision.in', role: 'PRODUCTION_MANAGER' },
-  { email: 'sarita@acmeprecision.in', role: 'ACCOUNTANT' },
-]
 
 const FEATURES = [
   { icon: ScrollText, title: 'Order to cash', sub: 'Enquiries → quotations → orders → invoices' },
@@ -188,29 +179,6 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: LoginUser, co
                 )}
               </Button>
             </form>
-
-            <div className="mt-6 border-t pt-4">
-              <p className="text-xs text-muted-foreground text-center">
-                Demo accounts — password: <span className="font-mono font-semibold">demo1234</span>
-              </p>
-              <div className="mt-3 flex flex-wrap justify-center gap-1.5">
-                {DEMO_ACCOUNTS.map((a) => (
-                  <button
-                    key={a.email}
-                    type="button"
-                    onClick={() => {
-                      setEmail(a.email)
-                      setError(null)
-                    }}
-                    disabled={loading}
-                    title={a.email}
-                    className="rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-emerald-600 hover:bg-emerald-50 hover:text-emerald-800 dark:hover:bg-emerald-950 dark:hover:text-emerald-200 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
-                  >
-                    {ROLE_LABEL[a.role] || a.role}
-                  </button>
-                ))}
-              </div>
-            </div>
           </CardContent>
         </Card>
       </main>

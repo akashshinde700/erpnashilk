@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, logAudit, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -77,11 +77,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
       const updated = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
-        const u = await tx.purchaseRequisition.update({
-          where: { id: pr.id },
-          data: { status: spec.to },
-          include: { items: true },
-        })
+        await claimStatus((tx as any).purchaseRequisition, pr.id, spec.from, spec.to)
+        const u = await tx.purchaseRequisition.findUniqueOrThrow({ where: { id: pr.id }, include: { items: true } })
         await logAudit(tx, {
           companyId, userName: body.userName, action: spec.audit, entity: 'PurchaseRequisition',
           entityId: pr.id, details: `${pr.number} ${spec.label} → ${spec.to}`,
@@ -138,8 +135,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
-      await tx.purchaseRequisitionItem.deleteMany({ where: { prId: pr.id } })
-      await tx.purchaseRequisition.delete({ where: { id: pr.id } })
+      // Conditional delete (items cascade) — a concurrent approve makes this a no-op → 409
+      const del = await tx.purchaseRequisition.deleteMany({ where: { id: pr.id, status: 'PENDING' } })
+      if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await logAudit(tx, {
         companyId, userName: body.userName, action: 'DELETE', entity: 'PurchaseRequisition',
         entityId: pr.id, details: `Deleted ${pr.number}`,

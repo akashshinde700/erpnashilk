@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
-import { requireWrite, ApiError, handleError, logAudit, ok } from '@/lib/erp-helpers'
-import { DEMO_PASSWORD, hashPassword } from '@/lib/password'
+import { requireWrite, ApiError, handleError, logAudit, ok, sessionUser, PLATFORM_ROLE } from '@/lib/erp-helpers'
+import { hashPassword, passwordProblem } from '@/lib/password'
 
 const clean = (v: unknown): string | null => {
   if (v === null || v === undefined) return null
@@ -8,11 +8,14 @@ const clean = (v: unknown): string | null => {
   return s === '' ? null : s
 }
 
-// GET /api/companies — list all tenants (no companyId filter; tenant switcher + Company Setup module)
-// Row shape: scalars + phone, email, createdAt, userCount, itemCount (same as before + extras — backwards compatible).
-export async function GET() {
+// GET /api/companies — tenants visible to the caller: every tenant for the platform
+// SUPER_ADMIN, otherwise only the caller's own company.
+// Row shape: scalars + phone, email, createdAt, userCount, itemCount.
+export async function GET(req: Request) {
   try {
+    const me = await sessionUser(req)
     const companies = await db.company.findMany({
+      where: me.role === PLATFORM_ROLE ? {} : { id: me.companyId },
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -53,10 +56,13 @@ export async function GET() {
   }
 }
 
-// POST /api/companies — create a tenant (company + 3 default warehouses + optional TENANT_ADMIN user)
+// POST /api/companies — create a tenant (company + 3 default warehouses + optional TENANT_ADMIN user).
+// Platform SUPER_ADMIN only.
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'companies')
+    const me = await sessionUser(req)
+    if (me.role !== PLATFORM_ROLE) throw new ApiError('Only the platform administrator can create companies', 403)
     const body = await req.json().catch(() => ({}))
     const name = clean(body?.name)
     if (!name) throw new ApiError('Company name is required', 400)
@@ -64,15 +70,18 @@ export async function POST(req: Request) {
     const gstin = clean(body?.gstin)
     if (gstin && gstin.length !== 15) throw new ApiError('Invalid GSTIN', 400)
 
-    // Duplicate name guard (case-insensitive; tenant table is small)
-    const lower = name.toLowerCase()
-    const all = await db.company.findMany({ select: { name: true } })
-    if (all.some((c) => c.name.trim().toLowerCase() === lower)) {
+    // Duplicate name guard (MySQL's default collation compares case-insensitively)
+    if (await db.company.findFirst({ where: { name }, select: { id: true } })) {
       throw new ApiError('Company with this name already exists', 409)
     }
 
-    const adminEmail = clean(body?.adminEmail)
+    const adminEmail = clean(body?.adminEmail)?.toLowerCase() || null
     const adminName = clean(body?.adminName) || 'Admin'
+    const adminPassword = typeof body?.adminPassword === 'string' ? body.adminPassword : ''
+    if (adminEmail) {
+      const problem = passwordProblem(adminPassword)
+      if (problem) throw new ApiError(`Admin ${problem.charAt(0).toLowerCase()}${problem.slice(1)}`, 400)
+    }
 
     const company = await db.$transaction(async (tx) => {
       const created = await tx.company.create({
@@ -107,7 +116,7 @@ export async function POST(req: Request) {
             name: adminName,
             email: adminEmail,
             role: 'TENANT_ADMIN',
-            passwordHash: hashPassword(DEMO_PASSWORD),
+            passwordHash: hashPassword(adminPassword),
             active: true,
           },
         })
