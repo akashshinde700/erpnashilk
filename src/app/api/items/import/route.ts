@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, ok, postStock, requireWrite } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, handleError, logAudit, ok, postStock, requireWrite, assertLimit } from '@/lib/erp-helpers'
 import { ITEM_TYPES, UOMS } from '@/lib/erp-constants'
 
 type Row = Record<string, string>
@@ -108,6 +108,7 @@ export async function POST(req: Request) {
 
     let imported = 0
     if (prepared.length > 0) {
+      await assertLimit(companyId, 'items', prepared.length)
       await db.$transaction(async (tx) => {
         for (const p of prepared) {
           try {

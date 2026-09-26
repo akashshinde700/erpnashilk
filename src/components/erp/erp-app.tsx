@@ -5,7 +5,7 @@ import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import { io, type Socket } from 'socket.io-client'
 import {
-  Bell, CheckCheck, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
+  Bell, Building2, CheckCheck, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
   Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -409,6 +409,11 @@ export default function ErpApp() {
   }
 
   function handleLogin(user: LoginUser, company: LoginCompany) {
+    // The platform operator lands on the organizations console.
+    if (user.role === 'SUPER_ADMIN') {
+      window.location.href = '/platform-admin'
+      return
+    }
     const s: Session = { user, company }
     window.localStorage.setItem(SESSION_KEY, JSON.stringify(s))
     window.localStorage.setItem('erp_company_id', user.companyId)
@@ -740,6 +745,11 @@ export default function ErpApp() {
                 <p className="text-[10px] text-muted-foreground mt-0.5">{ROLE_LABEL[session.user.role] || session.user.role} · {session.company?.name}</p>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {session.user.role === 'SUPER_ADMIN' && (
+                <DropdownMenuItem onSelect={() => { window.location.href = '/platform-admin' }}>
+                  <Building2 className="h-4 w-4 mr-2" />Platform Admin
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => setPwdOpen(true)}>
                 <KeyRound className="h-4 w-4 mr-2" />Change password
               </DropdownMenuItem>

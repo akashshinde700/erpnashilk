@@ -20,8 +20,10 @@ const passwordHash = `${salt}:${scryptSync(password, salt, 32).toString('hex')}`
 
 const db = new PrismaClient({ log: ['error'] })
 try {
+  // The operator's own company is marked isPlatform: never billed, blocked or listed as a customer org.
   let company = await db.company.findFirst({ where: { name: companyName } })
-  if (!company) company = await db.company.create({ data: { name: companyName, email, logoText: 'AD' } })
+  if (!company) company = await db.company.create({ data: { name: companyName, email, logoText: 'AD', isPlatform: true } })
+  else if (!company.isPlatform) company = await db.company.update({ where: { id: company.id }, data: { isPlatform: true } })
 
   const user = await db.user.upsert({
     where: { companyId_email: { companyId: company.id, email } },

@@ -103,7 +103,8 @@ def banner(title):
 def run(ssh, command, timeout=600, check=False, quiet=False):
     if not quiet:
         p(f"\n[CMD] {command}")
-    _, stdout, stderr = ssh.exec_command(f"{NVM_INIT}; {command}", timeout=timeout)
+    # pipefail: `cmd | tail` must fail when cmd fails, or a broken db push/build slips through.
+    _, stdout, stderr = ssh.exec_command(f"{NVM_INIT}; set -o pipefail; {command}", timeout=timeout)
     out = stdout.read().decode("utf-8", "replace")
     err = stderr.read().decode("utf-8", "replace")
     code = stdout.channel.recv_exit_status()
@@ -260,7 +261,7 @@ def deploy(ssh):
 
     if STAGE_ONLY:
         banner("[3b] Type check + lint")
-        run(ssh, f"set -o pipefail; cd {STAGING} && npx tsc --noEmit -p . 2>&1 | tail -40", timeout=1200, check=True)
+        run(ssh, f"cd {STAGING} && npx tsc --noEmit -p . 2>&1 | tail -40", timeout=1200, check=True)
         run(ssh, f"cd {STAGING} && npx eslint src 2>&1 | tail -40", timeout=1200)
 
     banner("[4] next build (staging -- live app keeps running)")

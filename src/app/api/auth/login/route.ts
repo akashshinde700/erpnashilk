@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handleError, logAudit } from '@/lib/erp-helpers'
 import { verifyPassword } from '@/lib/password'
+import { accessProblem } from '@/lib/subscription'
 import {
   clientIp, loginBlocked, loginFailed, loginSucceeded, passwordVersion, sessionCookie, signSession,
 } from '@/lib/session'
@@ -37,12 +38,20 @@ export async function POST(req: Request) {
     }
     if (!matched.active) return fail('Account is inactive', 403)
 
-    const company = await db.company.findUnique({
+    const org = await db.company.findUnique({
       where: { id: matched.companyId },
-      select: { id: true, name: true, gstin: true, city: true, stateCode: true, logoText: true },
+      select: {
+        id: true, name: true, gstin: true, city: true, stateCode: true, logoText: true,
+        isPlatform: true, status: true, paidUntil: true, trialEndsAt: true,
+      },
     })
-    if (!company) return fail('Invalid email or password', 401)
+    if (!org) return fail('Invalid email or password', 401)
     loginSucceeded(throttleKey)
+    if (matched.role !== 'SUPER_ADMIN') {
+      const blocked = accessProblem(org)
+      if (blocked) return fail(blocked, 403)
+    }
+    const { isPlatform: _p, status: _s, paidUntil: _pu, trialEndsAt: _t, ...company } = org
 
     await logAudit(db as never, {
       companyId: company.id,

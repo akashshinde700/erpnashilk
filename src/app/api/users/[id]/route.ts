@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, sessionUser, PLATFORM_ROLE, USER_PUBLIC } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, sessionUser, PLATFORM_ROLE, USER_PUBLIC, assertLimit } from '@/lib/erp-helpers'
 import { ROLES } from '@/lib/erp-constants'
 import { hashPassword, passwordProblem } from '@/lib/password'
 
@@ -54,6 +54,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const deactivated = data.active === false && existing.active
     if (id === me.id && (roleChanged || deactivated)) throw new ApiError('You cannot change your own role or deactivate yourself', 400)
     if (existing.role === 'TENANT_ADMIN' && existing.active && (roleChanged || deactivated)) await assertAnotherAdmin(companyId, id)
+    if (data.active === true && !existing.active) await assertLimit(companyId, 'users')
 
     const user = await db.$transaction(async (tx) => {
       const updated = await tx.user.update({ where: { id: existing.id }, data, select: USER_PUBLIC })

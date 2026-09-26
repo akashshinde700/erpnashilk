@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, assertLimit } from '@/lib/erp-helpers'
 
 const WAREHOUSE_TYPES = ['RM', 'FG', 'GENERAL', 'SCRAP']
 
@@ -39,6 +39,7 @@ export async function POST(req: Request) {
       throw new ApiError('type must be one of RM, FG, GENERAL, SCRAP', 400)
     }
 
+    await assertLimit(companyId, 'warehouses')
     const warehouse = await db.$transaction(async (tx) => {
       const created = await tx.warehouse.create({
         data: {

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, USER_PUBLIC } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, USER_PUBLIC, assertLimit } from '@/lib/erp-helpers'
 import { ROLES } from '@/lib/erp-constants'
 import { hashPassword, passwordProblem } from '@/lib/password'
 
@@ -43,9 +43,10 @@ export async function POST(req: Request) {
     }
     const problem = passwordProblem(body.password)
     if (problem) throw new ApiError(problem, 400)
-    // unique email per company — friendly message before hitting the constraint
-    const dup = await db.user.findFirst({ where: { companyId, email } })
-    if (dup) throw new ApiError('A user with this email already exists', 409)
+    // Login is by email alone, so an email may belong to only one user across all organizations.
+    const dup = await db.user.findFirst({ where: { email }, select: { companyId: true } })
+    if (dup) throw new ApiError(dup.companyId === companyId ? 'A user with this email already exists' : 'This email is already used by another login', 409)
+    if (body.active !== false) await assertLimit(companyId, 'users')
 
     const user = await db.$transaction(async (tx) => {
       const created = await tx.user.create({

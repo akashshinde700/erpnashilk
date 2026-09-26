@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { canAccessModule } from '@/lib/erp-constants'
 import { passwordVersion } from '@/lib/session'
+import { accessProblem, effectiveLimits, type LimitKind } from '@/lib/subscription'
 
 // ============ Consistent API responses ============
 
@@ -48,9 +49,16 @@ export function sessionUser(req: Request): Promise<SessionUser> {
       if (!id) throw new ApiError('Unauthorized — sign in to continue', 401)
       const u = await db.user.findUnique({
         where: { id },
-        select: { id: true, name: true, email: true, role: true, companyId: true, active: true, passwordHash: true },
+        select: {
+          id: true, name: true, email: true, role: true, companyId: true, active: true, passwordHash: true,
+          company: { select: { isPlatform: true, status: true, paidUntil: true, trialEndsAt: true } },
+        },
       })
       if (!u || !u.active) throw new ApiError('Your session has ended — sign in again', 401)
+      if (u.role !== PLATFORM_ROLE) {
+        const blocked = accessProblem(u.company)
+        if (blocked) throw new ApiError(blocked, 401)
+      }
       if (u.role !== req.headers.get('x-erp-role')) throw new ApiError('Your role was changed — sign in again', 401)
       if (req.headers.get('x-erp-pv') !== passwordVersion(u.passwordHash)) throw new ApiError('Your password was changed — sign in again', 401)
       return { id: u.id, name: u.name, email: u.email, role: u.role, companyId: u.companyId }
@@ -58,6 +66,32 @@ export function sessionUser(req: Request): Promise<SessionUser> {
     sessionCache.set(req, p)
   }
   return p
+}
+
+/** Platform-admin-only endpoints (/api/platform/*). */
+export async function requirePlatformAdmin(req: Request): Promise<SessionUser> {
+  const me = await sessionUser(req)
+  if (me.role !== PLATFORM_ROLE) throw new ApiError('Platform administrator access required', 403)
+  return me
+}
+
+/** Throw 403 when creating one more user/warehouse/item would exceed the org's plan. */
+export async function assertLimit(companyId: string, kind: LimitKind, adding = 1) {
+  const org = await db.company.findUnique({
+    where: { id: companyId },
+    select: { isPlatform: true, maxUsers: true, maxWarehouses: true, maxItems: true, plan: { select: { maxUsers: true, maxWarehouses: true, maxItems: true } } },
+  })
+  if (!org || org.isPlatform) return
+  const limit = effectiveLimits(org)[kind]
+  if (!limit) return
+  const used = kind === 'users'
+    ? await db.user.count({ where: { companyId, active: true } })
+    : kind === 'warehouses'
+      ? await db.warehouse.count({ where: { companyId } })
+      : await db.item.count({ where: { companyId } })
+  if (used + adding > limit) {
+    throw new ApiError(`Plan limit reached: ${used}/${limit} ${kind}. Ask your provider to upgrade the plan.`, 403)
+  }
 }
 
 /**
@@ -182,27 +216,25 @@ export const DOC_PREFIX: Record<string, string> = {
  * Must be called inside the same transaction/interactive tx as record creation.
  */
 export async function nextDocNumber(tx: {
-  numberSeq: { upsert: (a: never) => Promise<{ nextNumber: number }> }
+  numberSeq: {
+    findUnique: (a: never) => Promise<{ nextNumber: number } | null>
+    updateMany: (a: never) => Promise<{ count: number }>
+  }
 }, companyId: string, docType: string, date: Date = new Date()): Promise<string> {
   const fy = financialYearOf(date)
   const prefix = DOC_PREFIX[docType] || docType
-  // Increment first, then derive the number from the row we just locked: concurrent
-  // transactions queue on the same NumberSeq row and each gets a distinct number.
-  const bump = () => tx.numberSeq.upsert({
-    where: { companyId_docType_financialYear: { companyId, docType, financialYear: fy } },
-    create: { companyId, docType, prefix, financialYear: fy, nextNumber: 2 },
-    update: { nextNumber: { increment: 1 } },
-  } as never)
-  let seq: { nextNumber: number }
-  try {
-    seq = await bump()
-  } catch (e) {
-    // First number of a new (company, docType, FY): a concurrent request created the row
-    // between our check and insert. The row exists now, so the retry takes the update path.
-    if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e
-    seq = await bump()
+  const where = { companyId_docType_financialYear: { companyId, docType, financialYear: fy } }
+  // First number of a (company, docType, FY): create the counter row outside the transaction
+  // (INSERT IGNORE, auto-committed) so concurrent first documents never race on the insert.
+  if (!(await tx.numberSeq.findUnique({ where } as never))) {
+    await db.numberSeq.createMany({ data: [{ companyId, docType, prefix, financialYear: fy, nextNumber: 1 }], skipDuplicates: true })
   }
-  const n = seq.nextNumber - 1
+  // Increment under the row lock (a plain UPDATE reads the latest committed row, unlike the
+  // transaction's snapshot), then read our own write back: each transaction gets a distinct number.
+  const bumped = await tx.numberSeq.updateMany({ where: { companyId, docType, financialYear: fy }, data: { nextNumber: { increment: 1 } } } as never)
+  if (bumped.count !== 1) throw new ApiError('Document numbering is busy — please try again', 503)
+  const seq = await tx.numberSeq.findUnique({ where } as never)
+  const n = (seq?.nextNumber ?? 1) - 1
   return `${prefix}-${fy}-${String(n).padStart(6, '0')}`
 }
 

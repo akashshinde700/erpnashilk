@@ -30,9 +30,24 @@ model Company {
   bankAccountNumber String?
   bankIfsc          String?
   bankUpiId         String?
+
+  // ---- Subscription (managed from /platform-admin) ----
+  isPlatform    Boolean   @default(false) // the platform operator's own company (not a customer org)
+  slug          String?   @unique
+  planId        String?
+  status        String    @default("ACTIVE") // ACTIVE|SUSPENDED
+  billingCycle  String    @default("MONTHLY") // MONTHLY|YEARLY
+  paidUntil     DateTime?
+  trialEndsAt   DateTime?
+  // Per-org limit overrides ("Customize plan"); null = use the plan's limit
+  maxUsers      Int?
+  maxWarehouses Int?
+  maxItems      Int?
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  plan         Plan?    @relation(fields: [planId], references: [id])
   items        Item[]
   customers    Customer[]
   suppliers    Supplier[]
@@ -40,6 +55,22 @@ model Company {
   machines     Machine[]
   users        User[]
   plants       Plant[]
+}
+
+// Subscription plan offered to customer organizations. Limits: 0 = unlimited.
+model Plan {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  priceMonthly  Float    @default(0)
+  priceYearly   Float    @default(0)
+  maxUsers      Int      @default(0)
+  maxWarehouses Int      @default(0)
+  maxItems      Int      @default(0)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  companies     Company[]
 }
 
 model Plant {

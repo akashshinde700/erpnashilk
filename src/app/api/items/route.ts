@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireWrite, ok, handleError, companyRequired, ApiError, postStock, logAudit } from '@/lib/erp-helpers'
+import { requireWrite, ok, handleError, companyRequired, ApiError, postStock, logAudit, assertLimit } from '@/lib/erp-helpers'
 
 function num(v: unknown, def = 0, field = 'value'): number {
   if (v === undefined || v === null || v === '') return def
@@ -55,6 +55,7 @@ export async function POST(req: Request) {
     const openingQty = num(body.openingQty, 0, 'openingQty')
     const openingRate = num(body.openingRate, 0, 'openingRate')
 
+    await assertLimit(companyId, 'items')
     const item = await db.$transaction(async (tx) => {
       const created = await tx.item.create({
         data: {
