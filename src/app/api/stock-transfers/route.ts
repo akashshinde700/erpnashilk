@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { batchNote, parseSerials, transferBatches, transferSerials } from '@/lib/batches'
 
 // GET /api/stock-transfers?companyId= — TRANSFER_OUT ledger rows (UI pairs with TRANSFER_IN)
 export async function GET(req: Request) {
@@ -33,7 +34,9 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/stock-transfers  { fromWarehouseId, toWarehouseId, date?, notes?, userName?, lines: [{itemId, qty}] }
+// POST /api/stock-transfers  { fromWarehouseId, toWarehouseId, date?, notes?, userName?, lines: [{itemId, qty, batchNo?, serials?}] }
+// Batch-tracked items move batch-wise: out of the chosen batch (else FEFO, legacy un-batched stock last) and into
+// the destination under the same batch no / dates. Serial-tracked items need the serials being moved.
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'stock-transfers')
@@ -56,7 +59,10 @@ export async function POST(req: Request) {
     if (isNaN(transferDate.getTime())) throw new ApiError('Invalid date', 400)
 
     const cleanLines = lines
-      .map((l: any) => ({ itemId: String(l.itemId || ''), qty: r2(Number(l.qty) || 0) }))
+      .map((l: any) => ({
+        itemId: String(l.itemId || ''), qty: r2(Number(l.qty) || 0),
+        batchNo: String(l.batchNo || '').trim() || null, serials: parseSerials(l.serials),
+      }))
       .filter((l: any) => l.itemId)
     if (cleanLines.length === 0) throw new ApiError('At least one transfer line is required', 400)
     for (const l of cleanLines) {
@@ -91,15 +97,23 @@ export async function POST(req: Request) {
         const bal = balMap.get(l.itemId)
         const rate = bal?.avgRate && bal.avgRate > 0 ? bal.avgRate : item.standardCost
 
+        // Batch / serial layer first so both ledger rows can name the batches moved (no-op for
+        // untracked items). postStock's balance check below still caps the source total.
+        const allocs = await transferBatches(tx, {
+          companyId, itemId: l.itemId, fromWarehouseId, toWarehouseId, qty: l.qty, batchNo: l.batchNo,
+        })
+        await transferSerials(tx, { companyId, itemId: l.itemId, fromWarehouseId, toWarehouseId, serials: l.serials, qty: l.qty })
+        const lineNotes = allocs.length ? `${notes || ''}${batchNote(allocs)}` : notes
+
         await postStock(tx as any, {
           companyId, itemId: l.itemId, warehouseId: fromWarehouseId, type: 'TRANSFER_OUT',
           qtyOut: l.qty, rate, date: transferDate,
-          refType: 'TRANSFER', refNumber: number, notes,
+          refType: 'TRANSFER', refNumber: number, notes: lineNotes,
         })
         await postStock(tx as any, {
           companyId, itemId: l.itemId, warehouseId: toWarehouseId, type: 'TRANSFER_IN',
           qtyIn: l.qty, rate, date: transferDate,
-          refType: 'TRANSFER', refNumber: number, notes,
+          refType: 'TRANSFER', refNumber: number, notes: lineNotes,
         })
       }
 

@@ -22,7 +22,16 @@ interface ExpenseRow {
   paidTo?: string | null
   gstAmount?: number
   status: string
+  vendorGstin?: string | null
+  billNo?: string | null
+  billDate?: string | Date | null
+  itcEligible?: boolean
+  accountId?: string | null
+  accountName?: string | null
+  expenseType?: string | null
 }
+
+interface AccountOpt { id: string; name: string; type: string; active: boolean }
 
 interface ExpenseForm {
   date: string
@@ -32,6 +41,13 @@ interface ExpenseForm {
   paymentMode: string
   paidTo: string
   gstAmount: number
+  status: string
+  vendorGstin: string
+  billNo: string
+  billDate: string // YYYY-MM-DD or ''
+  itcEligible: string // 'YES' | 'NO'
+  accountId: string // '' = default account for the payment mode
+  expenseType: string // DIRECT | INDIRECT
 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -44,7 +60,32 @@ const freshForm = (): ExpenseForm => ({
   paymentMode: 'CASH',
   paidTo: '',
   gstAmount: 0,
+  status: 'POSTED',
+  vendorGstin: '',
+  billNo: '',
+  billDate: '',
+  itcEligible: 'NO',
+  accountId: '',
+  expenseType: 'INDIRECT',
 })
+
+const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/
+const STATUS_OPTIONS = [
+  { value: 'DRAFT', label: 'Draft' },
+  { value: 'POSTED', label: 'Posted' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+]
+const YES_NO = [
+  { value: 'NO', label: 'No' },
+  { value: 'YES', label: 'Yes' },
+]
+
+const EXPENSE_TYPE_OPTIONS = [
+  { value: 'DIRECT', label: 'Direct (production: freight, job work, power…)' },
+  { value: 'INDIRECT', label: 'Indirect (rent, salary, office, tea…)' },
+]
+// Categories that are usually a direct (production) cost — used to pre-select the type
+const DIRECT_CATEGORIES = ['FREIGHT', 'TOOLING']
 
 const CATEGORY_OPTIONS = EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c.replaceAll('_', ' ') }))
 const MODE_OPTIONS = PAYMENT_MODES.map((m) => ({ value: m, label: m }))
@@ -60,6 +101,11 @@ function CategoryChip({ category }: { category: string }) {
 export default function ExpensesModule({ companyId }: { companyId: string }) {
   const { data, loading, refetch } = useList<{ items?: ExpenseRow[]; total?: number }>(`/api/expenses?companyId=${companyId}`)
   const rows = data?.items ?? []
+  const accounts = useList<{ items: AccountOpt[] }>(`/api/accounts?companyId=${companyId}`)
+  const accountOpts = React.useMemo(() => [
+    { value: '', label: 'Default for mode' },
+    ...(accounts.data?.items ?? []).filter((a) => a.active).map((a) => ({ value: a.id, label: `${a.name}${a.type === 'CASH' ? ' (cash)' : ''}` })),
+  ], [accounts.data])
 
   const [open, setOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
@@ -67,9 +113,11 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
   const [form, setForm] = React.useState<ExpenseForm>(freshForm)
 
   const monthKey = todayStr().slice(0, 7)
-  const monthRows = rows.filter((r) => String(r.date).slice(0, 7) === monthKey)
+  // cancelled expenses don't count towards spend totals
+  const liveRows = rows.filter((r) => r.status !== 'CANCELLED')
+  const monthRows = liveRows.filter((r) => String(r.date).slice(0, 7) === monthKey)
   const monthTotal = monthRows.reduce((s, r) => s + (r.amount || 0), 0)
-  const allTotal = rows.reduce((s, r) => s + (r.amount || 0), 0)
+  const allTotal = liveRows.reduce((s, r) => s + (r.amount || 0), 0)
 
   function openCreate() {
     setEditingId(null)
@@ -87,6 +135,13 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
       paymentMode: row.paymentMode || 'CASH',
       paidTo: row.paidTo || '',
       gstAmount: row.gstAmount || 0,
+      status: row.status || 'POSTED',
+      vendorGstin: row.vendorGstin || '',
+      billNo: row.billNo || '',
+      billDate: row.billDate ? String(row.billDate).slice(0, 10) : '',
+      itcEligible: row.itcEligible ? 'YES' : 'NO',
+      accountId: row.accountId || '',
+      expenseType: row.expenseType || 'INDIRECT',
     })
     setOpen(true)
   }
@@ -100,6 +155,11 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
       toast.error('Amount must be greater than 0')
       return
     }
+    const gstin = form.vendorGstin.trim().toUpperCase()
+    if (gstin && !GSTIN_RE.test(gstin)) {
+      toast.error('Vendor GSTIN is not a valid 15-character GSTIN')
+      return
+    }
     setSaving(true)
     try {
       const payload = {
@@ -111,6 +171,13 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
         paymentMode: form.paymentMode,
         paidTo: form.paidTo.trim() || null,
         gstAmount: form.gstAmount || 0,
+        status: form.status,
+        vendorGstin: gstin || null,
+        billNo: form.billNo.trim() || null,
+        billDate: form.billDate || null,
+        itcEligible: form.itcEligible === 'YES',
+        accountId: form.accountId || null,
+        expenseType: form.expenseType,
         userName: 'admin',
       }
       if (editingId) {
@@ -144,6 +211,14 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
     { key: 'category', header: 'Category', render: (r) => <CategoryChip category={r.category} /> },
     {
+      key: 'expenseType', header: 'Type', hideOnMobile: true,
+      render: (r) => (
+        <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${r.expenseType === 'DIRECT' ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-muted text-muted-foreground'}`}>
+          {r.expenseType === 'DIRECT' ? 'Direct' : 'Indirect'}
+        </span>
+      ),
+    },
+    {
       key: 'description',
       header: 'Description',
       render: (r) => (
@@ -155,6 +230,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
     { key: 'paidTo', header: 'Paid To', hideOnMobile: true, render: (r) => r.paidTo || '—' },
     { key: 'amount', header: 'Amount', className: 'text-right', render: (r) => <Money value={r.amount} className="font-medium" /> },
     { key: 'mode', header: 'Mode', render: (r) => <StatusBadge status={r.paymentMode} /> },
+    { key: 'account', header: 'Account', hideOnMobile: true, render: (r) => r.accountName || '—' },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'actions',
@@ -189,7 +265,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
         actions={
           <Button size="sm" onClick={openCreate}>
             <Plus className="h-4 w-4 mr-1.5" />
-            New Expense
+            Expense
           </Button>
         }
       />
@@ -203,7 +279,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
         <StatCard
           title="All-Time Total"
           value={fmtMoney(allTotal)}
-          sub={`${rows.length} expenses recorded`}
+          sub={`${liveRows.length} expenses recorded`}
           icon={<Wallet className="h-4 w-4" />}
           toneClass="bg-sky-100 text-sky-600"
         />
@@ -218,7 +294,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title={editingId ? 'Edit Expense' : 'New Expense'}
+        title={editingId ? 'Edit Expense' : 'Expense'}
         description="Expense number is generated automatically (EXP-FY-NNNNNN)."
         onSubmit={submit}
         loading={saving}
@@ -228,7 +304,14 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
             <DateInput value={form.date} onChange={(v) => setForm((f) => ({ ...f, date: v }))} />
           </Field>
           <Field label="Category" required>
-            <SelectInput value={form.category} onChange={(v) => setForm((f) => ({ ...f, category: v }))} options={CATEGORY_OPTIONS} />
+            <SelectInput
+              value={form.category}
+              onChange={(v) => setForm((f) => ({ ...f, category: v, ...(editingId ? {} : { expenseType: DIRECT_CATEGORIES.includes(v) ? 'DIRECT' : 'INDIRECT' }) }))}
+              options={CATEGORY_OPTIONS}
+            />
+          </Field>
+          <Field label="Expense type" className="sm:col-span-2">
+            <SelectInput value={form.expenseType} onChange={(v) => setForm((f) => ({ ...f, expenseType: v }))} options={EXPENSE_TYPE_OPTIONS} />
           </Field>
           <Field label="Description" required className="sm:col-span-2">
             <TextInput
@@ -246,12 +329,39 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
           <Field label="Payment Mode">
             <SelectInput value={form.paymentMode} onChange={(v) => setForm((f) => ({ ...f, paymentMode: v }))} options={MODE_OPTIONS} />
           </Field>
+          <Field label="Paid from account">
+            <SelectInput value={form.accountId} onChange={(v) => setForm((f) => ({ ...f, accountId: v }))} options={accountOpts} />
+          </Field>
           <Field label="Paid To">
             <TextInput
               value={form.paidTo}
               onChange={(e) => setForm((f) => ({ ...f, paidTo: e.target.value }))}
               placeholder="Vendor / payee name"
             />
+          </Field>
+          <Field label="Vendor GSTIN">
+            <TextInput
+              value={form.vendorGstin}
+              onChange={(e) => setForm((f) => ({ ...f, vendorGstin: e.target.value.toUpperCase() }))}
+              placeholder="27ABCDE1234F1Z5"
+              maxLength={15}
+            />
+          </Field>
+          <Field label="ITC Eligible">
+            <SelectInput value={form.itcEligible} onChange={(v) => setForm((f) => ({ ...f, itcEligible: v }))} options={YES_NO} />
+          </Field>
+          <Field label="Bill No">
+            <TextInput
+              value={form.billNo}
+              onChange={(e) => setForm((f) => ({ ...f, billNo: e.target.value }))}
+              placeholder="Vendor bill / invoice no."
+            />
+          </Field>
+          <Field label="Bill Date">
+            <DateInput value={form.billDate} onChange={(v) => setForm((f) => ({ ...f, billDate: v }))} />
+          </Field>
+          <Field label="Status">
+            <SelectInput value={form.status} onChange={(v) => setForm((f) => ({ ...f, status: v }))} options={STATUS_OPTIONS} />
           </Field>
         </div>
       </FormDialog>

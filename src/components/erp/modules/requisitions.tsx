@@ -3,10 +3,10 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Check, Plus, Trash2, X } from 'lucide-react'
+import { Check, FileText, Plus, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, NumberInput,
-  PageHeader, SelectInput, StatusBadge, TextInput,
+  PageHeader, SelectInput, StatusBadge, TextInput, openCreate,
 } from '@/components/erp/kit'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
 
@@ -93,6 +93,12 @@ export default function RequisitionsModule({ companyId }: { companyId: string })
             title="Delete requisition?" message={`Delete pending requisition ${r.number}?`} tone="destructive" onConfirm={() => remove(r)}
           />
         </div>
+      ) : r.status === 'APPROVED' ? (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="sm" className="h-7" title="Convert this requisition into a purchase order" onClick={() => openCreate('purchase-orders', { prId: r.id })}>
+            <FileText className="h-3.5 w-3.5 mr-0.5" />Create PO
+          </Button>
+        </div>
       ) : <span className="text-xs text-muted-foreground">—</span>,
     },
   ]
@@ -102,12 +108,12 @@ export default function RequisitionsModule({ companyId }: { companyId: string })
       <PageHeader
         title="Purchase Requisitions"
         description="Internal material requests pending approval"
-        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Requisition</Button>}
+        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />Requisition</Button>}
       />
       <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search requisitions…" />
 
       <FormDialog
-        open={open} onOpenChange={setOpen} wide title="New Purchase Requisition" submitLabel="Create Requisition"
+        open={open} onOpenChange={setOpen} wide title="Purchase Requisition" submitLabel="Create Requisition"
         description="Request materials for production or maintenance" loading={saving} onSubmit={submit}
       >
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">

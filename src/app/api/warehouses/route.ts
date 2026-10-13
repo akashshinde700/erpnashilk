@@ -3,6 +3,8 @@ import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit, ass
 
 const WAREHOUSE_TYPES = ['RM', 'FG', 'GENERAL', 'SCRAP']
 
+const optStr = (v: unknown): string | null => (v === undefined || v === null ? null : String(v).trim() || null)
+
 // ============================== GET /api/warehouses?q=&type= ==============================
 export async function GET(req: Request) {
   try {
@@ -48,6 +50,8 @@ export async function POST(req: Request) {
           name,
           type,
           location: body.location || null,
+          address: optStr(body.address),
+          inCharge: optStr(body.inCharge),
         },
       })
       await logAudit(tx as any, {

@@ -223,7 +223,7 @@ export default function MrpModule({ companyId }: { companyId: string }) {
         submitLabel="Create PR" loading={savingPr} onSubmit={createPr}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Department" required>
+          <Field label="Department">
             <SelectInput
               value={department} onChange={setDepartment}
               options={[
@@ -235,10 +235,10 @@ export default function MrpModule({ companyId }: { companyId: string }) {
               ]}
             />
           </Field>
-          <Field label="Raised By" required>
+          <Field label="Raised By">
             <TextInput value={raisedBy} onChange={(e) => setRaisedBy(e.target.value)} />
           </Field>
-          <Field label="Required By" required>
+          <Field label="Required By">
             <TextInput type="date" value={requiredBy} onChange={(e) => setRequiredBy(e.target.value)} />
           </Field>
           <Field label="PR Date">

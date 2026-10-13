@@ -4,6 +4,9 @@ import {
   ok, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, logAudit, ApiError, r2, requireWrite,
 } from '@/lib/erp-helpers'
 
+/** Unit rates keep 4 decimals (₹0.0125 per piece); money totals stay at 2. */
+const r4 = (n: number) => Math.round(n * 10000) / 10000
+
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
 type HelperTx = Prisma.TransactionClient & Parameters<typeof nextDocNumber>[0] & Parameters<typeof logAudit>[0]
@@ -97,7 +100,7 @@ export async function POST(req: Request) {
         }
       }
 
-      const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r2(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
+      const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r4(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
       const totals = computeGst(taxLines, interState)
       const number = await nextDocNumber(tx, companyId, 'PO', date)
 
@@ -117,6 +120,8 @@ export async function POST(req: Request) {
           igst: totals.igst,
           grandTotal: totals.grandTotal,
           notes: body.notes || null,
+          paymentTerms: body.paymentTerms ? String(body.paymentTerms).trim() || null : null,
+          deliveryTerms: body.deliveryTerms ? String(body.deliveryTerms).trim() || null : null,
           items: {
             create: totals.computed.map((c, idx) => ({
               itemId: lines[idx].itemId as string,

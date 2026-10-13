@@ -1,6 +1,9 @@
 import { db } from '@/lib/db'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 
+// Optional free-text field: blank → null
+const optStr = (v: unknown) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim())
+
 interface QtLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
 // Quotation carries a plain customerId + item lines without Prisma relations — resolve via JS mapping
@@ -35,7 +38,7 @@ function validateLines(raw: any[]): QtLine[] {
     return {
       itemId: String(l.itemId),
       qty: r2(qty),
-      rate: r2(rate),
+      rate: Math.round(rate * 10000) / 10000, // 4 dp: alt-unit rates (₹100 / 24 PCS) must not drift the line total
       discountPct: Number(l.discountPct ?? 0) || 0,
       gstRate: l.gstRate === undefined || l.gstRate === null || l.gstRate === '' ? 18 : Number(l.gstRate),
     }
@@ -73,7 +76,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/quotations  { companyId, enquiryId?, customerId, date?, validUntil?, notes?, items: [{itemId, qty, rate, discountPct, gstRate}] }
+// POST /api/quotations  { companyId, enquiryId?, customerId, date?, validUntil?, notes?, kindAttn?, paymentTerms?, deliveryTerms?, terms?, items: [{itemId, qty, rate, discountPct, gstRate}] }
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'quotations')
@@ -130,6 +133,10 @@ export async function POST(req: Request) {
           igst: totals.igst,
           grandTotal: totals.grandTotal,
           notes: body.notes ?? null,
+          kindAttn: optStr(body.kindAttn),
+          paymentTerms: optStr(body.paymentTerms),
+          deliveryTerms: optStr(body.deliveryTerms),
+          terms: optStr(body.terms),
           items: {
             create: lines.map((l, i) => ({
               itemId: l.itemId,

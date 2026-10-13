@@ -265,7 +265,7 @@ export function DataTable<T extends { id: string }>({
   maxHeight?: string
   pageSize?: number
   /** When provided, shows an "Export CSV" button exporting all filtered rows. */
-  csvExport?: { filename: string; pick: (row: T) => (string | number)[] }
+  csvExport?: { filename: string; headers?: string[]; pick: (row: T) => (string | number)[] }
   /** When provided, shows an "Excel" button (beside the CSV one) exporting the same filtered rows as a real .xlsx. Headers default to the column labels — identical columns to the CSV. */
   xlsxExport?: { filename: string; headers?: string[]; pick: (row: T) => (string | number)[] }
   /** Deep-linked record id (from useRowHighlight) — page-jumps to + scrolls the row into view and highlights it. */
@@ -545,7 +545,7 @@ export function DataTable<T extends { id: string }>({
                 variant="outline"
                 size="sm"
                 className="h-9"
-                onClick={() => downloadCsv(csvExport.filename, columns.map((c) => c.header), filtered.map(csvExport.pick))}
+                onClick={() => downloadCsv(csvExport.filename, csvExport.headers ?? columns.map((c) => c.header), filtered.map(csvExport.pick))}
               >
                 <Download className="h-4 w-4 mr-1.5" />CSV
               </Button>
@@ -768,14 +768,25 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn('max-h-[90vh] overflow-y-auto', wide ? 'sm:max-w-3xl' : 'sm:max-w-lg')}>
+      {/* Phones: full-screen sheet so long forms scroll naturally; desktop: centred dialog */}
+      <DialogContent className={cn(
+        'max-h-[90vh] overflow-y-auto max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:max-w-full max-sm:w-full max-sm:rounded-none max-sm:p-4',
+        wide ? 'sm:max-w-3xl' : 'sm:max-w-lg',
+      )}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); void onSubmit() }}>
+        <form
+          onSubmit={(e) => { e.preventDefault(); void onSubmit() }}
+          // Ctrl/⌘ + Enter or Ctrl/⌘ + S saves from anywhere in the form (incl. textareas)
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key.toLowerCase() === 's') && !loading) { e.preventDefault(); void onSubmit() }
+          }}
+        >
           <div className="grid gap-4 py-2">{children}</div>
-          <DialogFooter className="mt-4">
+          <DialogFooter className="mt-4 items-center">
+            <span className="mr-auto hidden text-[11px] text-muted-foreground sm:inline">Ctrl + S to save</span>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={loading}>{loading ? 'Saving…' : submitLabel}</Button>
           </DialogFooter>
@@ -932,4 +943,54 @@ export function PrintButton({ onClick, label = 'Print' }: { onClick: () => void;
       <Printer className="h-4 w-4 mr-1.5" />{label}
     </Button>
   )
+}
+
+// ============ Create presets (shortcuts that open another module's form, pre-filled) ============
+
+const CREATE_PRESET_KEY = 'erp_create_preset'
+const CREATE_PRESET_EVENT = 'erp:create-preset'
+/** Fired by the `n` keyboard shortcut: the module on screen opens its create form. */
+export const NEW_DOC_EVENT = 'erp:new-document'
+export type CreatePreset = Record<string, string | number | undefined>
+
+/**
+ * Jump to `moduleKey` and open its create form, pre-filled with `data`
+ * (e.g. openCreate('sales-invoices', { soId }) or openCreate('payments', { type: 'RECEIPT', partyId })).
+ */
+export function openCreate(moduleKey: string, data: CreatePreset = {}) {
+  try {
+    sessionStorage.setItem(CREATE_PRESET_KEY, JSON.stringify({ module: moduleKey, data, ts: Date.now() }))
+  } catch { /* private mode — the live event still covers an already-mounted module */ }
+  window.dispatchEvent(new CustomEvent(CREATE_PRESET_EVENT, { detail: { module: moduleKey, data } }))
+  window.dispatchEvent(new CustomEvent('erp:goto', { detail: moduleKey }))
+}
+
+/** In a module: run `apply(data)` when a shortcut asked to open this module's create form. */
+export function useCreatePreset(moduleKey: string, apply: (data: CreatePreset) => void) {
+  const applyRef = React.useRef(apply)
+  React.useEffect(() => { applyRef.current = apply })
+  React.useEffect(() => {
+    const consume = () => {
+      try {
+        const raw = sessionStorage.getItem(CREATE_PRESET_KEY)
+        if (!raw) return
+        const p = JSON.parse(raw) as { module?: string; data?: CreatePreset; ts?: number }
+        if (p.module !== moduleKey || !p.ts || Date.now() - p.ts > 60000) return
+        sessionStorage.removeItem(CREATE_PRESET_KEY)
+        applyRef.current(p.data || {})
+      } catch { /* ignore malformed */ }
+    }
+    consume() // module mounted by the navigation
+    const onEvent = (e: Event) => {
+      if ((e as CustomEvent<{ module?: string }>).detail?.module === moduleKey) setTimeout(consume, 0) // already mounted
+    }
+    // `n` shortcut: only the module on screen is mounted, so it alone opens its blank form
+    const onNew = () => applyRef.current({})
+    window.addEventListener(CREATE_PRESET_EVENT, onEvent)
+    window.addEventListener(NEW_DOC_EVENT, onNew)
+    return () => {
+      window.removeEventListener(CREATE_PRESET_EVENT, onEvent)
+      window.removeEventListener(NEW_DOC_EVENT, onNew)
+    }
+  }, [moduleKey])
 }

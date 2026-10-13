@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { requireSecurityPin } from '@/lib/security-pin'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 // Status machine: DRAFT → SENT → APPROVED | REJECTED; CANCELLED from DRAFT/SENT
@@ -60,8 +61,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const wantsEdit =
       body.customerId !== undefined || body.date !== undefined || body.validUntil !== undefined ||
-      body.notes !== undefined || Array.isArray(body.items)
+      body.notes !== undefined || Array.isArray(body.items) ||
+      body.kindAttn !== undefined || body.paymentTerms !== undefined || body.deliveryTerms !== undefined || body.terms !== undefined
     if (wantsEdit && current.status !== 'DRAFT') throw new ApiError('Quotation can only be edited while DRAFT', 400)
+    if (wantsEdit || body.status === 'CANCELLED') await requireSecurityPin(req, companyId)
 
     let customerId = current.customerId
     if (body.customerId !== undefined && body.customerId !== current.customerId) {
@@ -87,7 +90,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         return {
           itemId: String(l.itemId),
           qty: r2(qty),
-          rate: r2(rate),
+          rate: Math.round(rate * 10000) / 10000, // 4 dp: alt-unit rates (₹100 / 24 PCS) must not drift the line total
           discountPct: Number(l.discountPct ?? 0) || 0,
           gstRate: l.gstRate === undefined || l.gstRate === null || l.gstRate === '' ? 18 : Number(l.gstRate),
         }
@@ -124,6 +127,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (body.date !== undefined) data.date = new Date(body.date)
       if (body.validUntil !== undefined) data.validUntil = body.validUntil ? new Date(body.validUntil) : null
       if (body.notes !== undefined) data.notes = body.notes ?? null
+      for (const k of ['kindAttn', 'paymentTerms', 'deliveryTerms', 'terms'] as const) {
+        if (body[k] !== undefined) data[k] = body[k] === null || String(body[k]).trim() === '' ? null : String(body[k]).trim()
+      }
       if (statusChange) data.status = body.status
       if (itemsCreate && totals) {
         data.subtotal = totals.subtotal
@@ -161,6 +167,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body?.companyId)
+    await requireSecurityPin(req, companyId)
 
     const current = await db.quotation.findFirst({ where: { id, companyId } })
     if (!current) throw new ApiError('Quotation not found', 404)

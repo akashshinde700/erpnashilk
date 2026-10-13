@@ -5,11 +5,12 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { fmtNum } from '@/lib/erp-constants'
+import { fmtDate, fmtNum } from '@/lib/erp-constants'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
 import {
   ConfirmAction,
   DataTable,
+  DateInput,
   Field,
   FormDialog,
   Money,
@@ -31,6 +32,13 @@ interface MachineRow {
   capacityPerDay?: number
   hourlyRate?: number
   notes?: string | null
+  make?: string | null
+  model?: string | null
+  serialNo?: string | null
+  purchaseDate?: string | null
+  lastServiceDate?: string | null
+  nextServiceDate?: string | null
+  serviceIntervalDays?: number | null
   status: string // RUNNING | IDLE | MAINTENANCE | BREAKDOWN
 }
 
@@ -46,9 +54,42 @@ interface FormState {
   capacityPerDay: number
   hourlyRate: number
   notes: string
+  make: string
+  model: string
+  serialNo: string
+  purchaseDate: string // YYYY-MM-DD or ''
+  lastServiceDate: string
+  nextServiceDate: string
+  serviceIntervalDays: string // '' = not set
 }
 
-const emptyForm: FormState = { code: '', name: '', workCenter: '', capacityPerDay: 0, hourlyRate: 0, notes: '' }
+const emptyForm: FormState = {
+  code: '',
+  name: '',
+  workCenter: '',
+  capacityPerDay: 0,
+  hourlyRate: 0,
+  notes: '',
+  make: '',
+  model: '',
+  serialNo: '',
+  purchaseDate: '',
+  lastServiceDate: '',
+  nextServiceDate: '',
+  serviceIntervalDays: '',
+}
+
+const toDateInput = (d: string | null | undefined) => (d ? String(d).slice(0, 10) : '')
+
+/** whole days from today (local) until the given date; negative = overdue */
+function daysUntil(d: string): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  // dates are stored as UTC midnight — read the calendar day from the ISO prefix
+  const [y, m, day] = String(d).slice(0, 10).split('-').map(Number)
+  const dueDay = new Date(y, (m || 1) - 1, day || 1)
+  return Math.round((dueDay.getTime() - today.getTime()) / 86_400_000)
+}
 
 const MACHINE_STATUSES = [
   { value: 'RUNNING', label: 'Running' },
@@ -84,6 +125,13 @@ export default function MachinesModule({ companyId }: { companyId: string }) {
       capacityPerDay: row.capacityPerDay ?? 0,
       hourlyRate: row.hourlyRate ?? 0,
       notes: row.notes ?? '',
+      make: row.make ?? '',
+      model: row.model ?? '',
+      serialNo: row.serialNo ?? '',
+      purchaseDate: toDateInput(row.purchaseDate),
+      lastServiceDate: toDateInput(row.lastServiceDate),
+      nextServiceDate: toDateInput(row.nextServiceDate),
+      serviceIntervalDays: row.serviceIntervalDays == null ? '' : String(row.serviceIntervalDays),
     })
     setOpen(true)
   }
@@ -103,6 +151,14 @@ export default function MachinesModule({ companyId }: { companyId: string }) {
         capacityPerDay: form.capacityPerDay,
         hourlyRate: form.hourlyRate,
         notes: form.notes.trim() || null,
+        make: form.make.trim() || null,
+        model: form.model.trim() || null,
+        serialNo: form.serialNo.trim() || null,
+        purchaseDate: form.purchaseDate || null,
+        lastServiceDate: form.lastServiceDate || null,
+        // empty → server derives it from last service + interval when both are set
+        nextServiceDate: form.nextServiceDate || null,
+        serviceIntervalDays: form.serviceIntervalDays.trim() === '' ? null : Number(form.serviceIntervalDays),
       }
       if (editing) await apiPatch(`/api/machines/${editing.id}`, body)
       else await apiPost('/api/machines', body)
@@ -152,6 +208,29 @@ export default function MachinesModule({ companyId }: { companyId: string }) {
       render: (r) => <span className="tabular-nums">{fmtNum(r.capacityPerDay)}</span>,
     },
     { key: 'rate', header: 'Hourly Rate', hideOnMobile: true, render: (r) => <Money value={r.hourlyRate} /> },
+    {
+      key: 'nextService',
+      header: 'Next Service',
+      hideOnMobile: true,
+      render: (r) => {
+        if (!r.nextServiceDate) return <span className="text-muted-foreground">—</span>
+        const days = daysUntil(r.nextServiceDate)
+        const tone =
+          days < 0
+            ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'
+            : days <= 7
+              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+              : ''
+        return (
+          <span
+            className={`whitespace-nowrap rounded px-1.5 py-0.5 tabular-nums ${tone}`}
+            title={days < 0 ? `Overdue by ${-days} day(s)` : days <= 7 ? `Due in ${days} day(s)` : undefined}
+          >
+            {fmtDate(r.nextServiceDate)}
+          </span>
+        )
+      },
+    },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'setstatus',
@@ -195,7 +274,7 @@ export default function MachinesModule({ companyId }: { companyId: string }) {
         description="Work centers, capacities and live machine status"
         actions={
           <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Machine
+            <Plus className="h-4 w-4 mr-1.5" /> Machine
           </Button>
         }
       />
@@ -211,7 +290,7 @@ export default function MachinesModule({ companyId }: { companyId: string }) {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title={editing ? 'Edit Machine' : 'New Machine'}
+        title={editing ? 'Edit Machine' : 'Machine'}
         description={editing ? `Updating ${editing.code}` : 'Register a machine or work center'}
         onSubmit={submit}
         loading={saving}
@@ -234,6 +313,41 @@ export default function MachinesModule({ companyId }: { companyId: string }) {
             <NumberInput value={form.hourlyRate} onChange={(n) => set('hourlyRate', n)} />
           </Field>
           <div className="hidden sm:block" />
+          <Field label="Make">
+            <TextInput value={form.make} onChange={(e) => set('make', e.target.value)} placeholder="e.g. Ace Micromatic" />
+          </Field>
+          <Field label="Model">
+            <TextInput value={form.model} onChange={(e) => set('model', e.target.value)} placeholder="Optional" />
+          </Field>
+          <Field label="Serial No">
+            <TextInput value={form.serialNo} onChange={(e) => set('serialNo', e.target.value)} placeholder="Optional" />
+          </Field>
+          <Field label="Purchase Date">
+            <DateInput value={form.purchaseDate} onChange={(v) => set('purchaseDate', v)} />
+          </Field>
+          <div className="space-y-3 rounded-lg border bg-muted/30 p-3 sm:col-span-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Maintenance schedule (optional)</p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Last Service">
+                <DateInput value={form.lastServiceDate} onChange={(v) => set('lastServiceDate', v)} />
+              </Field>
+              <Field label="Service Interval (days)">
+                <TextInput
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step={1}
+                  value={form.serviceIntervalDays}
+                  onChange={(e) => set('serviceIntervalDays', e.target.value)}
+                  placeholder="e.g. 90"
+                />
+              </Field>
+              <Field label="Next Service">
+                <DateInput value={form.nextServiceDate} onChange={(v) => set('nextServiceDate', v)} />
+              </Field>
+            </div>
+            <p className="text-xs text-muted-foreground">Leave Next Service empty to calculate it from Last Service + interval.</p>
+          </div>
           <Field label="Notes" className="sm:col-span-2">
             <Textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} rows={2} placeholder="Optional remarks" />
           </Field>

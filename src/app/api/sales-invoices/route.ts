@@ -1,7 +1,12 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeBillTotals, isInterStateParty, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
+import { cashSaleCustomer } from '@/lib/party'
+import { PAYMENT_MODES } from '@/lib/erp-constants'
+import { accountForMode } from '@/lib/accounts'
+import { type InvLine, optStr, optNum, gstRateOf, parseLine, withMasterInfo, resolveStockWarehouse, postSaleStock } from './shared'
 
-interface InvLine { soItemId: string | null; itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
+// Modes accepted for money received at billing time (credit/debit notes come only from returns)
+const RECEIVE_MODES: readonly string[] = PAYMENT_MODES
 
 // SalesInvoiceItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -47,23 +52,37 @@ export async function GET(req: Request) {
 }
 
 // POST /api/sales-invoices
-// { companyId, salesOrderId?, customerId, date?, dueDate?, placeOfSupply?, notes?, lines?: [{itemId, qty, rate, discountPct, gstRate}] }
+// { companyId, salesOrderId?, challanId?, customerId, date?, dueDate?, placeOfSupply?, notes?,
+//   customerPoNo?, customerPoDate?, shippingAddress?, vehicleNo?, transporter?,
+//   lines? (alias: items): [{itemId, qty, rate, discountPct, gstRate, salesOrderItemId?}],
+//   billDiscount?, freightCharge?, freightGstRate? (18), packingCharge?, packingGstRate? (18),
+//   isCashSale?, receivedAmount?, receivedMode? (CASH), receivedReference?, receivedAccountId?,
+//   billingName?, driverPhone?, deductStock?, stockWarehouseId?, lines[].cessRate? (default: item master) }
+// - deductStock (only without salesOrderId/challanId) → SALE_OUT stock posting per line from stockWarehouseId
+//   (default: FG store, else first warehouse); with an SO/challan the challan dispatch moves the stock instead
+// - totals via computeBillTotals (bill discount pro-rata before GST, freight/packing taxable, round-off per company setting)
+// - isCashSale → billed to the company's walk-in "Cash Sale" customer, intra-state, received defaults to the full total
+// - receivedAmount > 0 → a RECEIPT payment is recorded in the same transaction
 // - salesOrderId without lines → auto-build lines from SO items with remaining (qty - invoicedQty)
+// - challanId (needs salesOrderId) → bills that DISPATCHED challan; without lines, lines are built from its items
+// - SO auto-completes once every line is fully dispatched AND fully invoiced
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'sales-invoices')
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
 
-    const customerId = body.customerId
-    if (!customerId) throw new ApiError('customerId is required', 400)
+    const isCashSale = body.isCashSale === true || body.isCashSale === 'true'
+    if (isCashSale && (body.salesOrderId || body.challanId)) throw new ApiError('A cash sale cannot be billed against a sales order or challan', 400)
+    const customerId: string | null = isCashSale ? null : (body.customerId ? String(body.customerId) : null)
+    if (!isCashSale && !customerId) throw new ApiError('customerId is required', 400)
 
     const [company, customer] = await Promise.all([
       db.company.findUnique({ where: { id: companyId } }),
-      db.customer.findFirst({ where: { id: customerId, companyId } }),
+      customerId ? db.customer.findFirst({ where: { id: customerId, companyId } }) : Promise.resolve(null),
     ])
     if (!company) throw new ApiError('Company not found', 404)
-    if (!customer) throw new ApiError('Customer not found', 404)
+    if (!isCashSale && !customer) throw new ApiError('Customer not found', 404)
 
     const so: any = body.salesOrderId
       ? await db.salesOrder.findFirst({ where: { id: body.salesOrderId, companyId }, include: { items: true } })
@@ -74,10 +93,37 @@ export async function POST(req: Request) {
     }
     if (so && so.customerId !== customerId) throw new ApiError('Sales order belongs to a different customer', 400)
 
-    const provided: any[] | null = Array.isArray(body.lines) && body.lines.length ? body.lines : null
+    // Delivery challan link: same tenant, DISPATCHED, same sales order, not already billed
+    let challan: { id: string; number: string; items: { salesOrderItemId: string | null; itemId: string; qty: number }[] } | null = null
+    if (body.challanId) {
+      if (!so) throw new ApiError('salesOrderId is required when invoicing a delivery challan', 400)
+      const ch = await db.deliveryChallan.findFirst({ where: { id: String(body.challanId), companyId }, include: { items: true } })
+      if (!ch) throw new ApiError('Delivery challan not found', 404)
+      if (ch.status !== 'DISPATCHED') throw new ApiError(`Delivery challan ${ch.number} is ${ch.status} — only DISPATCHED challans can be invoiced`, 400)
+      if (ch.salesOrderId !== so.id) throw new ApiError(`Delivery challan ${ch.number} belongs to a different sales order`, 400)
+      const billed = await db.salesInvoice.findFirst({
+        where: { companyId, challanId: ch.id, status: { not: 'CANCELLED' } },
+        select: { number: true },
+      })
+      if (billed) throw new ApiError(`Delivery challan ${ch.number} is already invoiced on ${billed.number}`, 409)
+      challan = { id: ch.id, number: ch.number, items: ch.items }
+    }
+
+    const rawLines = Array.isArray(body.lines) ? body.lines : Array.isArray(body.items) ? body.items : null
+    const provided: any[] | null = rawLines && rawLines.length ? rawLines : null
+    const soItemById = new Map<string, any>(so ? so.items.map((si: any) => [si.id, si]) : [])
 
     let lines: InvLine[] = []
-    if (so && !provided) {
+    if (so && challan && !provided) {
+      // Auto-build from the challan's lines, priced from the SO
+      const chNo = challan.number
+      lines = challan.items.map((ci) => {
+        const si = ci.salesOrderItemId ? soItemById.get(ci.salesOrderItemId) : so.items.find((x: any) => x.itemId === ci.itemId)
+        if (!si) throw new ApiError(`Challan ${chNo} has a line that is not on the sales order`, 400)
+        return { soItemId: si.id, itemId: ci.itemId, qty: r2(ci.qty), rate: si.rate, discountPct: si.discountPct, gstRate: si.gstRate, cessRate: NaN }
+      })
+      if (!lines.length) throw new ApiError(`Challan ${challan.number} has no lines`, 400)
+    } else if (so && !provided) {
       // Auto-build from SO items with un-invoiced balance
       const pending = so.items.filter((si: any) => r2(si.qty - si.invoicedQty) > 0.005)
       if (!pending.length) throw new ApiError('No un-invoiced qty remaining on this sales order', 400)
@@ -88,51 +134,84 @@ export async function POST(req: Request) {
         rate: si.rate,
         discountPct: si.discountPct,
         gstRate: si.gstRate,
+        cessRate: NaN, // filled from the item master below
       }))
     } else if (provided) {
       lines = provided.map((l) => {
-        if (!l.itemId) throw new ApiError('itemId is required on every line', 400)
-        const qty = Number(l.qty)
-        const rate = Number(l.rate)
-        if (!(qty > 0)) throw new ApiError('Line qty must be greater than 0', 400)
-        if (Number.isNaN(rate) || rate < 0) throw new ApiError('Line rate must be 0 or more', 400)
-        return {
-          soItemId: null,
-          itemId: String(l.itemId),
-          qty: r2(qty),
-          rate: r2(rate),
-          discountPct: Number(l.discountPct ?? 0) || 0,
-          gstRate: l.gstRate === undefined || l.gstRate === null || l.gstRate === '' ? 18 : Number(l.gstRate),
+        // rate kept at 4 dp (see parseLine)
+        const line = parseLine(l)
+        // Optional explicit SO line link (must be a line of this SO, same item)
+        if (l.salesOrderItemId && so) {
+          const si = soItemById.get(String(l.salesOrderItemId))
+          if (!si || si.itemId !== line.itemId) throw new ApiError('salesOrderItemId does not match a line of this sales order', 400)
+          line.soItemId = si.id
         }
+        return line
       })
     } else {
       throw new ApiError('Provide salesOrderId (auto-lines) or explicit lines', 400)
     }
 
-    // HSN from item master
-    const itemIds = Array.from(new Set(lines.map((l) => l.itemId)))
-    const masterItems = await db.item.findMany({ where: { companyId, id: { in: itemIds } }, select: { id: true, hsn: true } })
-    if (masterItems.length !== itemIds.length) throw new ApiError('One or more line items were not found', 400)
-    const hsnMap = new Map(masterItems.map((m) => [m.id, m.hsn]))
+    // HSN (and default cess %) from item master
+    const master = await withMasterInfo(companyId, lines)
+    lines = master.lines
+    const hsnMap = master.hsnMap
+
+    // Direct sale (no SO / challan): optionally take the goods out of stock with this invoice
+    const deductStock = !so && !challan && (body.deductStock === true || body.deductStock === 'true')
+    const stockWarehouseId: string | null = deductStock ? await resolveStockWarehouse(companyId, body.stockWarehouseId) : null
 
     const date = body.date ? new Date(body.date) : new Date()
+    if (isNaN(date.getTime())) throw new ApiError('date is not a valid date', 400)
     const dueDate = body.dueDate
       ? new Date(body.dueDate)
-      : new Date(date.getTime() + (customer.paymentTermsDays || 30) * 24 * 60 * 60 * 1000)
-    const placeOfSupply = body.placeOfSupply ?? customer.state ?? null
+      : isCashSale ? date : new Date(date.getTime() + (customer?.paymentTermsDays || 30) * 24 * 60 * 60 * 1000)
+    const placeOfSupply = body.placeOfSupply ?? (isCashSale ? company.state : customer?.state) ?? null
+    const customerPoDate = body.customerPoDate ? new Date(body.customerPoDate) : null
+    if (customerPoDate && isNaN(customerPoDate.getTime())) throw new ApiError('customerPoDate is not a valid date', 400)
 
-    const interState = isInterStateParty(company ?? {}, customer ?? {})
-    const totals = computeGst(lines, interState)
+    // Cash (counter) sales are always intra-state
+    const interState = isCashSale ? false : isInterStateParty(company, customer ?? {})
+    const billDiscount = optNum(body.billDiscount, 'Bill discount', 0)
+    const freightCharge = optNum(body.freightCharge, 'Freight', 0)
+    const freightGstRate = gstRateOf(body.freightGstRate, 'Freight GST %')
+    const packingCharge = optNum(body.packingCharge, 'Packing', 0)
+    const packingGstRate = gstRateOf(body.packingGstRate, 'Packing GST %')
+    const totals = computeBillTotals(lines, interState, {
+      billDiscount,
+      freight: { amount: freightCharge, gstRate: freightGstRate },
+      packing: { amount: packingCharge, gstRate: packingGstRate },
+      roundOff: company.roundOffTotals ?? true,
+    })
+
+    // Money received at billing time (cash sale defaults to the full bill)
+    const received = optNum(body.receivedAmount, 'Received amount', isCashSale ? totals.grandTotal : 0)
+    if (received > totals.grandTotal + 0.01) throw new ApiError(`Received amount exceeds the invoice total (₹${totals.grandTotal.toFixed(2)})`, 400)
+    const receivedMode = body.receivedMode ? String(body.receivedMode).toUpperCase() : 'CASH'
+    if (received > 0 && !RECEIVE_MODES.includes(receivedMode)) throw new ApiError(`Payment mode must be one of ${RECEIVE_MODES.join(', ')}`, 400)
+    const paid = r2(Math.min(received, totals.grandTotal))
+    const status = paid <= 0.005 ? 'UNPAID' : totals.grandTotal - paid <= 0.01 ? 'PAID' : 'PARTIALLY_PAID'
 
     const created = await db.$transaction(async (tx) => {
       const t = tx as any
+      if (challan) {
+        // Lock the challan row first so two invoices for the same challan serialise, then re-check
+        const lock = await tx.deliveryChallan.updateMany({ where: { id: challan.id, companyId, status: 'DISPATCHED' }, data: { updatedAt: new Date() } })
+        if (lock.count !== 1) throw new ApiError('This delivery challan was just changed by someone else — refresh and try again', 409)
+        const dup = await tx.salesInvoice.count({ where: { companyId, challanId: challan.id, status: { not: 'CANCELLED' } } })
+        if (dup > 0) throw new ApiError(`Delivery challan ${challan.number} is already invoiced`, 409)
+      }
+      const party = isCashSale ? await cashSaleCustomer(t, companyId) : { id: customerId as string, name: customer?.name || '' }
       const number = await nextDocNumber(t, companyId, 'INV', date)
+      // Cash & Bank account the money received now goes into
+      const accountId = paid > 0.005 ? await accountForMode(t, companyId, receivedMode, optStr(body.receivedAccountId)) : null
       const inv = await tx.salesInvoice.create({
         data: {
           companyId,
           number,
           salesOrderId: so?.id ?? null,
-          customerId,
+          challanId: challan?.id ?? null,
+          customerId: party.id,
           date,
           dueDate,
           placeOfSupply,
@@ -142,9 +221,28 @@ export async function POST(req: Request) {
           cgst: totals.cgst,
           sgst: totals.sgst,
           igst: totals.igst,
+          cess: totals.cess,
           grandTotal: totals.grandTotal,
-          status: 'UNPAID',
+          billDiscount: totals.billDiscount,
+          freightCharge: totals.freight,
+          freightGstRate,
+          packingCharge: totals.packing,
+          packingGstRate,
+          roundOff: totals.roundOff,
+          isCashSale,
+          paidAmount: paid,
+          status,
           notes: body.notes ?? null,
+          customerPoNo: optStr(body.customerPoNo),
+          customerPoDate,
+          shippingAddress: optStr(body.shippingAddress),
+          vehicleNo: optStr(body.vehicleNo),
+          transporter: optStr(body.transporter),
+          billingName: optStr(body.billingName),
+          driverPhone: optStr(body.driverPhone),
+          deductStock,
+          stockWarehouseId,
+          accountId,
           items: {
             create: lines.map((l, i) => ({
               itemId: l.itemId,
@@ -153,11 +251,43 @@ export async function POST(req: Request) {
               rate: l.rate,
               discountPct: l.discountPct,
               gstRate: l.gstRate,
+              cessRate: l.cessRate,
               lineTotal: r2(totals.computed[i].taxable),
+              // the requested batch / serials; the batch actually drawn is written back below
+              ...(deductStock ? { batchNo: l.batchNo ?? null, serials: l.serials ?? null } : {}),
             })),
           },
         },
       })
+
+      // Payment received with the bill → receipt against this invoice
+      let receiptNo: string | null = null
+      if (paid > 0.005) {
+        receiptNo = await nextDocNumber(t, companyId, 'RCPT', date)
+        await tx.payment.create({
+          data: {
+            companyId,
+            number: receiptNo,
+            type: 'RECEIPT',
+            partyType: 'CUSTOMER',
+            customerId: party.id,
+            invoiceType: 'SALES',
+            invoiceId: inv.id,
+            amount: paid,
+            mode: receivedMode,
+            date,
+            reference: optStr(body.receivedReference),
+            notes: `Received at billing — ${number}`,
+            accountId,
+          },
+        })
+      }
+
+      // Direct sale: goods leave the chosen warehouse now (services are skipped by postStock)
+      if (deductStock && stockWarehouseId) {
+        // Batch / serial layer (no-op for untracked items): chosen batch, else FEFO; drawn batches written back
+        await postSaleStock(tx, { companyId, invoiceId: inv.id, number, date, warehouseId: stockWarehouseId, lines })
+      }
 
       // Move SO invoicedQty forward
       if (so) {
@@ -187,11 +317,20 @@ export async function POST(req: Request) {
             }
           }
         }
+
+        // Fully dispatched AND fully invoiced → the order is done
+        const fresh = await tx.salesOrderItem.findMany({ where: { salesOrderId: so.id } })
+        const done = fresh.length > 0 && fresh.every((si) =>
+          r2(si.dispatchedQty) >= r2(si.qty) - 0.005 && r2(si.invoicedQty) >= r2(si.qty) - 0.005)
+        if (done) {
+          const soNow = await tx.salesOrder.findUnique({ where: { id: so.id }, select: { status: true } })
+          if (soNow && soNow.status === 'DISPATCHED') await claimStatus(t.salesOrder, so.id, ['DISPATCHED'], 'COMPLETED')
+        }
       }
 
       await logAudit(t, {
         companyId, userName: body.userName, action: 'CREATE', entity: 'SalesInvoice', entityId: inv.id,
-        details: `Tax invoice ${number} for ${customer.name} • ₹${totals.grandTotal}${so ? ` against ${so.number}` : ''}`,
+        details: `Tax invoice ${number} for ${party.name}${isCashSale ? ' (cash sale)' : ''} • ₹${totals.grandTotal}${so ? ` against ${so.number}` : ''}${challan ? ` / ${challan.number}` : ''}${receiptNo ? ` • received ₹${paid} ${receivedMode} (${receiptNo})` : ''}${deductStock ? ' • stock deducted' : ''}`,
       })
       return inv
     })

@@ -1,5 +1,7 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { accountBalances } from '@/lib/accounts'
+import { partyOutstanding } from '@/lib/accounting'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -146,6 +148,9 @@ export async function GET(req: Request) {
       }),
     ])
 
+    // Money cards (Vyapar style): party outstanding incl. opening balances + cash / bank balances
+    const [party, accBalances] = await Promise.all([partyOutstanding(companyId), accountBalances(companyId)])
+
     // Low stock: total balance qty per item vs reorderLevel
     const qtyByItem = new Map<string, number>()
     for (const b of balanceSums) qtyByItem.set(b.itemId, r2(b._sum.qty || 0))
@@ -189,6 +194,12 @@ export async function GET(req: Request) {
         lowStockCount: lowRows.length,
         openWorkOrders: openWO,
         pendingApprovals: prCount + poCount,
+      },
+      money: {
+        youWillReceive: party.receivable,
+        youWillPay: party.payable,
+        cashInHand: r2(accBalances.filter((a) => a.type === 'CASH').reduce((s, a) => s + a.balance, 0)),
+        bankBalance: r2(accBalances.filter((a) => a.type !== 'CASH').reduce((s, a) => s + a.balance, 0)),
       },
       charts: {
         salesTrend: trendByMonth(salesRows.map((i) => ({ date: i.date, value: i.grandTotal })), months),

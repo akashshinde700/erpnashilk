@@ -2,14 +2,15 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { ClipboardList, PlayCircle, Plus } from 'lucide-react'
+import { CheckCircle2, ClipboardList, Factory, PackageMinus, PlayCircle, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   ConfirmAction, DataTable, DateCell, Field, FormDialog, NumberInput, PageHeader, Qty, SelectInput, StatCard,
-  StatusBadge, TextInput, type Column, useRowHighlight,
+  StatusBadge, TextInput, type Column, useRowHighlight, useCreatePreset, openCreate,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtDate, fmtNum } from '@/lib/erp-constants'
@@ -37,7 +38,7 @@ interface WoRow {
   item?: { code?: string; name?: string; uom?: string } | null
   warehouse?: { code?: string; name?: string } | null
 }
-interface WoDetail extends WoRow { bom?: { id: string; code?: string; items?: BomComponent[] } | null }
+interface WoDetail extends WoRow { bom?: { id: string; code?: string; outputQty?: number; items?: BomComponent[] } | null; consumed?: Record<string, number> }
 
 export default function WorkOrdersModule({ companyId }: { companyId: string }) {
   const highlightId = useRowHighlight('work-orders')
@@ -94,10 +95,16 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
     setStartDate(todayISO()); setDueDate(''); setPriority('NORMAL'); setNotes('')
   }
 
+  // Shortcuts from other screens (party view, row actions, quick actions) open this form pre-filled
+  useCreatePreset('work-orders', (d) => {
+    resetForm()
+    if (d.itemId) setItemId(String(d.itemId))
+    if (d.plannedQty) setPlannedQty(Number(d.plannedQty) || 0)
+    setOpen(true)
+  })
+
   async function create() {
     if (!itemId) { toast.error('Select an item to manufacture'); return }
-    if (!warehouseId) { toast.error('Select a warehouse'); return }
-    if (!(plannedQty > 0)) { toast.error('Planned qty must be greater than 0'); return }
     setSaving(true)
     try {
       await apiPost('/api/work-orders', {
@@ -113,12 +120,13 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
     } finally { setSaving(false) }
   }
 
-  async function action(r: WoRow, act: 'release' | 'cancel') {
+  async function action(r: WoRow, act: 'release' | 'complete' | 'cancel') {
+    const next = act === 'release' ? 'RELEASED' : act === 'complete' ? 'COMPLETED' : 'CANCELLED'
     try {
       await apiPatch(`/api/work-orders/${r.id}`, { companyId, action: act })
-      toast.success(act === 'release' ? `WO ${r.number} released` : `WO ${r.number} cancelled`)
+      toast.success(`WO ${r.number} ${next.toLowerCase()}`)
       void list.refetch()
-      if (detailId === r.id) setDetail((d) => (d ? { ...d, status: act === 'release' ? 'RELEASED' : 'CANCELLED' } : d))
+      if (detailId === r.id) setDetail((d) => (d ? { ...d, status: next } : d))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Action failed')
     }
@@ -160,6 +168,24 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
               <PlayCircle className="h-3.5 w-3.5 mr-1" />Release
             </Button>
           )}
+          {(r.status === 'RELEASED' || r.status === 'IN_PROGRESS') && (
+            <>
+              <Button size="sm" variant="ghost" className="h-7" title="Issue material to this work order" onClick={() => openCreate('material-issues', { woId: r.id })}>
+                <PackageMinus className="h-3.5 w-3.5 mr-1" />Issue
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7" title="Report production against this work order" onClick={() => openCreate('production-entries', { woId: r.id })}>
+                <Factory className="h-3.5 w-3.5 mr-1" />Report
+              </Button>
+            </>
+          )}
+          {r.status === 'IN_PROGRESS' && r.producedQty > 0 && (
+            <ConfirmAction
+              title={`Complete WO ${r.number}?`}
+              message={`Close ${r.number} at produced qty ${fmtNum(r.producedQty)} of planned ${fmtNum(r.plannedQty)}? No further production can be reported against it.`}
+              onConfirm={() => void action(r, 'complete')}
+              trigger={<Button size="sm" variant="ghost" className="h-7 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Complete</Button>}
+            />
+          )}
           <Button size="sm" variant="ghost" className="h-7" onClick={() => void openDetail(r)}>
             <ClipboardList className="h-3.5 w-3.5 mr-1" />Detail
           </Button>
@@ -184,7 +210,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
         description="Plan, release and track production orders"
         actions={
           <Button onClick={() => { resetForm(); setOpen(true) }}>
-            <Plus className="h-4 w-4 mr-1.5" />New Work Order
+            <Plus className="h-4 w-4 mr-1.5" />Work Order
           </Button>
         }
       />
@@ -200,7 +226,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
 
       {/* ---- Create dialog ---- */}
       <FormDialog
-        open={open} onOpenChange={setOpen} title="New Work Order"
+        open={open} onOpenChange={setOpen} title="Work Order"
         description="Create a production order against a finished / semi-finished item"
         submitLabel="Create" loading={saving} onSubmit={create} wide
       >
@@ -221,17 +247,17 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
               ]}
             />
           </Field>
-          <Field label="Produce Into Warehouse" required>
+          <Field label="Produce Into Warehouse">
             <SelectInput
               value={warehouseId} onChange={setWarehouseId}
               options={whRows.map((w) => ({ value: w.id, label: `${w.code || ''} — ${w.name || ''}`.trim() }))}
               placeholder="Select warehouse…"
             />
           </Field>
-          <Field label="Planned Qty" required>
+          <Field label="Planned Qty">
             <NumberInput value={plannedQty} onChange={setPlannedQty} min={0} step="any" placeholder="0" />
           </Field>
-          <Field label="Start Date" required>
+          <Field label="Start Date">
             <TextInput type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </Field>
           <Field label="Due Date">
@@ -290,11 +316,13 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
                           <TableHead className="text-right">Per Unit</TableHead>
                           <TableHead className="text-right">Scrap %</TableHead>
                           <TableHead className="text-right">Required</TableHead>
+                          <TableHead className="text-right">Consumed</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {bomComps.map((c) => {
-                          const required = r2((detail.plannedQty || 0) * (c.qty || 0) * (1 + (c.scrapPct || 0) / 100))
+                          const required = r2((detail.plannedQty || 0) * (c.qty || 0) / ((detail.bom?.outputQty || 0) > 0 ? detail.bom!.outputQty! : 1) * (1 + (c.scrapPct || 0) / 100))
+                          const consumed = detail.consumed?.[c.itemId] || 0
                           return (
                             <TableRow key={c.id}>
                               <TableCell>
@@ -304,6 +332,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
                               <TableCell className="text-right tabular-nums">{fmtNum(c.qty)}</TableCell>
                               <TableCell className="text-right tabular-nums">{fmtNum(c.scrapPct || 0)}</TableCell>
                               <TableCell className="text-right tabular-nums font-medium">{fmtNum(required)}</TableCell>
+                              <TableCell className={cn('text-right tabular-nums', consumed + 0.001 >= required ? 'text-emerald-600' : 'text-muted-foreground')}>{fmtNum(consumed)}</TableCell>
                             </TableRow>
                           )
                         })}

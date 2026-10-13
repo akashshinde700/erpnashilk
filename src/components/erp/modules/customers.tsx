@@ -1,80 +1,30 @@
 'use client'
 
 import * as React from 'react'
-import { Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Eye, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
+import { apiDelete, useList } from '@/lib/use-api'
+import { PartyViewDialog } from '@/components/erp/party-view'
+import { isBothParty, PartyFormDialog, PARTY_TAB_EVENT, type PartyRecord, type SavedKind } from '@/components/erp/party-form'
 import ImportDialog from '@/components/erp/import-dialog'
 import {
   ConfirmAction,
   DataTable,
-  Field,
-  FormDialog,
   Money,
-  NumberInput,
   PageHeader,
-  SelectInput,
   StatusBadge,
-  TextInput,
   useRowHighlight,
 } from '@/components/erp/kit'
 import type { Column } from '@/components/erp/kit'
 
 // ---------- API shapes ----------
 
-interface CustomerRow {
-  id: string
-  code: string
-  name: string
-  gstin?: string | null
-  contactPerson?: string | null
-  phone?: string | null
-  email?: string | null
-  addressLine?: string | null
-  city?: string | null
-  state?: string | null
-  stateCode?: string | null
-  paymentTermsDays?: number
-  creditLimit?: number
-  status: string
-}
+type CustomerRow = PartyRecord
 
 interface CustomersResponse {
   items: CustomerRow[]
   total?: number
-}
-
-interface FormState {
-  code: string
-  name: string
-  gstin: string
-  contactPerson: string
-  phone: string
-  email: string
-  addressLine: string
-  city: string
-  state: string
-  stateCode: string
-  paymentTermsDays: number
-  creditLimit: number
-  status: string
-}
-
-const emptyForm: FormState = {
-  code: '',
-  name: '',
-  gstin: '',
-  contactPerson: '',
-  phone: '',
-  email: '',
-  addressLine: '',
-  city: '',
-  state: '',
-  stateCode: '',
-  paymentTermsDays: 30,
-  creditLimit: 0,
-  status: 'ACTIVE',
 }
 
 export default function CustomersModule({ companyId }: { companyId: string }) {
@@ -90,71 +40,22 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
   const [open, setOpen] = React.useState(false)
   const [importOpen, setImportOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<CustomerRow | null>(null)
-  const [saving, setSaving] = React.useState(false)
-  const [form, setForm] = React.useState<FormState>(emptyForm)
-
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
-    setForm((f) => ({ ...f, [key]: value }))
+  const [viewing, setViewing] = React.useState<CustomerRow | null>(null)
 
   function openCreate() {
     setEditing(null)
-    setForm(emptyForm)
     setOpen(true)
   }
 
   function openEdit(row: CustomerRow) {
     setEditing(row)
-    setForm({
-      code: row.code,
-      name: row.name,
-      gstin: row.gstin ?? '',
-      contactPerson: row.contactPerson ?? '',
-      phone: row.phone ?? '',
-      email: row.email ?? '',
-      addressLine: row.addressLine ?? '',
-      city: row.city ?? '',
-      state: row.state ?? '',
-      stateCode: row.stateCode ?? '',
-      paymentTermsDays: row.paymentTermsDays ?? 30,
-      creditLimit: row.creditLimit ?? 0,
-      status: row.status,
-    })
     setOpen(true)
   }
 
-  async function submit() {
-    if (!form.code.trim() || !form.name.trim()) {
-      toast.error('Code and name are required')
-      return
-    }
-    setSaving(true)
-    try {
-      const body = {
-        companyId,
-        code: form.code.trim(),
-        name: form.name.trim(),
-        gstin: form.gstin.trim() || null,
-        contactPerson: form.contactPerson.trim() || null,
-        phone: form.phone.trim() || null,
-        email: form.email.trim() || null,
-        addressLine: form.addressLine.trim() || null,
-        city: form.city.trim() || null,
-        state: form.state.trim() || null,
-        stateCode: form.stateCode.trim() || null,
-        paymentTermsDays: form.paymentTermsDays,
-        creditLimit: form.creditLimit,
-        status: form.status,
-      }
-      if (editing) await apiPatch(`/api/customers/${editing.id}`, body)
-      else await apiPost('/api/customers', body)
-      toast.success('Saved')
-      setOpen(false)
-      await refetch()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save customer')
-    } finally {
-      setSaving(false)
-    }
+  // Saved under the other type → show it there; otherwise refresh this list.
+  function onSaved(saved: SavedKind) {
+    if (saved === 'customer' || saved === 'both') void refetch()
+    else window.dispatchEvent(new CustomEvent(PARTY_TAB_EVENT, { detail: 'suppliers' }))
   }
 
   async function remove(row: CustomerRow) {
@@ -169,7 +70,16 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
 
   const columns: Column<CustomerRow>[] = [
     { key: 'code', header: 'Code', render: (r) => <span className="font-medium">{r.code}</span> },
-    { key: 'name', header: 'Name', render: (r) => <span className="block max-w-44 truncate">{r.name}</span> },
+    {
+      key: 'name',
+      header: 'Name',
+      render: (r) => (
+        <span className="flex max-w-56 items-center gap-1.5">
+          <span className="truncate">{r.name}</span>
+          {isBothParty(r) && <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300" title="Also a supplier">Both</span>}
+        </span>
+      ),
+    },
     { key: 'city', header: 'City', render: (r) => <span>{r.city || '—'}</span> },
     { key: 'state', header: 'State', hideOnMobile: true, render: (r) => <span>{r.state || '—'}</span> },
     {
@@ -186,8 +96,11 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
       header: '',
       className: 'text-right',
       render: (r) => (
-        <div className="flex items-center justify-end gap-1">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(r)} title="Edit">
+        <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setViewing(r) }} title="History, dues & documents">
+            <Eye className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); openEdit(r) }} title="Edit">
             <Pencil className="h-3.5 w-3.5" />
           </Button>
           <ConfirmAction
@@ -217,7 +130,7 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
               <Upload className="h-4 w-4 mr-1.5" /> Import CSV
             </Button>
             <Button size="sm" onClick={openCreate}>
-              <Plus className="h-4 w-4 mr-1.5" /> New Customer
+              <Plus className="h-4 w-4 mr-1.5" /> Customer
             </Button>
           </>
         }
@@ -225,6 +138,7 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
 
       <DataTable
         columns={columns}
+        onRowClick={(r) => setViewing(r)}
         rows={rows}
         loading={loading}
         highlightId={highlightId}
@@ -252,64 +166,22 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         }}
       />
 
-      <FormDialog
+      <PartyViewDialog
+        open={!!viewing}
+        onOpenChange={(o) => { if (!o) setViewing(null) }}
+        kind="customer"
+        id={viewing?.id ?? null}
+        onEdit={() => { if (viewing) openEdit(viewing) }}
+      />
+
+      <PartyFormDialog
         open={open}
         onOpenChange={setOpen}
-        title={editing ? 'Edit Customer' : 'New Customer'}
-        description={editing ? `Updating ${editing.code}` : 'Add a new customer to the master'}
-        onSubmit={submit}
-        loading={saving}
-        submitLabel={editing ? 'Update' : 'Create'}
-      >
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Code" required>
-            <TextInput value={form.code} onChange={(e) => set('code', e.target.value)} placeholder="CUST-001" />
-          </Field>
-          <Field label="Name" required>
-            <TextInput value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Acme Industries" />
-          </Field>
-          <Field label="GSTIN">
-            <TextInput value={form.gstin} onChange={(e) => set('gstin', e.target.value)} placeholder="27ABCDE1234F1Z5" />
-          </Field>
-          <Field label="Contact Person">
-            <TextInput value={form.contactPerson} onChange={(e) => set('contactPerson', e.target.value)} />
-          </Field>
-          <Field label="Phone">
-            <TextInput value={form.phone} onChange={(e) => set('phone', e.target.value)} placeholder="9876543210" />
-          </Field>
-          <Field label="Email">
-            <TextInput type="email" value={form.email} onChange={(e) => set('email', e.target.value)} placeholder="buyer@company.com" />
-          </Field>
-          <Field label="Address" className="sm:col-span-2">
-            <TextInput value={form.addressLine} onChange={(e) => set('addressLine', e.target.value)} placeholder="Street, area" />
-          </Field>
-          <Field label="City">
-            <TextInput value={form.city} onChange={(e) => set('city', e.target.value)} placeholder="Pune" />
-          </Field>
-          <Field label="State">
-            <TextInput value={form.state} onChange={(e) => set('state', e.target.value)} placeholder="Maharashtra" />
-          </Field>
-          <Field label="State Code">
-            <TextInput value={form.stateCode} onChange={(e) => set('stateCode', e.target.value)} placeholder="27" />
-          </Field>
-          <Field label="Payment Terms (days)">
-            <NumberInput value={form.paymentTermsDays} onChange={(n) => set('paymentTermsDays', n)} />
-          </Field>
-          <Field label="Credit Limit">
-            <NumberInput value={form.creditLimit} onChange={(n) => set('creditLimit', n)} />
-          </Field>
-          <Field label="Status">
-            <SelectInput
-              value={form.status}
-              onChange={(v) => set('status', v)}
-              options={[
-                { value: 'ACTIVE', label: 'Active' },
-                { value: 'INACTIVE', label: 'Inactive' },
-              ]}
-            />
-          </Field>
-        </div>
-      </FormDialog>
+        kind="customer"
+        editing={editing}
+        companyId={companyId}
+        onSaved={onSaved}
+      />
 
       <ImportDialog
         open={importOpen}

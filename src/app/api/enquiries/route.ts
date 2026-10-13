@@ -53,7 +53,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/enquiries  { companyId, customerId, date?, contactName?, source?, notes?, items: [{itemId, qty, notes?}] }
+// POST /api/enquiries  { companyId, customerId, date?, contactName?, source?, notes?, requiredBy?, expectedValue?, items: [{itemId, qty, notes?}] }
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'enquiries')
@@ -77,6 +77,14 @@ export async function POST(req: Request) {
     if (itemCount !== itemIds.length) throw new ApiError('One or more itemId values are invalid for this company', 400)
 
     const date = body.date ? new Date(body.date) : new Date()
+    const requiredBy = body.requiredBy ? new Date(body.requiredBy) : null
+    if (requiredBy && isNaN(requiredBy.getTime())) throw new ApiError('requiredBy is not a valid date', 400)
+    let expectedValue: number | null = null
+    if (body.expectedValue !== undefined && body.expectedValue !== null && body.expectedValue !== '') {
+      expectedValue = Number(body.expectedValue)
+      if (!Number.isFinite(expectedValue) || expectedValue < 0) throw new ApiError('expectedValue must be a non-negative number', 400)
+      expectedValue = r2(expectedValue)
+    }
 
     const created = await db.$transaction(async (tx) => {
       const t = tx as any
@@ -90,6 +98,8 @@ export async function POST(req: Request) {
           contactName: body.contactName ?? customer.contactPerson ?? null,
           source: body.source ?? null,
           notes: body.notes ?? null,
+          requiredBy,
+          expectedValue,
           status: 'OPEN',
           items: {
             create: rawItems.map((l: any) => ({

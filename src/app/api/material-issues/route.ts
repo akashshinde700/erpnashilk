@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, availableQty, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { batchNote, consumeBatches } from '@/lib/batches'
 
 // MaterialIssueItem has no item relation in the schema — join in JS.
 async function attachIssueItems(issues: any[]) {
@@ -52,12 +53,15 @@ export async function POST(req: Request) {
     const companyId = await companyRequired(req, body.companyId)
     const { workOrderId, warehouseId, notes, userName, lines } = body
 
-    if (!workOrderId) throw new ApiError('workOrderId is required', 400)
-    if (!warehouseId) throw new ApiError('warehouseId is required', 400)
+    if (!workOrderId) throw new ApiError('Select a work order — its BOM decides what to issue', 400)
     if (!Array.isArray(lines) || lines.length === 0) throw new ApiError('At least one issue line is required', 400)
 
-    const warehouse = await db.warehouse.findFirst({ where: { id: warehouseId, companyId } })
-    if (!warehouse) throw new ApiError('Warehouse not found', 404)
+    // Optional warehouse: defaults to the raw-material store (else the first warehouse).
+    const warehouse = warehouseId
+      ? await db.warehouse.findFirst({ where: { id: warehouseId, companyId } })
+      : (await db.warehouse.findFirst({ where: { companyId, type: 'RM' }, orderBy: { createdAt: 'asc' } }))
+        ?? (await db.warehouse.findFirst({ where: { companyId }, orderBy: { createdAt: 'asc' } }))
+    if (!warehouse) throw new ApiError(warehouseId ? 'Warehouse not found' : 'Create a warehouse first', 404)
 
     const created = await db.$transaction(async (tx) => {
       const wo = await tx.workOrder.findFirst({ where: { id: workOrderId, companyId } })
@@ -72,6 +76,7 @@ export async function POST(req: Request) {
           itemId: String(l.itemId || ''),
           requiredQty: Number(l.requiredQty) || 0,
           issuedQty: r2(Number(l.issuedQty) || 0),
+          batchNo: String(l.batchNo || '').trim() || null, // batch-tracked: chosen batch, else FEFO
         }))
         .filter((l: any) => l.itemId && l.issuedQty > 0)
       if (validLines.length === 0) throw new ApiError('At least one line with issued quantity is required', 400)
@@ -110,15 +115,18 @@ export async function POST(req: Request) {
       for (const l of validLines) {
         const item = itemMap.get(l.itemId)!
         const bal = await tx.stockBalance.findUnique({
-          where: { itemId_warehouseId: { itemId: l.itemId, warehouseId } },
+          where: { itemId_warehouseId: { itemId: l.itemId, warehouseId: warehouse.id } },
         })
         const rate = bal?.avgRate && bal.avgRate > 0 ? bal.avgRate : item.standardCost
 
+        // Batch layer (no-op for untracked items): chosen batch else FEFO, legacy un-batched stock last.
+        // Taken before postStock so the ledger note records the split; postStock still checks the total.
+        const allocs = await consumeBatches(tx, { companyId, itemId: l.itemId, warehouseId: warehouse.id, qty: l.issuedQty, batchNo: l.batchNo })
         await postStock(tx as any, {
-          companyId, itemId: l.itemId, warehouseId, type: 'ISSUE_OUT',
+          companyId, itemId: l.itemId, warehouseId: warehouse.id, type: 'ISSUE_OUT',
           qtyOut: l.issuedQty, rate,
           refType: 'MATERIAL_ISSUE', refId: issue.id, refNumber: number,
-          notes: `Issued to work order ${wo.number}`,
+          notes: `Issued to work order ${wo.number}${batchNote(allocs)}`,
         })
 
         await tx.materialIssueItem.create({

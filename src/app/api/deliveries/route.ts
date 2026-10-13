@@ -1,5 +1,9 @@
 import { db } from '@/lib/db'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { parseSerials, joinSerials } from '@/lib/batches'
+
+// Optional free-text field: blank → null
+const optStr = (v: unknown) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim())
 
 // DeliveryChallanItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
 async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
@@ -35,14 +39,27 @@ export async function GET(req: Request) {
         items: true,
       },
     })
-    const items = await withItemInfo(companyId, rows)
+    const withItems = await withItemInfo(companyId, rows)
+    // Attach the live (non-cancelled) invoice raised against each challan, if any
+    const challanIds = rows.map((r) => r.id)
+    const invs = challanIds.length
+      ? await db.salesInvoice.findMany({
+          where: { companyId, challanId: { in: challanIds }, status: { not: 'CANCELLED' } },
+          select: { id: true, number: true, challanId: true },
+        })
+      : []
+    const invMap = new Map(invs.map((i) => [i.challanId as string, i]))
+    const items = withItems.map((r) => ({ ...r, invoice: invMap.get(r.id) ?? null }))
     return ok({ items, total: items.length })
   } catch (e) {
     return handleError(e)
   }
 }
 
-// POST /api/deliveries  { companyId, salesOrderId, warehouseId, date?, vehicleNo?, transporter?, notes?, lines: [{salesOrderItemId, itemId?, qty}] }
+// POST /api/deliveries  { companyId, salesOrderId, warehouseId, date?, vehicleNo?, transporter?, ewayBillNo?, lrNo?, lrDate?,
+//   shippingAddress?, driverPhone?, notes?, lines: [{salesOrderItemId, itemId?, qty, batchNo?, serials?}] }
+// batchNo (batch-tracked items: blank = FEFO at dispatch) and serials (serial-tracked items, newline-separated)
+// are only stored here — batches / serials move when the challan is dispatched.
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'deliveries')
@@ -58,6 +75,8 @@ export async function POST(req: Request) {
     if (!warehouse) throw new ApiError('Warehouse not found', 404)
 
     const date = body.date ? new Date(body.date) : new Date()
+    const lrDate = body.lrDate ? new Date(body.lrDate) : null
+    if (lrDate && isNaN(lrDate.getTime())) throw new ApiError('lrDate is not a valid date', 400)
 
     const created = await db.$transaction(async (tx) => {
       const t = tx as any
@@ -69,6 +88,11 @@ export async function POST(req: Request) {
       }
 
       const soItemMap = new Map(so.items.map((si) => [si.id, si]))
+      const flagRows = await tx.item.findMany({
+        where: { companyId, id: { in: Array.from(new Set(so.items.map((si) => si.itemId).concat(rawLines.filter((l) => l?.itemId).map((l) => String(l.itemId))))) } },
+        select: { id: true, code: true, name: true, batchTracked: true, trackSerial: true },
+      })
+      const flags = new Map(flagRows.map((f) => [f.id, f]))
       const lineData = rawLines.map((l) => {
         const soItem = l.salesOrderItemId ? soItemMap.get(String(l.salesOrderItemId)) : undefined
         if (!soItem) throw new ApiError('Each line needs a valid salesOrderItemId from this sales order', 400)
@@ -76,10 +100,18 @@ export async function POST(req: Request) {
         if (!(qty > 0)) throw new ApiError('Line qty must be greater than 0', 400)
         const pending = r2(soItem.qty - soItem.dispatchedQty)
         if (r2(qty) > pending) throw new ApiError('Line qty exceeds pending qty')
+        const itemId = l.itemId ? String(l.itemId) : soItem.itemId
+        const f = flags.get(itemId)
+        const serials = f?.trackSerial ? parseSerials(l.serials) : []
+        if (f?.trackSerial && serials.length && serials.length !== Math.round(qty)) {
+          throw new ApiError(`${f.code} ${f.name} is serial-tracked — enter exactly ${r2(qty)} serial no(s) (got ${serials.length})`, 400)
+        }
         return {
           salesOrderItemId: soItem.id,
-          itemId: l.itemId ? String(l.itemId) : soItem.itemId,
+          itemId,
           qty: r2(qty),
+          batchNo: f?.batchTracked && l.batchNo ? String(l.batchNo).trim() || null : null,
+          serials: joinSerials(serials),
         }
       })
 
@@ -93,6 +125,11 @@ export async function POST(req: Request) {
           date,
           vehicleNo: body.vehicleNo ?? null,
           transporter: body.transporter ?? null,
+          ewayBillNo: optStr(body.ewayBillNo),
+          lrNo: optStr(body.lrNo),
+          lrDate,
+          shippingAddress: optStr(body.shippingAddress),
+          driverPhone: optStr(body.driverPhone),
           notes: body.notes ?? null,
           status: 'DRAFT',
           items: { create: lineData },

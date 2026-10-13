@@ -1,13 +1,9 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { requireSecurityPin } from '@/lib/security-pin'
+import { partyData, sharedProfile } from '@/lib/party'
 import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
 
-function num(v: unknown, def = 0, field = 'value'): number {
-  if (v === undefined || v === null || v === '') return def
-  const n = Number(v)
-  if (Number.isNaN(n)) throw new ApiError(`${field} must be a number`, 400)
-  return n
-}
 
 // ============================== GET /api/customers/[id] ==============================
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -37,18 +33,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const data: Prisma.CustomerUncheckedUpdateInput = {}
     if (body.code !== undefined) data.code = String(body.code).trim()
     if (body.name !== undefined) data.name = String(body.name).trim()
-    if (body.gstin !== undefined) data.gstin = body.gstin || null
-    if (body.contactPerson !== undefined) data.contactPerson = body.contactPerson || null
-    if (body.phone !== undefined) data.phone = body.phone || null
-    if (body.email !== undefined) data.email = body.email || null
-    if (body.addressLine !== undefined) data.addressLine = body.addressLine || null
-    if (body.city !== undefined) data.city = body.city || null
-    if (body.state !== undefined) data.state = body.state || null
-    if (body.stateCode !== undefined) data.stateCode = body.stateCode || null
-    if (body.paymentTermsDays !== undefined) {
-      data.paymentTermsDays = Math.round(num(body.paymentTermsDays, 30, 'paymentTermsDays'))
-    }
-    if (body.creditLimit !== undefined) data.creditLimit = num(body.creditLimit, 0, 'creditLimit')
+    Object.assign(data, partyData(body, 'update'))
     if (body.status !== undefined) {
       const st = String(body.status)
       if (!['ACTIVE', 'INACTIVE'].includes(st)) throw new ApiError('status must be ACTIVE or INACTIVE', 400)
@@ -57,6 +42,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const customer = await db.$transaction(async (tx) => {
       const updated = await tx.customer.update({ where: { id: existing.id }, data })
+      // "Both" party: keep the linked supplier's profile in step
+      if (existing.supplierId) await tx.supplier.update({ where: { id: existing.supplierId }, data: sharedProfile(data) })
       await logAudit(tx as any, {
         companyId,
         userName: body.userName,
@@ -80,6 +67,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
+    await requireSecurityPin(req, companyId)
     const existing = await db.customer.findFirst({ where: { id, companyId } })
     if (!existing) throw new ApiError('Customer not found', 404)
 

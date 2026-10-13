@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { requireSecurityPin } from '@/lib/security-pin'
 import {
   ok, handleError, companyRequired, postStock, logAudit, ApiError, r2, requireWrite, claimStatus,
 } from '@/lib/erp-helpers'
+import { receiveBatch, receiveSerials, parseSerials } from '@/lib/batches'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -11,7 +13,7 @@ type HelperTx = Prisma.TransactionClient & Parameters<typeof postStock>[0] & Par
 async function attachItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
   const ids = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const items = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
+    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, batchTracked: true, trackSerial: true } })
     : []
   const map = new Map(items.map((i) => [i.id, i]))
   return docs.map((d) => ({ ...d, items: d.items.map((i) => ({ ...i, item: map.get(i.itemId) || null })) }))
@@ -91,6 +93,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             refNumber: grn.number,
             notes: grn.supplierInvNo ? `Supplier inv ${grn.supplierInvNo}` : undefined,
           })
+          // Batch / serial layer (no-op for items that are not tracked). A tracked line without a
+          // batch no goes into a batch named after the GRN.
+          await receiveBatch(tx, {
+            companyId, itemId: it.itemId, warehouseId: grn.warehouseId, batchNo: it.batchNo || grn.number,
+            mfgDate: it.mfgDate, expiryDate: it.expiryDate, qty: it.acceptedQty,
+          })
+          await receiveSerials(tx, {
+            companyId, itemId: it.itemId, warehouseId: grn.warehouseId, serials: parseSerials(it.serials),
+            qty: it.acceptedQty, ref: { type: 'GRN', id: grn.id },
+          })
         }
         // PO receivedQty was NOT incremented at GRN create — increment here by receivedQty
         if (it.poItemId) {
@@ -130,6 +142,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { id } = await params
     const body = await req.json().catch(() => ({}) as { companyId?: string; userName?: string })
     const companyId = await companyRequired(req, body.companyId)
+    await requireSecurityPin(req, companyId)
     const grn = await findGrn(id, companyId)
     if (grn.status !== 'PENDING_QC') throw new ApiError('Only PENDING_QC GRNs can be deleted', 400)
 

@@ -20,6 +20,13 @@ interface PreparedItem {
   reorderLevel: number
   openingStock: number
   status: string
+  mrp: number | null
+  rack: string | null
+  altUom: string | null
+  altFactor: number | null
+  cessRate: number
+  barcode: string | null
+  brand: string | null
 }
 
 function cell(row: Row, key: string): string {
@@ -41,6 +48,7 @@ function numOr0(v: string, field: string, rowNo: number, errors: RowError[]): nu
 // Body: { companyId, rows: Array<Record<string,string>> }
 // Headers (case-insensitive, matched by the client): code, name, type, uom,
 // standardCost, sellPrice, reorderLevel, openingStock
+// Optional: mrp, rack, altUom, altFactor (1 altUom = altFactor uom), cessRate, barcode, brand
 export async function POST(req: Request) {
   try {
     const actor = requireWrite(req, 'items')
@@ -54,9 +62,11 @@ export async function POST(req: Request) {
     // Default warehouse (code asc) for optional opening stock + existing codes for dupe skips
     const [warehouse, existingItems] = await Promise.all([
       db.warehouse.findFirst({ where: { companyId }, orderBy: { code: 'asc' } }),
-      db.item.findMany({ where: { companyId }, select: { code: true } }),
+      db.item.findMany({ where: { companyId }, select: { code: true, barcode: true } }),
     ])
     const existingCodes = new Set(existingItems.map((i) => i.code.toUpperCase()))
+    const existingBarcodes = new Set(existingItems.map((i) => i.barcode).filter((b): b is string => !!b))
+    const seenBarcodes = new Set<string>()
 
     const errors: RowError[] = []
     const seenCodes = new Set<string>()
@@ -91,7 +101,41 @@ export async function POST(req: Request) {
       const sellingPrice = numOr0(cell(row, 'sellPrice'), 'sellPrice', rowNo, errors)
       const reorderLevel = numOr0(cell(row, 'reorderLevel'), 'reorderLevel', rowNo, errors)
       const openingStock = numOr0(cell(row, 'openingStock'), 'openingStock', rowNo, errors)
+      const mrpRaw = cell(row, 'mrp')
+      const mrp = mrpRaw ? numOr0(mrpRaw, 'mrp', rowNo, errors) : null
+      const cessRate = numOr0(cell(row, 'cessRate'), 'cessRate', rowNo, errors)
+      const altFactorRaw = cell(row, 'altFactor')
+      const altFactor = altFactorRaw ? numOr0(altFactorRaw, 'altFactor', rowNo, errors) : null
       if (errors.length > before) return
+      if (mrp !== null && mrp < 0) {
+        errors.push({ row: rowNo, message: 'mrp cannot be negative' })
+        return
+      }
+      if (cessRate < 0 || cessRate > 100) {
+        errors.push({ row: rowNo, message: 'cessRate must be between 0 and 100' })
+        return
+      }
+      const altUom = cell(row, 'altUom').toUpperCase() || null
+      if (altUom || altFactor !== null) {
+        if (!altUom || altFactor === null) {
+          errors.push({ row: rowNo, message: 'altUom and altFactor must be given together' })
+          return
+        }
+        if (altUom === uom) {
+          errors.push({ row: rowNo, message: 'altUom must differ from uom' })
+          return
+        }
+        if (altFactor <= 0) {
+          errors.push({ row: rowNo, message: 'altFactor must be greater than 0' })
+          return
+        }
+      }
+      const barcode = cell(row, 'barcode') || null
+      if (barcode && (existingBarcodes.has(barcode) || seenBarcodes.has(barcode))) {
+        errors.push({ row: rowNo, message: `Barcode ${barcode} already used — skipped` })
+        skipped++
+        return
+      }
       const status = cell(row, 'status').toUpperCase() === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE'
       if (openingStock > 0 && !warehouse) {
         errors.push({ row: rowNo, message: 'openingStock provided but the company has no warehouse' })
@@ -103,7 +147,12 @@ export async function POST(req: Request) {
         return
       }
       seenCodes.add(code)
-      prepared.push({ row: rowNo, code, name, type, uom, standardCost, sellingPrice, reorderLevel, openingStock, status })
+      if (barcode) seenBarcodes.add(barcode)
+      prepared.push({
+        row: rowNo, code, name, type, uom, standardCost, sellingPrice, reorderLevel, openingStock, status,
+        mrp, rack: cell(row, 'rack') || null, altUom, altFactor: altUom ? altFactor : null, cessRate,
+        barcode, brand: cell(row, 'brand') || null,
+      })
     })
 
     let imported = 0
@@ -123,6 +172,13 @@ export async function POST(req: Request) {
                 sellingPrice: p.sellingPrice,
                 reorderLevel: p.reorderLevel,
                 status: p.status,
+                mrp: p.mrp,
+                rack: p.rack,
+                altUom: p.altUom,
+                altFactor: p.altFactor,
+                cessRate: p.cessRate,
+                barcode: p.barcode,
+                brand: p.brand,
               },
             })
             // Mirror items POST opening-stock behavior (type OPENING / refType OPENING)

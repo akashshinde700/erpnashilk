@@ -19,7 +19,32 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'desc' },
       include: ORG_INCLUDE,
     })
-    return ok({ items: orgs.map(orgRow) })
+    // Extra firms created by each org's users (UserCompanyAccess has no relations, so join by hand).
+    const access = await db.userCompanyAccess.findMany({ select: { userId: true, companyId: true } })
+    const owners = access.length
+      ? await db.user.findMany({ where: { id: { in: [...new Set(access.map((a) => a.userId))] } }, select: { id: true, companyId: true } })
+      : []
+    const homeOf = new Map(owners.map((u) => [u.id, u.companyId]))
+    const firmsByOrg = new Map<string, Set<string>>()
+    const parentOf = new Map<string, string>()
+    for (const a of access) {
+      const home = homeOf.get(a.userId)
+      if (!home || home === a.companyId) continue
+      if (!firmsByOrg.has(home)) firmsByOrg.set(home, new Set())
+      firmsByOrg.get(home)!.add(a.companyId)
+      if (!parentOf.has(a.companyId)) parentOf.set(a.companyId, home)
+    }
+    const nameOf = new Map(orgs.map((o) => [o.id, o.name]))
+    return ok({
+      items: orgs.map((o) => {
+        const parent = parentOf.get(o.id)
+        return {
+          ...orgRow(o),
+          linkedFirms: firmsByOrg.get(o.id)?.size ?? 0,
+          firmOf: parent ? { id: parent, name: nameOf.get(parent) ?? null } : null,
+        }
+      }),
+    })
   } catch (e) {
     return handleError(e)
   }

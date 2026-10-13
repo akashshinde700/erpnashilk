@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireWrite, ApiError, fail, handleError, logAudit, ok, sessionUser, PLATFORM_ROLE } from '@/lib/erp-helpers'
+import { requireWrite, ApiError, fail, handleError, logAudit, ok, sessionUser, PLATFORM_ROLE, assertFirmAccess } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -11,10 +11,10 @@ const clean = (v: unknown): string | null => {
   return s === '' ? null : s
 }
 
-/** Own company, or any company for the platform SUPER_ADMIN. */
+/** Home company, a linked firm of this login, or any company for the platform SUPER_ADMIN. */
 async function assertCompanyAccess(req: Request, id: string) {
   const me = await sessionUser(req)
-  if (me.role !== PLATFORM_ROLE && me.companyId !== id) throw new ApiError('You do not have access to this company', 403)
+  if (!(await assertFirmAccess(req, id))) throw new ApiError('Company not found', 404)
   return me
 }
 

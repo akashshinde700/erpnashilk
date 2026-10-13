@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { AlertTriangle, FileText, IndianRupee, Mail, MessageCircle, ReceiptText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  Column, DataTable, DateCell, DateInput, Money, PageHeader, PrintButton, SectionCard, StatCard, StatusBadge, printHtml,
+  Column, DataTable, DateCell, DateInput, Money, PageHeader, PrintButton, SectionCard, StatCard, StatusBadge, openCreate, printHtml,
 } from '@/components/erp/kit'
 import { fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { apiGet, useList } from '@/lib/use-api'
@@ -265,7 +265,15 @@ export default function ReceivablesModule({ companyId }: { companyId: string }) 
     {
       key: 'actions', header: 'Actions',
       render: (r) => (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {r.customerId && outstandingOf(r) > 0 && (
+            <Button
+              variant="ghost" size="sm" className="h-7" title="Record a receipt against this invoice"
+              onClick={() => openCreate('payments', { type: 'RECEIPT', partyId: r.customerId || undefined, invoiceId: r.id, amount: outstandingOf(r) })}
+            >
+              <IndianRupee className="h-3.5 w-3.5 mr-1" />Payment In
+            </Button>
+          )}
           <Button variant="ghost" size="sm" className="h-7" title="Print statement of account" onClick={() => void printStatement(r)}>
             <FileText className="h-3.5 w-3.5" />
           </Button>

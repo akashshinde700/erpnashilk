@@ -1,12 +1,7 @@
 import { db } from '@/lib/db'
+import { nextPartyCode, partyData } from '@/lib/party'
 import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
 
-function num(v: unknown, def = 0, field = 'value'): number {
-  if (v === undefined || v === null || v === '') return def
-  const n = Number(v)
-  if (Number.isNaN(n)) throw new ApiError(`${field} must be a number`, 400)
-  return n
-}
 
 // ============================== GET /api/suppliers?q=&status=&page=&pageSize= ==============================
 export async function GET(req: Request) {
@@ -28,6 +23,7 @@ export async function GET(req: Request) {
     const [items, total] = await Promise.all([
       db.supplier.findMany({
         where,
+        include: { customer: { select: { id: true, code: true } } }, // linked customer → "Both"
         orderBy: { code: 'asc' },
         ...(page >= 1 ? { skip: (page - 1) * pageSize, take: pageSize } : {}),
       }),
@@ -45,9 +41,10 @@ export async function POST(req: Request) {
     requireWrite(req, 'suppliers')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
-    const code = String(body.code || '').trim()
     const name = String(body.name || '').trim()
-    if (!code || !name) throw new ApiError('code and name are required', 400)
+    if (!name) throw new ApiError('Party name is required', 400)
+    // Code is optional: blank → next free S-0001 style code.
+    const code = String(body.code || '').trim() || (await nextPartyCode(companyId, 'supplier'))
 
     const supplier = await db.$transaction(async (tx) => {
       const created = await tx.supplier.create({
@@ -55,15 +52,7 @@ export async function POST(req: Request) {
           companyId,
           code,
           name,
-          gstin: body.gstin || null,
-          contactPerson: body.contactPerson || null,
-          phone: body.phone || null,
-          email: body.email || null,
-          addressLine: body.addressLine || null,
-          city: body.city || null,
-          state: body.state || null,
-          stateCode: body.stateCode || null,
-          paymentTermsDays: Math.round(num(body.paymentTermsDays, 30, 'paymentTermsDays')),
+          ...partyData(body, 'create'),
           status: body.status || 'ACTIVE',
         },
       })

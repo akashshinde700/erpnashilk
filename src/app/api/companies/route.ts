@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireWrite, ApiError, handleError, logAudit, ok, sessionUser, PLATFORM_ROLE } from '@/lib/erp-helpers'
+import { requireWrite, ApiError, handleError, linkedFirmIds, logAudit, ok, sessionUser, PLATFORM_ROLE } from '@/lib/erp-helpers'
 import { hashPassword, passwordProblem } from '@/lib/password'
 
 const clean = (v: unknown): string | null => {
@@ -9,13 +9,13 @@ const clean = (v: unknown): string | null => {
 }
 
 // GET /api/companies — tenants visible to the caller: every tenant for the platform
-// SUPER_ADMIN, otherwise only the caller's own company.
+// SUPER_ADMIN, otherwise the caller's home company plus firms linked to them.
 // Row shape: scalars + phone, email, createdAt, userCount, itemCount.
 export async function GET(req: Request) {
   try {
     const me = await sessionUser(req)
     const companies = await db.company.findMany({
-      where: me.role === PLATFORM_ROLE ? {} : { id: me.companyId },
+      where: me.role === PLATFORM_ROLE ? {} : { id: { in: [me.companyId, ...(await linkedFirmIds(req))] } },
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -47,6 +47,7 @@ export async function GET(req: Request) {
         phone: c.phone,
         email: c.email,
         createdAt: c.createdAt,
+        isHome: c.id === me.companyId,
         userCount: c._count.users,
         itemCount: c._count.items,
       })),

@@ -202,7 +202,7 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
         description="Incoming, in-process and final quality checks with parameter results"
         actions={
           <Button onClick={() => { resetCreate(); setOpen(true) }}>
-            <Plus className="h-4 w-4 mr-1.5" />New Inspection
+            <Plus className="h-4 w-4 mr-1.5" />Inspection
           </Button>
         }
       />
@@ -237,7 +237,7 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
 
       {/* ---- Ad-hoc create dialog ---- */}
       <FormDialog
-        open={open} onOpenChange={setOpen} title="New QC Inspection"
+        open={open} onOpenChange={setOpen} title="QC Inspection"
         description="Ad-hoc inspection — GRN inspections are created automatically at posting"
         submitLabel="Create" loading={saving} onSubmit={create}
       >

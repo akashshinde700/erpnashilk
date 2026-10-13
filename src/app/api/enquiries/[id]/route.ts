@@ -65,12 +65,28 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const wantsEdit =
       body.customerId !== undefined || body.date !== undefined || body.contactName !== undefined ||
-      body.source !== undefined || body.notes !== undefined || Array.isArray(body.items)
+      body.source !== undefined || body.notes !== undefined || Array.isArray(body.items) ||
+      body.requiredBy !== undefined || body.expectedValue !== undefined
     if (wantsEdit && current.status !== 'OPEN') throw new ApiError('Enquiry can only be edited while OPEN', 400)
 
     if (body.customerId !== undefined && body.customerId !== current.customerId) {
       const cust = await db.customer.findFirst({ where: { id: body.customerId, companyId } })
       if (!cust) throw new ApiError('Customer not found', 404)
+    }
+
+    let requiredBy: Date | null | undefined
+    if (body.requiredBy !== undefined) {
+      requiredBy = body.requiredBy ? new Date(body.requiredBy) : null
+      if (requiredBy && isNaN(requiredBy.getTime())) throw new ApiError('requiredBy is not a valid date', 400)
+    }
+    let expectedValue: number | null | undefined
+    if (body.expectedValue !== undefined) {
+      if (body.expectedValue === null || body.expectedValue === '') expectedValue = null
+      else {
+        const n = Number(body.expectedValue)
+        if (!Number.isFinite(n) || n < 0) throw new ApiError('expectedValue must be a non-negative number', 400)
+        expectedValue = r2(n)
+      }
     }
 
     let lineData: any[] | null = null
@@ -101,6 +117,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (body.contactName !== undefined) data.contactName = body.contactName ?? null
       if (body.source !== undefined) data.source = body.source ?? null
       if (body.notes !== undefined) data.notes = body.notes ?? null
+      if (requiredBy !== undefined) data.requiredBy = requiredBy
+      if (expectedValue !== undefined) data.expectedValue = expectedValue
       if (statusChange) data.status = body.status
       if (lineData) {
         await tx.enquiryItem.deleteMany({ where: { enquiryId: id } })

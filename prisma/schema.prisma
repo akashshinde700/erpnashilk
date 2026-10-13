@@ -30,6 +30,17 @@ model Company {
   bankAccountNumber String?
   bankIfsc          String?
   bankUpiId         String?
+  bankName          String?
+  bankBranch        String?
+  pincode           String?
+  invoiceTerms      String?  @db.Text // printed on tax invoices
+  quotationTerms    String?  @db.Text // default terms on new quotations
+  logoImage         String?  @db.MediumText // data: URL (PNG/JPG), printed on documents
+  signatureImage    String?  @db.MediumText // data: URL, "Authorised signatory" on invoices
+  roundOffTotals    Boolean  @default(true)  // round invoice / bill totals to the rupee
+  docPrefixes       String?  @db.Text        // JSON { INV: "SI", PINV: "PB", ... } overrides of default prefixes
+  lockEnabled       Boolean  @default(false) // PIN needed to edit / cancel / delete saved documents
+  lockPinHash       String?
 
   // ---- Subscription (managed from /platform-admin) ----
   isPlatform    Boolean   @default(false) // the platform operator's own company (not a customer org)
@@ -123,6 +134,19 @@ model Item {
   standardCost  Float    @default(0)
   description   String? @db.Text
   status        String   @default("ACTIVE") // ACTIVE|INACTIVE
+  brand         String?
+  partNo        String?  // manufacturer / drawing part number
+  barcode       String?
+  leadTimeDays  Int?     // purchase lead time, used for planning
+  altUom        String?  // secondary unit, e.g. BOX
+  altFactor     Float?   // 1 altUom = altFactor base units (1 BOX = 24 PCS)
+  mrp           Float?
+  priceIncludesTax Boolean @default(false) // selling price entered incl. GST
+  rack          String?  // storage location / rack
+  cessRate      Float    @default(0)
+  trackSerial   Boolean  @default(false) // serial / IMEI per unit
+  variantOf     String?  // parent item id for size/colour variants
+  variantAttrs  String?  @db.Text // JSON { size: "M", color: "Red" }
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -150,10 +174,28 @@ model Customer {
   paymentTermsDays Int      @default(30)
   creditLimit      Float    @default(0)
   status           String   @default("ACTIVE")
+  // ---- Party profile (shared shape with Customer/Supplier) ----
+  nickName         String?
+  altPhone         String?
+  pan              String?
+  addressLine2     String? @db.Text
+  pincode          String?
+  country          String   @default("India")
+  bankIfsc         String?
+  bankName         String?
+  bankAccountNo    String?
+  bankBranch       String?
+  openingBalance   Float    @default(0) // carried forward: customer = they owe us, supplier = we owe them
+  notes            String?  @db.Text
+  // "Both" party: the linked Supplier record for the same business (profile fields kept in sync)
+  supplierId       String?  @unique
+  gstType          String   @default("UNREGISTERED") // REGULAR|COMPOSITION|UNREGISTERED|CONSUMER|OVERSEAS|SEZ
+  shippingAddress  String?  @db.Text
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   company          Company  @relation(fields: [companyId], references: [id])
+  supplier         Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   salesOrders      SalesOrder[]
   salesInvoices    SalesInvoice[]
   quotations       Quotation[]
@@ -175,11 +217,28 @@ model Supplier {
   state            String?
   stateCode        String?
   paymentTermsDays Int      @default(30)
+  creditLimit      Float    @default(0)
   status           String   @default("ACTIVE")
+  // ---- Party profile (shared shape with Customer/Supplier) ----
+  nickName         String?
+  altPhone         String?
+  pan              String?
+  addressLine2     String? @db.Text
+  pincode          String?
+  country          String   @default("India")
+  bankIfsc         String?
+  bankName         String?
+  bankAccountNo    String?
+  bankBranch       String?
+  openingBalance   Float    @default(0) // carried forward: customer = they owe us, supplier = we owe them
+  notes            String?  @db.Text
+  gstType          String   @default("UNREGISTERED") // REGULAR|COMPOSITION|UNREGISTERED|CONSUMER|OVERSEAS|SEZ
+  shippingAddress  String?  @db.Text
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   company          Company  @relation(fields: [companyId], references: [id])
+  customer         Customer?
   purchaseOrders   PurchaseOrder[]
   purchaseInvoices PurchaseInvoice[]
 
@@ -193,6 +252,8 @@ model Warehouse {
   name      String
   type      String   @default("GENERAL") // RM|FG|GENERAL|SCRAP
   location  String?
+  address   String? @db.Text
+  inCharge  String?
   createdAt DateTime @default(now())
 
   company   Company  @relation(fields: [companyId], references: [id])
@@ -210,6 +271,13 @@ model Machine {
   status         String   @default("RUNNING") // RUNNING|IDLE|MAINTENANCE|BREAKDOWN
   hourlyRate     Float    @default(0)
   notes          String? @db.Text
+  make            String?
+  model           String?
+  serialNo        String?
+  purchaseDate    DateTime?
+  lastServiceDate DateTime?
+  nextServiceDate DateTime?
+  serviceIntervalDays Int?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -260,6 +328,8 @@ model Enquiry {
   source      String?  // WALK_IN|PHONE|WEB|REFERRAL
   notes       String? @db.Text
   status      String   @default("OPEN") // OPEN|QUOTED|WON|LOST|CLOSED
+  requiredBy    DateTime?
+  expectedValue Float?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -297,6 +367,10 @@ model Quotation {
   igst          Float     @default(0)
   grandTotal    Float     @default(0)
   notes         String? @db.Text
+  kindAttn      String?
+  paymentTerms  String?
+  deliveryTerms String?
+  terms         String?   @db.Text
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -338,6 +412,11 @@ model SalesOrder {
   igst           Float     @default(0)
   grandTotal     Float     @default(0)
   notes          String? @db.Text
+  customerPoNo    String?
+  customerPoDate  DateTime?
+  paymentTerms    String?
+  deliveryTerms   String?
+  shippingAddress String?   @db.Text
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -380,6 +459,10 @@ model DeliveryChallan {
   ewayBillNo    String?
   status        String      @default("DRAFT") // DRAFT|DISPATCHED|CANCELLED
   notes         String? @db.Text
+  lrNo            String?   // transporter LR / GR number
+  lrDate          DateTime?
+  shippingAddress String?   @db.Text
+  driverPhone     String?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -398,6 +481,8 @@ model DeliveryChallanItem {
   itemId          String
   qty             Float
 
+  batchNo   String?
+  serials   String?     @db.Text
   challan         DeliveryChallan @relation(fields: [challanId], references: [id], onDelete: Cascade)
 }
 
@@ -423,6 +508,26 @@ model SalesInvoice {
   irn           String?
   ewayBillNo    String?
   notes         String? @db.Text
+  customerPoNo    String?
+  customerPoDate  DateTime?
+  shippingAddress String?   @db.Text
+  vehicleNo       String?
+  transporter     String?
+  // ---- Bill-level adjustments (Phase 1) ----
+  billDiscount   Float     @default(0) // flat ₹ off the whole bill, applied before GST across lines
+  freightCharge  Float     @default(0)
+  freightGstRate Float     @default(18)
+  packingCharge  Float     @default(0)
+  packingGstRate Float     @default(18)
+  roundOff       Float     @default(0) // + / − paise to make the total a whole rupee
+  isCashSale     Boolean   @default(false)
+  billingName     String?   // printed instead of the party name (e.g. "M/s Sharma Traders")
+  driverPhone     String?
+  deductStock     Boolean   @default(false) // direct / cash sale (no challan): stock went out with this invoice
+  stockWarehouseId String?
+  cess            Float     @default(0)
+  accountId       String?   // where "Received now" money went (Cash & Bank)
+  shareToken      String?   @unique // public share link (WhatsApp / PDF)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -447,6 +552,9 @@ model SalesInvoiceItem {
   gstRate   Float        @default(18)
   lineTotal Float        @default(0)
 
+  cessRate  Float        @default(0)
+  batchNo   String?
+  serials   String?      @db.Text // newline-separated serial / IMEI numbers
   invoice   SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
@@ -499,6 +607,8 @@ model PurchaseOrder {
   approvedBy     String?
   approvedAt     DateTime?
   notes          String? @db.Text
+  paymentTerms   String?
+  deliveryTerms  String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -536,6 +646,9 @@ model Grn {
   supplierInvNo String?
   status      String   @default("PENDING_QC") // PENDING_QC|PARTIALLY_ACCEPTED|POSTED|CANCELLED
   notes       String? @db.Text
+  supplierInvDate   DateTime?
+  supplierChallanNo String?
+  vehicleNo         String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -558,6 +671,10 @@ model GrnItem {
   rejectedQty Float  @default(0)
   qcStatus    String @default("PENDING") // PENDING|PASSED|FAILED|PARTIAL
 
+  batchNo   String?
+  mfgDate   DateTime?
+  expiryDate DateTime?
+  serials   String?     @db.Text
   grn         Grn    @relation(fields: [grnId], references: [id], onDelete: Cascade)
 }
 
@@ -580,6 +697,17 @@ model PurchaseInvoice {
   paidAmount    Float     @default(0)
   status        String    @default("UNPAID") // UNPAID|PARTIALLY_PAID|PAID|CANCELLED
   notes         String? @db.Text
+  supplierInvDate DateTime?
+  dueDate         DateTime?
+  // ---- Bill-level adjustments (Phase 1) ----
+  billDiscount   Float     @default(0) // flat ₹ off the whole bill, applied before GST across lines
+  freightCharge  Float     @default(0)
+  freightGstRate Float     @default(18)
+  packingCharge  Float     @default(0)
+  packingGstRate Float     @default(18)
+  roundOff       Float     @default(0) // + / − paise to make the total a whole rupee
+  cess            Float     @default(0)
+  accountId       String?   // where "Paid now" money came from
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -603,6 +731,11 @@ model PurchaseInvoiceItem {
   gstRate   Float           @default(18)
   lineTotal Float           @default(0)
 
+  cessRate  Float           @default(0)
+  batchNo   String?
+  mfgDate   DateTime?
+  expiryDate DateTime?
+  serials   String?         @db.Text
   invoice   PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
@@ -619,10 +752,15 @@ model Payment {
   invoiceType String?  // SALES|PURCHASE
   invoiceId   String?
   amount      Float
-  mode        String   @default("NEFT") // CASH|BANK|UPI|CHEQUE|NEFT|RTGS
+  mode        String   @default("NEFT") // CASH|BANK|UPI|CHEQUE|NEFT|RTGS|CREDIT_NOTE|DEBIT_NOTE
   date        DateTime
   reference   String?
   notes       String? @db.Text
+  accountId   String?   // Cash & Bank account
+  chequeNo    String?
+  chequeDate  DateTime?
+  chequeStatus String?  // PENDING|DEPOSITED|CLEARED|BOUNCED (post-dated cheques)
+  clearedDate DateTime? // bank reconciliation
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -646,6 +784,13 @@ model Expense {
   paidTo      String?
   gstAmount   Float    @default(0)
   status      String   @default("POSTED") // DRAFT|POSTED|CANCELLED
+  vendorGstin String?
+  billNo      String?
+  billDate    DateTime?
+  itcEligible Boolean  @default(false) // GST input credit can be claimed
+  accountId   String?
+  expenseType String   @default("INDIRECT") // DIRECT (production/freight) | INDIRECT (rent, salary…)
+  clearedDate DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -774,6 +919,7 @@ model StockLedger {
   refId        String?
   refNumber    String?
   notes        String? @db.Text
+  reasonType   String?  // adjustments: DAMAGE|EXPIRY|THEFT|SAMPLE|CORRECTION|OTHER
   createdAt    DateTime @default(now())
 
   item         Item     @relation(fields: [itemId], references: [id])
@@ -834,4 +980,212 @@ model NumberSeq {
   nextNumber    Int    @default(1)
 
   @@unique([companyId, docType, financialYear])
+}
+
+// ---------------- Returns (Phase 1) ----------------
+
+// Sales Return / Credit Note: goods back from a customer against a sales invoice.
+// Stock comes back in; the credit is adjusted against the invoice (as a CREDIT_NOTE payment).
+model SalesReturn {
+  id            String   @id @default(cuid())
+  companyId     String
+  number        String
+  invoiceId     String
+  customerId    String
+  warehouseId   String
+  date          DateTime
+  reason        String?
+  isInterState  Boolean  @default(false)
+  subtotal      Float    @default(0)
+  cgst          Float    @default(0)
+  sgst          Float    @default(0)
+  igst          Float    @default(0)
+  grandTotal    Float    @default(0)
+  status        String   @default("POSTED") // POSTED|CANCELLED
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         SalesReturnItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, invoiceId])
+  @@index([companyId, customerId])
+  @@index([companyId, date])
+}
+
+model SalesReturnItem {
+  id             String      @id @default(cuid())
+  returnId       String
+  invoiceItemId  String?
+  itemId         String
+  qty            Float
+  rate           Float
+  gstRate        Float       @default(18)
+  lineTotal      Float       @default(0)
+  ret            SalesReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+// Purchase Return / Debit Note: goods sent back to a supplier against a purchase bill.
+// Stock goes out; the debit is adjusted against the bill (as a DEBIT_NOTE payment).
+model PurchaseReturn {
+  id            String   @id @default(cuid())
+  companyId     String
+  number        String
+  invoiceId     String
+  supplierId    String
+  warehouseId   String
+  date          DateTime
+  reason        String?
+  isInterState  Boolean  @default(false)
+  subtotal      Float    @default(0)
+  cgst          Float    @default(0)
+  sgst          Float    @default(0)
+  igst          Float    @default(0)
+  grandTotal    Float    @default(0)
+  status        String   @default("POSTED") // POSTED|CANCELLED
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         PurchaseReturnItem[]
+
+  @@unique([companyId, number])
+  @@index([companyId, invoiceId])
+  @@index([companyId, supplierId])
+  @@index([companyId, date])
+}
+
+model PurchaseReturnItem {
+  id             String         @id @default(cuid())
+  returnId       String
+  invoiceItemId  String?
+  itemId         String
+  qty            Float
+  rate           Float
+  gstRate        Float          @default(18)
+  lineTotal      Float          @default(0)
+  ret            PurchaseReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+// ---------------- Cash & Bank (Phase 2) ----------------
+
+// A money account: the company's cash box or a bank account. Balance = opening + all money movements.
+model MoneyAccount {
+  id             String    @id @default(cuid())
+  companyId      String
+  type           String    // CASH | BANK
+  name           String    // display name, e.g. "Cash in Hand", "SBI Current A/c"
+  bankName       String?
+  accountNo      String?
+  ifsc           String?
+  branch         String?
+  upiId          String?
+  holderName     String?
+  openingBalance Float     @default(0)
+  openingDate    DateTime?
+  printOnInvoice Boolean   @default(false)
+  isDefault      Boolean   @default(false) // default for its type
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId, type])
+}
+
+// Money movement that is not a party payment or an expense:
+// cash/bank adjustments (capital, drawings, other income), contra transfers, loan receipts and EMIs.
+model AccountTxn {
+  id            String    @id @default(cuid())
+  companyId     String
+  number        String
+  date          DateTime
+  type          String    // ADJUST_IN | ADJUST_OUT | CONTRA | LOAN_IN | LOAN_EMI
+  fromAccountId String?   // money leaves this account
+  toAccountId   String?   // money enters this account
+  amount        Float
+  category      String?   // CAPITAL | DRAWINGS | OTHER_INCOME | OTHER_EXPENSE | OTHER
+  loanId        String?
+  principal     Float?    // LOAN_EMI split
+  interest      Float?
+  reference     String?
+  notes         String?   @db.Text
+  clearedDate   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([companyId, number])
+  @@index([companyId, date])
+  @@index([companyId, loanId])
+}
+
+model Loan {
+  id                String    @id @default(cuid())
+  companyId         String
+  name              String    // e.g. "HDFC Machinery Loan"
+  lender            String?
+  loanAccountNo     String?
+  principal         Float
+  interestRate      Float     @default(0) // % per year
+  processingFee     Float     @default(0)
+  startDate         DateTime
+  termMonths        Int?
+  emiAmount         Float?
+  receivedAccountId String?   // where the loan money was credited
+  status            String    @default("OPEN") // OPEN | CLOSED
+  notes             String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([companyId, status])
+}
+
+// ---------------- Batch / Serial (Phase 4) ----------------
+
+model ItemBatch {
+  id          String    @id @default(cuid())
+  companyId   String
+  itemId      String
+  warehouseId String
+  batchNo     String
+  mfgDate     DateTime?
+  expiryDate  DateTime?
+  qty         Float     @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([itemId, warehouseId, batchNo])
+  @@index([companyId, expiryDate])
+}
+
+model ItemSerial {
+  id          String    @id @default(cuid())
+  companyId   String
+  itemId      String
+  serialNo    String
+  status      String    @default("IN_STOCK") // IN_STOCK | SOLD | RETURNED_TO_SUPPLIER
+  warehouseId String?
+  inRefType   String?
+  inRefId     String?
+  outRefType  String?
+  outRefId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([companyId, itemId, serialNo])
+  @@index([companyId, status])
+}
+
+// ---------------- Multi-firm (Phase 5) ----------------
+
+// Extra companies a login may open (its home company is User.companyId). Same role in every firm.
+model UserCompanyAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, companyId])
+  @@index([companyId])
 }

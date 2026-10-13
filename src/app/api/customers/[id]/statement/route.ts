@@ -27,7 +27,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const customer = await db.customer.findFirst({
       where: { id, companyId },
-      select: { id: true, name: true, code: true, gstin: true, phone: true },
+      select: { id: true, name: true, code: true, gstin: true, phone: true, openingBalance: true },
     })
     if (!customer) throw new ApiError('Customer not found', 404)
 
@@ -52,7 +52,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const openingDebits = r2(invoices.filter((i) => i.date < fd).reduce((s, i) => s + (i.grandTotal || 0), 0))
     const openingCredits = r2(payments.filter((p) => p.date < fd).reduce((s, p) => s + (p.amount || 0), 0))
-    const openingBalance = r2(openingDebits - openingCredits)
+    // Master opening balance (carried forward from before using the ERP) + activity before `from`
+    const openingBalance = r2((customer.openingBalance || 0) + openingDebits - openingCredits)
 
     type Entry = { date: Date; type: 'INVOICE' | 'PAYMENT'; ref: string; particulars: string; debit: number; credit: number }
     const entries: Entry[] = []

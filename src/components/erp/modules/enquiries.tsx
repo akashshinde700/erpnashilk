@@ -3,13 +3,14 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Plus, Trash2 } from 'lucide-react'
+import { FileText, Plus, Trash2 } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, NumberInput,
-  PageHeader, SelectInput, StatusBadge, TextInput,
+  Money, PageHeader, SelectInput, StatusBadge, TextInput, openCreate, useCreatePreset
 } from '@/components/erp/kit'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtNum } from '@/lib/erp-constants'
+import { ItemPicker, pickIntoLines } from '@/components/erp/item-picker'
 
 const ENQ_STATUSES = ['OPEN', 'QUOTED', 'WON', 'LOST', 'CLOSED']
 const SOURCES = ['PHONE', 'WEB', 'WALK_IN', 'REFERRAL']
@@ -19,13 +20,14 @@ interface EnquiryItemRow {
   item?: { code?: string | null; name?: string | null; uom?: string | null } | null
 }
 interface EnquiryRow {
-  id: string; number: string; date: string
+  id: string; number: string; date: string; customerId: string
+  requiredBy?: string | null; expectedValue?: number | null
   contactName?: string | null; source?: string | null; notes?: string | null; status: string
   customer?: { name?: string | null } | null
   items?: EnquiryItemRow[] | null
 }
 interface PartyRow { id: string; name?: string | null; code?: string | null }
-interface ItemRow { id: string; code?: string | null; name?: string | null }
+interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; barcode?: string | null; partNo?: string | null }
 
 interface DraftLine { itemId: string; qty: number }
 
@@ -43,16 +45,33 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
   const [contactName, setContactName] = React.useState('')
   const [source, setSource] = React.useState('PHONE')
   const [notes, setNotes] = React.useState('')
+  const [requiredBy, setRequiredBy] = React.useState('')
+  const [expectedValue, setExpectedValue] = React.useState(0)
   const [lines, setLines] = React.useState<DraftLine[]>([{ itemId: '', qty: 1 }])
 
   const rows = list.data?.items ?? []
   const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.code || c.id }))
-  const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.code || i.id }))
+  const itemRows = items.data?.items ?? []
+
+  /** Set a line's item; an item already on another line adds this qty there instead. */
+  function pickItem(idx: number, itemId: string) {
+    const r = pickIntoLines(lines, idx, itemId, (x) => ({ ...x, itemId }))
+    if (r.merged) toast.info('Item already on this enquiry — quantity added to that line')
+    setLines(r.lines)
+  }
 
   function resetForm() {
     setCustomerId(''); setDate(today()); setContactName(''); setSource('PHONE'); setNotes('')
+    setRequiredBy(''); setExpectedValue(0)
     setLines([{ itemId: '', qty: 1 }])
   }
+
+  // Shortcuts from other screens (party view, row actions, quick actions) open this form pre-filled
+  useCreatePreset('enquiries', (d) => {
+    resetForm()
+    if (d.customerId) setCustomerId(String(d.customerId))
+    setOpen(true)
+  })
 
   async function submit() {
     if (!customerId) { toast.error('Select a customer'); return }
@@ -63,6 +82,7 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
       await apiPost('/api/enquiries', {
         companyId, customerId, date, contactName: contactName || undefined,
         source, notes: notes || undefined, items: valid,
+        requiredBy: requiredBy || undefined, expectedValue: expectedValue > 0 ? expectedValue : undefined,
       })
       toast.success('Enquiry created')
       setOpen(false); resetForm(); void list.refetch()
@@ -92,6 +112,8 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
     { key: 'customer', header: 'Customer', render: (r) => r.customer?.name || '—' },
     { key: 'items', header: 'Items', render: (r) => <span className="tabular-nums">{r.items?.length ?? 0}</span> },
     { key: 'contact', header: 'Contact', hideOnMobile: true, render: (r) => r.contactName || '—' },
+    { key: 'requiredBy', header: 'Required By', hideOnMobile: true, render: (r) => r.requiredBy ? <DateCell value={r.requiredBy} /> : '—' },
+    { key: 'expectedValue', header: 'Exp. Value', hideOnMobile: true, render: (r) => r.expectedValue ? <Money value={r.expectedValue} /> : '—' },
     { key: 'source', header: 'Source', hideOnMobile: true, render: (r) => (r.source ? r.source.replaceAll('_', ' ') : '—') },
     {
       key: 'status', header: 'Status',
@@ -103,13 +125,18 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
     },
     {
       key: 'actions', header: 'Actions',
-      render: (r) => r.status === 'OPEN' ? (
-        <div onClick={(e) => e.stopPropagation()}>
-          <ConfirmAction
-            trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></Button>}
-            title="Delete enquiry?" message={`Delete enquiry ${r.number}? This cannot be undone.`}
-            tone="destructive" onConfirm={() => remove(r)}
-          />
+      render: (r) => r.status === 'OPEN' || r.status === 'QUOTED' ? (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="sm" className="h-7" onClick={() => openCreate('quotations', { customerId: r.customerId, enquiryId: r.id })}>
+            <FileText className="h-3.5 w-3.5 mr-1" />Quote
+          </Button>
+          {r.status === 'OPEN' && (
+            <ConfirmAction
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></Button>}
+              title="Delete enquiry?" message={`Delete enquiry ${r.number}? This cannot be undone.`}
+              tone="destructive" onConfirm={() => remove(r)}
+            />
+          )}
         </div>
       ) : <span className="text-xs text-muted-foreground">—</span>,
     },
@@ -120,12 +147,12 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
       <PageHeader
         title="Enquiries"
         description="Track inbound customer enquiries from call to conversion"
-        actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1.5" />New Enquiry</Button>}
+        actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1.5" />Enquiry</Button>}
       />
       <DataTable columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search enquiries…" />
 
       <FormDialog
-        open={open} onOpenChange={setOpen} title="New Enquiry" submitLabel="Create Enquiry"
+        open={open} onOpenChange={setOpen} title="Enquiry" submitLabel="Create Enquiry"
         description="Log a new customer enquiry with required items" loading={saving} onSubmit={submit}
       >
         <div className="grid sm:grid-cols-2 gap-4">
@@ -137,6 +164,8 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
           <Field label="Source">
             <SelectInput value={source} onChange={setSource} options={SOURCES.map((s) => ({ value: s, label: s.replaceAll('_', ' ') }))} />
           </Field>
+          <Field label="Required By"><DateInput value={requiredBy} onChange={setRequiredBy} /></Field>
+          <Field label="Expected Value (₹)"><NumberInput value={expectedValue} onChange={setExpectedValue} min={0} placeholder="0" /></Field>
           <Field label="Notes" className="sm:col-span-2">
             <TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Requirements / context…" />
           </Field>
@@ -152,10 +181,7 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
           {lines.map((l, idx) => (
             <div key={idx} className="flex gap-2 items-center">
               <div className="flex-1 min-w-0">
-                <SelectInput
-                  value={l.itemId} options={itemOpts} placeholder="Select item…"
-                  onChange={(v) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, itemId: v } : x)))}
-                />
+                <ItemPicker items={itemRows} value={l.itemId} onChange={(id) => pickItem(idx, id)} />
               </div>
               <NumberInput
                 value={l.qty} className="w-24" min={0} placeholder="Qty"

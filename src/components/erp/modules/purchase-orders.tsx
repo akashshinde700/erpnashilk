@@ -4,17 +4,20 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Check, Plus, Printer, Trash2, Upload, X } from 'lucide-react'
+import { Check, FileText, PackageCheck, Plus, Printer, Trash2, Upload, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
+  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight, useCreatePreset, openCreate,
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
+import { baseQtyHint, convertRate, lineToBase, unitOptions } from '@/lib/units'
+import { ItemPicker, QuickItemDialog, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } from '@/components/erp/item-picker'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
-interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; purchasePrice?: number | null; gstRate?: number | null }
+interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; purchasePrice?: number | null; gstRate?: number | null; barcode?: string | null; partNo?: string | null
+  altUom?: string | null; altFactor?: number | null }
 interface PoItem { id: string; itemId: string; qty: number; rate: number; gstRate: number; lineTotal: number; receivedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null; hsn?: string | null } | null }
 interface CompanyBlock { id?: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null }
 interface PoSupplier { name?: string | null; gstin?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; paymentTermsDays?: number | null }
@@ -22,11 +25,13 @@ interface PoRow {
   id: string; number: string; orderDate: string; expectedDate?: string | null; status: string
   subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number; grandTotal: number
   approvedBy?: string | null; notes?: string | null
+  paymentTerms?: string | null; deliveryTerms?: string | null
   supplier?: PoSupplier | null
   company?: CompanyBlock | null
   items?: PoItem[] | null
 }
-interface DraftLine { itemId: string; qty: number; rate: number; gstRate: number }
+// unit: the item's secondary unit when chosen (qty/rate are then per that unit; converted to base on save)
+interface DraftLine { itemId: string; qty: number; rate: number; gstRate: number; unit?: string }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 const today = () => new Date().toISOString().slice(0, 10)
@@ -63,18 +68,67 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
   const [orderDate, setOrderDate] = React.useState(today)
   const [expectedDate, setExpectedDate] = React.useState('')
   const [notes, setNotes] = React.useState('')
+  const [paymentTerms, setPaymentTerms] = React.useState('')
+  const [deliveryTerms, setDeliveryTerms] = React.useState('')
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
   const [detail, setDetail] = React.useState<PoRow | null>(null)
+  const [newItemFor, setNewItemFor] = React.useState<{ idx: number; name: string } | null>(null)
 
   const rows = list.data?.items ?? []
   const supplierOpts = (suppliers.data?.items ?? []).map((s) => ({ value: s.id, label: s.name || s.id }))
-  const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.id }))
-  const prOpts = (prs.data?.items ?? []).filter((p) => p.status === 'PENDING').map((p) => ({ value: p.id, label: p.number }))
+  const itemRows = items.data?.items ?? []
+  const itemRow = (itemId: string) => itemRows.find((o) => o.id === itemId)
+  // The API converts PENDING or APPROVED requisitions — list approved ones first
+  const prOpts = (prs.data?.items ?? [])
+    .filter((p) => p.status === 'APPROVED' || p.status === 'PENDING')
+    .sort((a, b) => (a.status === b.status ? 0 : a.status === 'APPROVED' ? -1 : 1))
+    .map((p) => ({ value: p.id, label: p.status === 'PENDING' ? `${p.number} (pending)` : p.number }))
+
+  /**
+   * The rate this supplier last billed / was ordered at for the item: replaces the item-master
+   * rate on that line (only while the line still shows the rate we pre-filled — never a typed one).
+   */
+  async function applyLastRate(itemId: string, prefilled: number) {
+    if (!supplierId || !itemId) return
+    try {
+      const r = await apiGet<{ rates: Record<string, { rate: number; date: string; ref: string }> }>(
+        `/api/parties/last-rates?companyId=${companyId}&kind=supplier&partyId=${supplierId}&itemIds=${encodeURIComponent(itemId)}`,
+      )
+      const last = r.rates?.[itemId]
+      if (!last || !(last.rate > 0)) return
+      setLines((ls) => ls.map((x) => (x.itemId === itemId && x.rate === prefilled ? { ...x, rate: convertRate(last.rate, undefined, x.unit, itemRow(itemId)) } : x)))
+    } catch { /* keep the item-master rate */ }
+  }
+
+  /** Set a line's item (rate: supplier's last rate, else the item master); an item already on another line adds this qty there instead. */
+  function pickItem(idx: number, it: PickerItem) {
+    const prefilled = lines[idx]?.rate || Number(it.purchasePrice || 0)
+    const r = pickIntoLines(lines, idx, it.id, (x) => ({ ...x, itemId: it.id, rate: x.rate || Number(it.purchasePrice || 0), gstRate: it.gstRate ?? x.gstRate, unit: it.id === x.itemId ? x.unit : undefined }))
+    if (r.merged) toast.info('Item already on this PO — quantity added to that line')
+    setLines(r.lines)
+    if (!r.merged) void applyLastRate(it.id, prefilled)
+  }
+
+  // Barcode scan: +1 on the item's line, or a new line priced from the supplier's last rate / item master
+  function scanItem(it: PickerItem) {
+    const isNew = !lines.some((x) => x.itemId === it.id)
+    setLines((ls) => scanIntoLines(ls, it.id, () => ({ ...emptyLine(), itemId: it.id, qty: 1, rate: Number(it.purchasePrice || 0), gstRate: it.gstRate ?? emptyLine().gstRate })))
+    if (isNew) void applyLastRate(it.id, Number(it.purchasePrice || 0))
+  }
 
   function resetForm() {
     setSupplierId(''); setPrId(''); setOrderDate(today()); setExpectedDate(''); setNotes('')
+    setPaymentTerms(''); setDeliveryTerms('')
     setLines([emptyLine()])
   }
+
+  // Shortcuts from other screens (party view, row actions, quick actions) open this form pre-filled
+  useCreatePreset('purchase-orders', (d) => {
+    resetForm()
+    if (d.prId) void pickPr(String(d.prId))
+    else if (d.supplierId) setSupplierId(String(d.supplierId))
+    setOpen(true)
+  })
 
   async function pickPr(pid: string) {
     setPrId(pid)
@@ -93,13 +147,15 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
 
   async function submit() {
     if (!supplierId) { toast.error('Select a supplier'); return }
-    const valid = lines.filter((l) => l.itemId && l.qty > 0)
+    // qty / rate go to the API in the item's base unit
+    const valid = lines.filter((l) => l.itemId && l.qty > 0).map((l) => lineToBase(l, itemRow(l.itemId)))
     if (!valid.length) { toast.error('Add at least one line with item and qty'); return }
     setSaving(true)
     try {
       await apiPost('/api/purchase-orders', {
         companyId, supplierId, prId: prId || undefined, orderDate,
-        expectedDate: expectedDate || undefined, notes: notes || undefined, items: valid,
+        expectedDate: expectedDate || undefined, notes: notes || undefined,
+        paymentTerms: paymentTerms.trim() || undefined, deliveryTerms: deliveryTerms.trim() || undefined, items: valid,
       })
       toast.success('Purchase order created' + (prId ? ' — requisition converted' : ''))
       setOpen(false); resetForm(); void list.refetch(); void prs.refetch()
@@ -140,7 +196,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
     const interState = (po.igst || 0) > 0
     const qtySum = r2(lines2.reduce((s, it) => s + (it.qty || 0), 0))
     const taxableSum = r2(lines2.reduce((s, it) => s + (it.lineTotal || 0), 0))
-    const payTerms = sup?.paymentTermsDays ? `Net ${sup.paymentTermsDays} days` : ''
+    const payTerms = po.paymentTerms || (sup?.paymentTermsDays ? `Net ${sup.paymentTermsDays} days` : '')
 
     const html = `
       <style>
@@ -190,6 +246,8 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
             <table class="bare">
               <tr><td class="muted">Supply Type</td><td style="text-align:right">${interState ? 'Inter-State (IGST)' : 'Intra-State (CGST + SGST)'}</td></tr>
               <tr><td class="muted">Expected Delivery</td><td style="text-align:right">${po.expectedDate ? new Date(po.expectedDate).toLocaleDateString('en-IN') : '—'}</td></tr>
+              ${payTerms ? `<tr><td class="muted">Payment Terms</td><td style="text-align:right">${esc(payTerms)}</td></tr>` : ''}
+              ${po.deliveryTerms ? `<tr><td class="muted">Delivery Terms</td><td style="text-align:right">${esc(po.deliveryTerms)}</td></tr>` : ''}
               <tr><td class="muted">Approved By</td><td style="text-align:right"><strong>${esc(po.approvedBy || '—')}</strong></td></tr>
             </table>
           </td>
@@ -227,7 +285,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           <td style="width:58%">
             <div class="sec">Terms &amp; Conditions</div>
             <div class="terms">
-              1. Delivery as per agreed schedule.<br/>
+              1. Delivery ${po.deliveryTerms ? `terms: ${esc(po.deliveryTerms)}` : 'as per agreed schedule'}.<br/>
               2. Please mention our PO number on all invoices &amp; correspondence.<br/>
               3. Goods must conform to agreed specifications. E&amp;OE.
             </div>
@@ -242,7 +300,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
     printHtml(`Purchase Order ${row.number}`, html)
   }
 
-  const totals = computeTotals(lines)
+  const totals = computeTotals(lines.map((l) => lineToBase(l, itemRow(l.itemId))))
 
   const columns: Column<PoRow>[] = [
     { key: 'number', header: 'PO #', render: (r) => <span className="font-medium">{r.number}</span> },
@@ -274,6 +332,16 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
               />
             </>
           )}
+          {['APPROVED', 'PARTIALLY_RECEIVED'].includes(r.status) && (
+            <Button variant="ghost" size="sm" className="h-7" title="Receive goods (GRN) against this PO" onClick={() => openCreate('grns', { poId: r.id })}>
+              <PackageCheck className="h-3.5 w-3.5 mr-0.5" />Receive
+            </Button>
+          )}
+          {['PARTIALLY_RECEIVED', 'RECEIVED'].includes(r.status) && (
+            <Button variant="ghost" size="sm" className="h-7" title="Book the supplier bill for this PO" onClick={() => openCreate('purchase-invoices', { poId: r.id })}>
+              <FileText className="h-3.5 w-3.5 mr-0.5" />Bill
+            </Button>
+          )}
           {!['CANCELLED', 'INVOICED'].includes(r.status) && (
             <ConfirmAction
               trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
@@ -290,7 +358,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
       <PageHeader
         title="Purchase Orders"
         description="Raise, approve and track supplier orders"
-        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Purchase Order</Button>}
+        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />Purchase Order</Button>}
       />
       <DataTable
         columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search purchase orders…" onRowClick={(r) => setDetail(r)}
@@ -308,7 +376,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
       />
 
       <FormDialog
-        open={open} onOpenChange={setOpen} wide title="New Purchase Order" submitLabel="Create PO"
+        open={open} onOpenChange={setOpen} wide title="Purchase Order" submitLabel="Create PO"
         description="Optionally convert an approved requisition — rates prefill from item purchase price" loading={saving} onSubmit={submit}
       >
         <div className="grid sm:grid-cols-3 gap-4">
@@ -318,30 +386,44 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           </Field>
           <Field label="Order Date" required><DateInput value={orderDate} onChange={setOrderDate} /></Field>
           <Field label="Expected Date"><DateInput value={expectedDate} onChange={setExpectedDate} /></Field>
-          <Field label="Notes" className="sm:col-span-2"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Delivery / payment terms…" /></Field>
+          <Field label="Payment Terms"><TextInput value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. 30 days from invoice" /></Field>
+          <Field label="Delivery Terms"><TextInput value={deliveryTerms} onChange={(e) => setDeliveryTerms(e.target.value)} placeholder="e.g. Ex-works / Door delivery" /></Field>
+          <Field label="Notes" className="sm:col-span-3"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Remarks…" /></Field>
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Lines</span>
-            <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
-              <Plus className="h-3.5 w-3.5 mr-1" />Add Line
-            </Button>
+            <div className="flex items-center gap-2">
+              <ScanToAdd items={itemRows} onScan={scanItem} className="w-44 sm:w-56" />
+              <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
+                <Plus className="h-3.5 w-3.5 mr-1" />Add Line
+              </Button>
+            </div>
           </div>
           {lines.map((l, idx) => (
             <div key={idx} className="grid grid-cols-12 gap-2 items-center">
               <div className="col-span-12 sm:col-span-5">
-                <SelectInput
-                  value={l.itemId} options={itemOpts} placeholder="Select item…"
-                  onChange={(v) => setLines((ls) => ls.map((x, i) => {
-                    if (i !== idx) return x
-                    const it = (items.data?.items ?? []).find((o) => o.id === v)
-                    return { ...x, itemId: v, rate: x.rate || Number(it?.purchasePrice || 0), gstRate: it?.gstRate ?? x.gstRate }
-                  }))}
+                <ItemPicker
+                  items={itemRows}
+                  value={l.itemId}
+                  onChange={(id) => { const it = itemRows.find((o) => o.id === id); if (it) pickItem(idx, it) }}
+                  onCreate={(typed) => setNewItemFor({ idx, name: typed })}
                 />
               </div>
-              <NumberInput className="col-span-4 sm:col-span-2" value={l.qty} min={0} placeholder="Qty"
-                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
+              <div className="col-span-4 sm:col-span-2 grid gap-0.5">
+                <div className="flex gap-1">
+                  <NumberInput className="min-w-0 flex-1" value={l.qty} min={0} placeholder="Qty"
+                    onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
+                  {unitOptions(itemRow(l.itemId)).length > 0 && (
+                    <div className="w-20 shrink-0">
+                      <SelectInput value={l.unit || itemRow(l.itemId)?.uom || ''} options={unitOptions(itemRow(l.itemId))}
+                        onChange={(u) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, unit: u, rate: convertRate(x.rate, x.unit, u, itemRow(x.itemId)) } : x)))} />
+                    </div>
+                  )}
+                </div>
+                {baseQtyHint(l.qty, l.unit, itemRow(l.itemId)) && <span className="text-[10px] leading-tight text-muted-foreground">{baseQtyHint(l.qty, l.unit, itemRow(l.itemId))}</span>}
+              </div>
               <NumberInput className="col-span-4 sm:col-span-2" value={l.rate} min={0} placeholder="Rate"
                 onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, rate: n } : x)))} />
               <NumberInput className="col-span-3 sm:col-span-2" value={l.gstRate} min={0} placeholder="GST %"
@@ -362,6 +444,16 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           </div>
         </div>
       </FormDialog>
+
+      <QuickItemDialog
+        open={!!newItemFor}
+        onOpenChange={(o) => { if (!o) setNewItemFor(null) }}
+        initialName={newItemFor?.name ?? ''}
+        items={itemRows}
+        defaultType="RAW"
+        onCreated={(it) => { if (newItemFor) pickItem(newItemFor.idx, it); void items.refetch() }}
+        onUseExisting={(it) => { if (newItemFor) pickItem(newItemFor.idx, it) }}
+      />
 
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -403,6 +495,8 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
                 {detail.igst ? <span>IGST <Money value={detail.igst} /></span> : null}
                 <span className="font-bold text-base">Grand Total <Money value={detail.grandTotal} /></span>
               </div>
+              {detail.paymentTerms && <p className="text-xs text-muted-foreground">Payment terms: {detail.paymentTerms}</p>}
+              {detail.deliveryTerms && <p className="text-xs text-muted-foreground">Delivery terms: {detail.deliveryTerms}</p>}
               {detail.notes && <p className="text-xs text-muted-foreground">Notes: {detail.notes}</p>}
             </div>
           )}

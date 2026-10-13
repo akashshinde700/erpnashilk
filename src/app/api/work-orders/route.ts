@@ -69,15 +69,17 @@ export async function POST(req: Request) {
       plannedQty, startDate, dueDate, priority, notes, userName,
     } = body
 
-    if (!itemId) throw new ApiError('itemId is required', 400)
-    if (!warehouseId) throw new ApiError('warehouseId is required', 400)
-    const qty = Number(plannedQty)
-    if (!qty || qty <= 0) throw new ApiError('plannedQty must be greater than 0', 400)
+    if (!itemId) throw new ApiError('Select the item to manufacture', 400)
+    // Optional fields: planned qty defaults to 1, warehouse to the FG store (else the first warehouse).
+    const qty = Number(plannedQty) > 0 ? Number(plannedQty) : 1
 
     const item = await db.item.findFirst({ where: { id: itemId, companyId } })
     if (!item) throw new ApiError('Item not found', 404)
-    const warehouse = await db.warehouse.findFirst({ where: { id: warehouseId, companyId } })
-    if (!warehouse) throw new ApiError('Warehouse not found', 404)
+    const warehouse = warehouseId
+      ? await db.warehouse.findFirst({ where: { id: warehouseId, companyId } })
+      : (await db.warehouse.findFirst({ where: { companyId, type: 'FG' }, orderBy: { createdAt: 'asc' } }))
+        ?? (await db.warehouse.findFirst({ where: { companyId }, orderBy: { createdAt: 'asc' } }))
+    if (!warehouse) throw new ApiError(warehouseId ? 'Warehouse not found' : 'Create a warehouse first', 404)
     if (salesOrderId) {
       const so = await db.salesOrder.findFirst({ where: { id: salesOrderId, companyId } })
       if (!so) throw new ApiError('Sales order not found', 404)
@@ -110,7 +112,7 @@ export async function POST(req: Request) {
       const wo = await tx.workOrder.create({
         data: {
           companyId, number, itemId, bomId: resolvedBomId, salesOrderId: salesOrderId || null,
-          warehouseId, plannedQty: qty, status: 'PLANNED', startDate: start,
+          warehouseId: warehouse.id, plannedQty: qty, status: 'PLANNED', startDate: start,
           dueDate: due, priority: priority || 'NORMAL', notes: notes || null,
         },
       })

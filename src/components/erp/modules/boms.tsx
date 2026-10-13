@@ -266,7 +266,7 @@ export default function BomsModule({ companyId }: { companyId: string }) {
         description="Recipe of components used to produce finished and semi-finished items"
         actions={
           <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1.5" /> New BOM
+            <Plus className="h-4 w-4 mr-1.5" /> BOM
           </Button>
         }
       />
@@ -343,7 +343,7 @@ export default function BomsModule({ companyId }: { companyId: string }) {
       <FormDialog
         open={formOpen}
         onOpenChange={setFormOpen}
-        title={editing ? 'Edit BOM' : 'New BOM'}
+        title={editing ? 'Edit BOM' : 'BOM'}
         description={editing ? `Updating ${editing.code}` : 'Define the component recipe for an item'}
         onSubmit={submit}
         loading={saving}

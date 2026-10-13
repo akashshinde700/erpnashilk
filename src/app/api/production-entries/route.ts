@@ -1,6 +1,8 @@
 import { db } from '@/lib/db'
+import { backflushComponents } from '@/lib/manufacturing'
 import { ok, handleError, companyRequired, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
+import { parseSerials, receiveBatch, receiveSerials } from '@/lib/batches'
 
 // WorkOrder has no item relation in the schema — join in JS.
 async function attachWorkOrderItems(entries: any[]) {
@@ -40,7 +42,9 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/production-entries  { workOrderId, producedQty, rejectedQty?, scrapQty?, operator?, downtimeMins?, notes?, userName? }
+// POST /api/production-entries  { workOrderId, producedQty, rejectedQty?, scrapQty?, operator?, downtimeMins?, notes?, userName?, batchNo?, expiryDate?, serials? }
+// Batch-tracked finished item: the produced qty goes into batch `batchNo` (default = work order number), expiry optional.
+// Serial-tracked finished item: `serials` (newline / comma separated) required, one per produced unit.
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'production-entries')
@@ -48,13 +52,13 @@ export async function POST(req: Request) {
     const companyId = await companyRequired(req, body.companyId)
     const { workOrderId, operator, notes, userName } = body
 
-    const producedQty = r2(Number(body.producedQty) || 0)
+    const producedQty = r2(Math.max(0, Number(body.producedQty) || 0))
     const rejectedQty = r2(Math.max(0, Number(body.rejectedQty) || 0))
     const scrapQty = r2(Math.max(0, Number(body.scrapQty) || 0))
     const downtimeMins = Math.max(0, Math.round(Number(body.downtimeMins) || 0))
 
-    if (!workOrderId) throw new ApiError('workOrderId is required', 400)
-    if (producedQty <= 0) throw new ApiError('producedQty must be greater than 0', 400)
+    if (!workOrderId) throw new ApiError('Select a work order — finished stock is posted to its item', 400)
+    // Quantities are optional: an all-zero entry just records work details / downtime.
 
     const created = await db.$transaction(async (tx) => {
       const wo = await tx.workOrder.findFirst({ where: { id: workOrderId, companyId } })
@@ -73,8 +77,14 @@ export async function POST(req: Request) {
         throw new ApiError('Entry exceeds planned qty', 400)
       }
 
-      // Stock in at standard cost
-      await postStock(tx as any, {
+      // Backflush: consume the BOM components this output needs that weren't issued yet.
+      // Fails the whole entry (nothing posted) when any component is short.
+      const flushed = await backflushComponents(tx, {
+        companyId, wo: { id: wo.id, number: wo.number, bomId: wo.bomId }, unitsTotal: r2(totalProduced + totalRejected + totalScrap),
+      })
+
+      // Stock in at standard cost (only when something was produced)
+      if (producedQty > 0) await postStock(tx as any, {
         companyId, itemId: wo.itemId, warehouseId: wo.warehouseId, type: 'PRODUCTION_IN',
         qtyIn: producedQty, rate: item.standardCost,
         refType: 'WORK_ORDER', refId: wo.id, refNumber: wo.number,
@@ -88,6 +98,18 @@ export async function POST(req: Request) {
           downtimeMins, notes: notes || null,
         },
       })
+
+      // Batch / serial layer for the finished goods (no-op for untracked items)
+      if (producedQty > 0) {
+        await receiveBatch(tx, {
+          companyId, itemId: wo.itemId, warehouseId: wo.warehouseId, qty: producedQty,
+          batchNo: String(body.batchNo || '').trim() || wo.number, expiryDate: body.expiryDate || null, mfgDate: new Date(),
+        })
+        await receiveSerials(tx, {
+          companyId, itemId: wo.itemId, warehouseId: wo.warehouseId, serials: parseSerials(body.serials), qty: producedQty,
+          ref: { type: 'PRODUCTION_ENTRY', id: entry.id },
+        })
+      }
 
       const completed = totalProduced + totalRejected >= wo.plannedQty - 0.001
       await tx.workOrder.update({
@@ -120,10 +142,11 @@ export async function POST(req: Request) {
       await logAudit(tx as any, {
         companyId, userName, action: 'POST', entity: 'ProductionEntry',
         entityId: entry.id,
-        details: `Production entry on ${wo.number}: produced ${producedQty}, rejected ${rejectedQty}, scrap ${scrapQty}`,
+        details: `Production entry on ${wo.number}: produced ${producedQty}, rejected ${rejectedQty}, scrap ${scrapQty}`
+          + (flushed.length ? ` · auto-consumed ${flushed.length} component(s) from stock` : ''),
       })
 
-      return entry
+      return { ...entry, consumed: flushed }
     })
 
     const row = await db.productionEntry.findUnique({
@@ -132,7 +155,8 @@ export async function POST(req: Request) {
     })
     const [full] = await attachWorkOrderItems([row])
     void emitEvent({ companyId, title: 'Production reported', message: `${full?.workOrder?.number || 'work order'} +${producedQty}`, topic: 'production' })
-    return ok(full, `Production entry posted for ${full?.workOrder?.number || 'work order'}`)
+    const consumedNote = created.consumed.length ? ` — ${created.consumed.length} raw material(s) auto-consumed from stock` : ''
+    return ok({ ...full, consumed: created.consumed }, `Production entry posted for ${full?.workOrder?.number || 'work order'}${consumedNote}`)
   } catch (e) {
     return handleError(e)
   }

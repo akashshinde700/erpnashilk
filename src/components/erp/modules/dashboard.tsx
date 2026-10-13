@@ -6,8 +6,12 @@ import {
   BarChart3,
   Boxes,
   ClipboardList,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Banknote,
   CreditCard,
   Factory,
+  Landmark,
   FileText,
   HandCoins,
   IndianRupee,
@@ -25,7 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { canAccessModule, fmtDate, fmtDateTime, fmtMoney, fmtNum } from '@/lib/erp-constants'
 import { useList } from '@/lib/use-api'
-import { Money, SectionCard, StatCard, StatusBadge } from '@/components/erp/kit'
+import { Money, SectionCard, StatCard, StatusBadge, openCreate } from '@/components/erp/kit'
 
 // ---------- API shapes (contract: GET /api/dashboard?companyId=) ----------
 
@@ -76,6 +80,12 @@ interface DashboardData {
     openSalesOrders?: number
     wipQty?: number
     lowStockCount?: number
+  }
+  money?: {
+    youWillReceive?: number
+    youWillPay?: number
+    cashInHand?: number
+    bankBalance?: number
   }
   charts?: {
     salesTrend?: { month: string; key?: string; value: number }[]
@@ -147,12 +157,15 @@ const EmptyList = ({ text }: { text: string }) => (
 
 // ---------- quick actions (role-filtered, navigate via erp:goto) ----------
 
-const QUICK_ACTIONS: { key: string; label: string; icon: React.ReactNode }[] = [
-  { key: 'sales-orders', label: 'New Sales Order', icon: <ShoppingCart className="h-4 w-4" /> },
-  { key: 'quotations', label: 'New Quotation', icon: <FileText className="h-4 w-4" /> },
-  { key: 'purchase-orders', label: 'New Purchase Order', icon: <PackageCheck className="h-4 w-4" /> },
-  { key: 'payments', label: 'Record Payment', icon: <Wallet className="h-4 w-4" /> },
-  { key: 'work-orders', label: 'New Work Order', icon: <Factory className="h-4 w-4" /> },
+// `create`: open that module's create form directly (not just the list)
+// `id`: distinct React key when two actions share a module; `preset`: data passed to openCreate
+const QUICK_ACTIONS: { key: string; id?: string; label: string; icon: React.ReactNode; create?: boolean; preset?: Record<string, string> }[] = [
+  { key: 'sales-orders', label: 'Sales Order', icon: <ShoppingCart className="h-4 w-4" />, create: true },
+  { key: 'quotations', label: 'Quotation', icon: <FileText className="h-4 w-4" />, create: true },
+  { key: 'purchase-orders', label: 'Purchase Order', icon: <PackageCheck className="h-4 w-4" />, create: true },
+  { key: 'payments', id: 'payment-in', label: 'Payment In', icon: <Wallet className="h-4 w-4" />, create: true, preset: { type: 'RECEIPT' } },
+  { key: 'payments', id: 'payment-out', label: 'Payment Out', icon: <Wallet className="h-4 w-4" />, create: true, preset: { type: 'PAYMENT' } },
+  { key: 'work-orders', label: 'Work Order', icon: <Factory className="h-4 w-4" />, create: true },
   { key: 'qc-inspections', label: 'QC Inspection', icon: <ClipboardList className="h-4 w-4" /> },
   { key: 'stock-adjustments', label: 'Stock Adjustment', icon: <SlidersHorizontal className="h-4 w-4" /> },
   { key: 'mrp', label: 'Run MRP', icon: <Layers3 className="h-4 w-4" /> },
@@ -167,12 +180,12 @@ function QuickActions({ role }: { role: string }) {
   if (!actions.length) return null
   return (
     <SectionCard title="Quick actions">
-      <p className="text-xs text-muted-foreground -mt-1 mb-2">One-click jump to the most-used workflows</p>
+      <p className="text-xs text-muted-foreground -mt-1 mb-2">One click to start the most-used documents</p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {actions.map((a) => (
           <button
-            key={a.key}
-            onClick={() => window.dispatchEvent(new CustomEvent('erp:goto', { detail: a.key }))}
+            key={a.id ?? a.key}
+            onClick={() => (a.create ? openCreate(a.key, a.preset) : window.dispatchEvent(new CustomEvent('erp:goto', { detail: a.key })))}
             className="flex flex-col items-center gap-1.5 rounded-lg border bg-card px-2 py-3 text-center transition-colors hover:border-emerald-300 hover:bg-emerald-50 dark:hover:border-emerald-800 dark:hover:bg-emerald-950/40"
           >
             <span className="rounded-md bg-emerald-100 p-1.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{a.icon}</span>
@@ -269,6 +282,17 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
   ]
   const visibleStats = stats.filter((s) => s.allow !== false)
 
+  // Top money row (Vyapar style) — party outstanding incl. opening balances, cash & bank from Cash & Bank accounts
+  const canCashBank = canAccessModule(role, 'cash-bank')
+  const m = data?.money
+  const moneyCards: { title: string; value: string; sub: string; icon: React.ReactNode; cls: string; to: string; allow: boolean }[] = [
+    { title: "You'll Receive", value: fmtMoney(m?.youWillReceive), sub: 'Customer balances incl. opening', icon: <ArrowDownLeft className="h-4 w-4" />, cls: TONE.emerald, to: 'receivables', allow: canReceivables },
+    { title: "You'll Pay", value: fmtMoney(m?.youWillPay), sub: 'Supplier balances incl. opening', icon: <ArrowUpRight className="h-4 w-4" />, cls: TONE.rose, to: 'payables', allow: canPayables },
+    { title: 'Cash in Hand', value: fmtMoney(m?.cashInHand), sub: 'All cash accounts', icon: <Banknote className="h-4 w-4" />, cls: TONE.amber, to: 'cash-bank', allow: canCashBank },
+    { title: 'Bank Balance', value: fmtMoney(m?.bankBalance), sub: 'All bank accounts', icon: <Landmark className="h-4 w-4" />, cls: TONE.sky, to: 'cash-bank', allow: canCashBank },
+  ]
+  const visibleMoney = moneyCards.filter((c) => c.allow)
+
   // List grid columns adapt to how many top-level list sections the role can see
   const listSlots = [canSalesOrders, canApprovals, canStock || canNotifications].filter(Boolean).length
   const listCols = listSlots >= 3 ? 'lg:grid-cols-3' : listSlots === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-1'
@@ -316,6 +340,23 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
           <Button variant="outline" size="sm" onClick={() => void refetch()}>
             <RefreshCw className="h-4 w-4 mr-1.5" /> Retry
           </Button>
+        </div>
+      )}
+
+      {/* Money row — You'll Receive / You'll Pay / Cash / Bank */}
+      {visibleMoney.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {visibleMoney.map((c) => (
+            <button
+              key={c.title}
+              type="button"
+              onClick={() => openModule(c.to)}
+              className="text-left w-full rounded-xl transition hover:ring-2 hover:ring-emerald-300 dark:hover:ring-emerald-700 focus:outline-none focus-visible:ring-2 cursor-pointer"
+              title={`Open ${c.to.replace('-', ' & ')}`}
+            >
+              <StatCard title={c.title} value={c.value} sub={c.sub} icon={c.icon} toneClass={c.cls} />
+            </button>
+          ))}
         </div>
       )}
 

@@ -4,6 +4,8 @@ import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } fr
 
 const WAREHOUSE_TYPES = ['RM', 'FG', 'GENERAL', 'SCRAP']
 
+const optStr = (v: unknown): string | null => (v === undefined || v === null ? null : String(v).trim() || null)
+
 // ============================== GET /api/warehouses/[id] ==============================
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -37,6 +39,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.name !== undefined) data.name = String(body.name).trim()
     if (body.type !== undefined) data.type = String(body.type)
     if (body.location !== undefined) data.location = body.location || null
+    if (body.address !== undefined) data.address = optStr(body.address)
+    if (body.inCharge !== undefined) data.inCharge = optStr(body.inCharge)
 
     const warehouse = await db.$transaction(async (tx) => {
       const updated = await tx.warehouse.update({ where: { id: existing.id }, data })

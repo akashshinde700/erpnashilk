@@ -1,4 +1,6 @@
 import { db } from '@/lib/db'
+import { requireSecurityPin } from '@/lib/security-pin'
+import { consumedByItem } from '@/lib/manufacturing'
 import { ok, fail, handleError, companyRequired, logAudit, ApiError, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -54,13 +56,15 @@ export async function GET(req: Request, { params }: Ctx) {
       items: mi.items.map((it) => ({ ...it, item: issueItemMap.get(it.itemId) || null })),
     }))
 
-    return ok({ ...wo, item, warehouse, salesOrder, bom, issues, entries })
+    // Per component: issued via material issues + auto-consumed at production (backflush)
+    const consumed = await consumedByItem(db, companyId, wo.id)
+    return ok({ ...wo, item, warehouse, salesOrder, bom, issues, entries, consumed })
   } catch (e) {
     return handleError(e)
   }
 }
 
-// PATCH /api/work-orders/[id]  { companyId, action: 'release' | 'cancel', userName? }
+// PATCH /api/work-orders/[id]  { companyId, action: 'release' | 'complete' | 'cancel', userName? }
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
     requireWrite(req, 'work-orders')
@@ -68,6 +72,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const companyId = await companyRequired(req, body.companyId)
     const { id } = await params
     const action = body.action
+    if (action === 'cancel' || action === 'complete') await requireSecurityPin(req, companyId)
 
     const result = await db.$transaction(async (tx) => {
       const wo = await tx.workOrder.findFirst({ where: { id, companyId } })
@@ -104,7 +109,28 @@ export async function PATCH(req: Request, { params }: Ctx) {
         return updated
       }
 
-      throw new ApiError('Invalid action (expected release or cancel)', 400)
+      if (action === 'complete') {
+        // Short-close: finish the WO at whatever has been produced so far
+        if (!['RELEASED', 'IN_PROGRESS'].includes(wo.status)) {
+          throw new ApiError(`Only RELEASED or IN_PROGRESS work orders can be completed (current status: ${wo.status})`, 400)
+        }
+        if (!(wo.producedQty > 0)) throw new ApiError('Cannot complete: no production has been posted yet — cancel the work order instead', 400)
+        // Atomic: status and producedQty re-checked on the locked row (claimStatus semantics + qty guard)
+        const claim = await tx.workOrder.updateMany({
+          where: { id: wo.id, companyId, status: { in: ['RELEASED', 'IN_PROGRESS'] }, producedQty: { gt: 0 } },
+          data: { status: 'COMPLETED' },
+        })
+        if (claim.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
+        const updated = await tx.workOrder.findUniqueOrThrow({ where: { id: wo.id } })
+        await logAudit(tx as any, {
+          companyId, userName: body.userName, action: 'UPDATE', entity: 'WorkOrder',
+          entityId: wo.id,
+          details: `Work order ${wo.number} short-closed at produced qty ${updated.producedQty} of planned ${wo.plannedQty}`,
+        })
+        return updated
+      }
+
+      throw new ApiError('Invalid action (expected release, complete or cancel)', 400)
     })
 
     return ok(result, `Work order ${action}d`)
@@ -118,6 +144,7 @@ export async function DELETE(req: Request, { params }: Ctx) {
   try {
     requireWrite(req, 'work-orders')
     const companyId = await companyRequired(req)
+    await requireSecurityPin(req, companyId)
     const { id } = await params
 
     const wo = await db.workOrder.findFirst({ where: { id, companyId } })

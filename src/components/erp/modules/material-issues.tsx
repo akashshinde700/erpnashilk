@@ -2,13 +2,14 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { Plus } from 'lucide-react'
+import { Ban, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
-  DataTable, DateCell, Field, FormDialog, NumberInput, PageHeader, SelectInput, StatCard, StatusBadge, TextInput, type Column,
+  ConfirmAction, DataTable, DateCell, Field, FormDialog, NumberInput, PageHeader, SelectInput, StatCard, StatusBadge, TextInput, type Column,
+  useCreatePreset,
 } from '@/components/erp/kit'
-import { apiGet, apiPost, useList } from '@/lib/use-api'
+import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtNum } from '@/lib/erp-constants'
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
@@ -19,12 +20,12 @@ const todayISO = () => {
 const rowsOf = <T,>(d: T[] | { items?: T[] } | null | undefined): T[] => (Array.isArray(d) ? d : d?.items || [])
 
 // ---------- types ----------
-interface ItemRow { id: string; code?: string; name?: string; uom?: string }
+interface ItemRow { id: string; code?: string; name?: string; uom?: string; batchTracked?: boolean | null; type?: string | null }
 interface WarehouseRow { id: string; code?: string; name?: string; type?: string }
 interface BomComponent { id: string; itemId: string; qty: number; scrapPct?: number; item?: { code?: string; name?: string } | null }
 interface MiLine { id: string; itemId: string; requiredQty?: number; issuedQty?: number; item?: { code?: string; name?: string } | null }
 interface MiRow {
-  id: string; number: string; date: string; status: string; notes?: string | null
+  id: string; number: string; date: string; status: string; notes?: string | null; workOrderId?: string
   workOrder?: { id?: string; number?: string } | null
   warehouse?: { code?: string; name?: string } | null
   items?: MiLine[]
@@ -34,8 +35,24 @@ interface WoRow {
   itemId: string
   item?: { code?: string; name?: string; uom?: string } | null
 }
-interface WoDetail extends WoRow { bom?: { id: string; code?: string; items?: BomComponent[] } | null }
-interface LineDraft { itemId: string; gross: number; requiredQty: number; issuedQty: number }
+interface WoDetail extends WoRow { bom?: { id: string; code?: string; outputQty?: number; items?: BomComponent[] } | null; consumed?: Record<string, number> }
+// batchNo: batch-tracked components only — '' = earliest expiry first (FEFO)
+interface LineDraft { itemId: string; gross: number; requiredQty: number; issuedQty: number; batchNo?: string }
+
+function LineBatchPick({ companyId, itemId, warehouseId, value, onChange }: {
+  companyId: string; itemId: string; warehouseId: string; value: string; onChange: (v: string) => void
+}) {
+  const batches = useList<{ items: { id: string; batchNo: string; qty: number; expiryDate?: string | null }[] }>(
+    warehouseId ? `/api/batches?companyId=${companyId}&itemId=${itemId}&warehouseId=${warehouseId}` : null,
+  )
+  const opts = [
+    { value: '', label: 'Auto (earliest expiry first)' },
+    ...(batches.data?.items ?? []).map((b) => ({
+      value: b.batchNo, label: `${b.batchNo} · qty ${b.qty}${b.expiryDate ? ` · exp ${new Date(b.expiryDate).toLocaleDateString('en-IN')}` : ''}`,
+    })),
+  ]
+  return <SelectInput value={value} onChange={onChange} options={opts} disabled={!warehouseId} placeholder="Batch…" />
+}
 
 export default function MaterialIssuesModule({ companyId }: { companyId: string }) {
   const list = useList<{ items?: MiRow[] } | MiRow[]>(`/api/material-issues?companyId=${companyId}`)
@@ -74,7 +91,8 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
     }
   }, [open, warehouseId, whRows])
 
-  const totalIssued = miRows.reduce((s, m) => s + (m.items || []).reduce((t, l) => t + (l.issuedQty || 0), 0), 0)
+
+  const totalIssued = miRows.filter((m) => m.status !== 'CANCELLED').reduce((s, m) => s + (m.items || []).reduce((t, l) => t + (l.issuedQty || 0), 0), 0)
 
   async function pickWo(id: string) {
     setWoId(id); setLines([]); setWoInfo(null)
@@ -84,14 +102,16 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
       setWoInfo(d)
       const issuedByItem: Record<string, number> = {}
       for (const mi of miRows) {
-        if (mi.workOrder?.id === id) {
+        if (mi.status !== 'CANCELLED' && (mi.workOrderId || mi.workOrder?.id) === id) {
           for (const l of mi.items || []) issuedByItem[l.itemId] = (issuedByItem[l.itemId] || 0) + (l.issuedQty || 0)
         }
       }
       const comps = d?.bom?.items || []
       setLines(comps.map((c) => {
-        const gross = r2((d.plannedQty || 0) * (c.qty || 0) * (1 + (c.scrapPct || 0) / 100))
-        const pending = Math.max(0, gross - (issuedByItem[c.itemId] || 0))
+        const gross = r2((d.plannedQty || 0) * (c.qty || 0) / ((d.bom?.outputQty || 0) > 0 ? d.bom!.outputQty! : 1) * (1 + (c.scrapPct || 0) / 100))
+        // Already consumed = issued + auto-consumed at production (server), else issued from the list
+        const done = d.consumed ? (d.consumed[c.itemId] || 0) : (issuedByItem[c.itemId] || 0)
+        const pending = Math.max(0, r2(gross - done))
         return { itemId: c.itemId, gross, requiredQty: pending, issuedQty: pending }
       }))
     } catch (e) {
@@ -99,16 +119,22 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
     }
   }
 
+  // Shortcut from a work-order row: open the form with that WO's pending BOM lines loaded
+  useCreatePreset('material-issues', (d) => {
+    setWoId(''); setWoInfo(null); setLines([]); setDate(todayISO()); setNotes('')
+    setOpen(true)
+    if (d.woId) void pickWo(String(d.woId))
+  })
+
   async function create() {
     if (!woId) { toast.error('Select a work order'); return }
-    if (!warehouseId) { toast.error('Select a warehouse'); return }
     const toPost = lines.filter((l) => l.issuedQty > 0)
     if (toPost.length === 0) { toast.error('Nothing to issue — all pending quantities are 0'); return }
     setSaving(true)
     try {
       await apiPost('/api/material-issues', {
         companyId, workOrderId: woId, warehouseId, date,
-        lines: toPost.map((l) => ({ itemId: l.itemId, requiredQty: l.requiredQty, issuedQty: l.issuedQty })),
+        lines: toPost.map((l) => ({ itemId: l.itemId, requiredQty: l.requiredQty, issuedQty: l.issuedQty, ...(l.batchNo ? { batchNo: l.batchNo } : {}) })),
         notes: notes || undefined,
       })
       toast.success('Material issue posted')
@@ -117,6 +143,18 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to post material issue')
     } finally { setSaving(false) }
+  }
+
+  // Cancel a posted issue: stock (and batches) go back to the store it was issued from
+  const woStatus = (r: MiRow) => rowsOf(wos.data).find((w) => w.id === (r.workOrderId || r.workOrder?.id))?.status
+  async function cancelIssue(r: MiRow) {
+    try {
+      await apiPatch(`/api/material-issues/${r.id}`, { action: 'cancel', companyId })
+      toast.success(`Material issue ${r.number} cancelled — stock returned to store`)
+      void list.refetch(); void wos.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to cancel material issue')
+    }
   }
 
   // ---- detail dialog ----
@@ -134,6 +172,22 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
     },
     { key: 'wh', header: 'Warehouse', hideOnMobile: true, render: (r) => r.warehouse?.name || '—' },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
+    {
+      key: 'actions', header: 'Actions',
+      render: (r) => {
+        const ws = woStatus(r)
+        if (r.status !== 'POSTED' || ws === 'COMPLETED' || ws === 'CANCELLED') return null
+        return (
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <ConfirmAction
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600" title="Cancel issue (returns the stock to store)"><Ban className="h-3.5 w-3.5 mr-0.5" />Cancel</Button>}
+              title="Cancel material issue?" tone="destructive" onConfirm={() => cancelIssue(r)}
+              message={`Cancel ${r.number}? The issued quantities go back into the store (and batches) they were taken from.`}
+            />
+          </div>
+        )
+      },
+    },
   ]
 
   return (
@@ -143,7 +197,7 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
         description="Issue BOM raw materials from store to released work orders"
         actions={
           <Button onClick={() => { setWoId(''); setWoInfo(null); setLines([]); setDate(todayISO()); setNotes(''); setOpen(true) }}>
-            <Plus className="h-4 w-4 mr-1.5" />New Issue
+            <Plus className="h-4 w-4 mr-1.5" />Issue
           </Button>
         }
       />
@@ -162,7 +216,7 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
 
       {/* ---- Create dialog ---- */}
       <FormDialog
-        open={open} onOpenChange={setOpen} title="New Material Issue"
+        open={open} onOpenChange={setOpen} title="Material Issue"
         description="Pending quantities are computed from the WO BOM minus what was already issued"
         submitLabel="Post Issue" loading={saving} onSubmit={create} wide
       >
@@ -174,13 +228,13 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
               placeholder="Select released WO…"
             />
           </Field>
-          <Field label="Issue From Warehouse" required>
+          <Field label="Issue From Warehouse">
             <SelectInput
               value={warehouseId} onChange={setWarehouseId}
               options={whRows.map((w) => ({ value: w.id, label: `${w.code || ''} — ${w.name || ''} (${w.type || ''})`.trim() }))}
             />
           </Field>
-          <Field label="Date" required>
+          <Field label="Date">
             <TextInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           <Field label="Notes">
@@ -202,7 +256,15 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
               <TableBody>
                 {lines.map((l, idx) => (
                   <TableRow key={l.itemId}>
-                    <TableCell className="truncate max-w-52">{itemLabel(l.itemId)}</TableCell>
+                    <TableCell className="max-w-52">
+                      <div className="truncate">{itemLabel(l.itemId)}</div>
+                      {(() => { const it = itemRows.find((x) => x.id === l.itemId); return !!it?.batchTracked && it.type !== 'SERVICE' })() && (
+                        <div className="mt-1 min-w-44">
+                          <LineBatchPick companyId={companyId} itemId={l.itemId} warehouseId={warehouseId} value={l.batchNo ?? ''}
+                            onChange={(v) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, batchNo: v } : x)))} />
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtNum(l.gross)}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtNum(l.requiredQty)}</TableCell>
                     <TableCell className="text-right">

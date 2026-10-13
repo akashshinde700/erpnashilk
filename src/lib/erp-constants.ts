@@ -46,7 +46,7 @@ export const STATUS_TONE: Record<string, Tone> = {
 
 export const PAYMENT_MODES = ['CASH', 'BANK', 'UPI', 'CHEQUE', 'NEFT', 'RTGS'] as const
 export const EXPENSE_CATEGORIES = ['UTILITIES', 'FREIGHT', 'RENT', 'SALARY', 'MAINTENANCE', 'TOOLING', 'OTHER'] as const
-export const STOCK_TYPES = ['OPENING', 'GRN_IN', 'ISSUE_OUT', 'PRODUCTION_IN', 'DISPATCH_OUT', 'TRANSFER_IN', 'TRANSFER_OUT', 'ADJUST_IN', 'ADJUST_OUT', 'RETURN_IN', 'QC_REJECT', 'SALES_RETURN'] as const
+export const STOCK_TYPES = ['OPENING', 'GRN_IN', 'ISSUE_OUT', 'PRODUCTION_IN', 'DISPATCH_OUT', 'TRANSFER_IN', 'TRANSFER_OUT', 'ADJUST_IN', 'ADJUST_OUT', 'RETURN_IN', 'QC_REJECT', 'SALES_RETURN', 'SALES_RETURN_IN', 'SALES_RETURN_REVERSAL', 'PURCHASE_IN', 'PURCHASE_RETURN', 'PURCHASE_RETURN_OUT', 'PURCHASE_RETURN_REVERSAL', 'BACKFLUSH_OUT'] as const
 
 export function tone(s: string | null | undefined): Tone {
   if (!s) return 'gray'
@@ -78,9 +78,9 @@ export const ROLE_MODULE_KEYS: Record<string, string[] | '*'> = {
   TENANT_ADMIN: '*',
   MANAGEMENT: '*',
   SUPER_ADMIN: '*',
-  SALES_MANAGER: ['notifications', 'dashboard', 'items', 'customers', 'enquiries', 'quotations', 'sales-orders', 'deliveries', 'sales-invoices', 'payments', 'reports', 'stock'],
+  SALES_MANAGER: ['notifications', 'dashboard', 'items', 'customers', 'enquiries', 'quotations', 'sales-orders', 'deliveries', 'sales-invoices', 'payments', 'reports', 'stock', 'sales-returns'],
   SALES_EXECUTIVE: ['notifications', 'dashboard', 'items', 'customers', 'enquiries', 'quotations', 'sales-orders', 'deliveries', 'sales-invoices', 'stock'],
-  PURCHASE_MANAGER: ['notifications', 'dashboard', 'items', 'suppliers', 'requisitions', 'purchase-orders', 'grns', 'purchase-invoices', 'payments', 'reports', 'stock'],
+  PURCHASE_MANAGER: ['notifications', 'dashboard', 'items', 'suppliers', 'requisitions', 'purchase-orders', 'grns', 'purchase-invoices', 'payments', 'reports', 'stock', 'purchase-returns'],
   PURCHASE_EXECUTIVE: ['notifications', 'dashboard', 'items', 'suppliers', 'requisitions', 'purchase-orders', 'grns', 'purchase-invoices', 'stock'],
   PRODUCTION_MANAGER: ['notifications', 'dashboard', 'items', 'boms', 'machines', 'work-orders', 'material-issues', 'production-entries', 'mrp', 'qc-inspections', 'stock', 'reports'],
   PRODUCTION_SUPERVISOR: ['notifications', 'dashboard', 'work-orders', 'material-issues', 'production-entries', 'mrp', 'qc-inspections', 'stock'],
@@ -90,16 +90,55 @@ export const ROLE_MODULE_KEYS: Record<string, string[] | '*'> = {
   STORE_OPERATOR: ['notifications', 'dashboard', 'stock', 'stock-ledger', 'stock-transfers'],
   QUALITY_MANAGER: ['notifications', 'dashboard', 'items', 'qc-inspections', 'grns', 'production-entries', 'reports'],
   QC_INSPECTOR: ['notifications', 'dashboard', 'qc-inspections', 'stock'],
-  ACCOUNTS_MANAGER: ['notifications', 'dashboard', 'sales-invoices', 'purchase-invoices', 'payments', 'expenses', 'receivables', 'payables', 'gst-report', 'reports'],
-  ACCOUNTANT: ['notifications', 'dashboard', 'sales-invoices', 'purchase-invoices', 'payments', 'expenses', 'receivables', 'payables', 'gst-report', 'reports'],
+  ACCOUNTS_MANAGER: ['notifications', 'dashboard', 'sales-invoices', 'purchase-invoices', 'payments', 'expenses', 'receivables', 'payables', 'gst-report', 'reports', 'sales-returns', 'purchase-returns', 'cash-bank'],
+  ACCOUNTANT: ['notifications', 'dashboard', 'sales-invoices', 'purchase-invoices', 'payments', 'expenses', 'receivables', 'payables', 'gst-report', 'reports', 'sales-returns', 'purchase-returns', 'cash-bank'],
   DISPATCH_MANAGER: ['notifications', 'dashboard', 'sales-orders', 'deliveries', 'stock', 'items'],
   MAINTENANCE_MANAGER: ['notifications', 'dashboard', 'machines'],
   VIEWER: ['notifications', 'dashboard'],
 }
 
+/**
+ * Sidebar entries that host several modules as tabs. Access to the entry = access to any tab;
+ * each tab (and every API) is still checked by its own module key.
+ */
+export const MODULE_GROUP_CHILDREN: Record<string, string[]> = {
+  parties: ['customers', 'suppliers'],
+  'enquiries-quotes': ['enquiries', 'quotations'],
+  'stock-hub': ['stock', 'stock-ledger'],
+  'stock-movements': ['stock-transfers', 'stock-adjustments'],
+  production: ['work-orders', 'material-issues', 'production-entries'],
+  outstanding: ['receivables', 'payables'],
+  'settings-hub': ['settings', 'company-setup'],
+  activity: ['notifications', 'audit-log'],
+}
+
+/** Group entry that hosts a child module key (e.g. 'customers' → 'parties'). */
+export const MODULE_PARENT: Record<string, string> = Object.fromEntries(
+  Object.entries(MODULE_GROUP_CHILDREN).flatMap(([group, kids]) => kids.map((k) => [k, group])),
+)
+
 export function canAccessModule(role: string | null | undefined, moduleKey: string): boolean {
   if (!role) return false
+  const kids = MODULE_GROUP_CHILDREN[moduleKey]
+  if (kids) return kids.some((k) => canAccessModule(role, k))
   const allowed = ROLE_MODULE_KEYS[role]
   if (!allowed) return role === 'TENANT_ADMIN' // unknown roles default to minimal
   return allowed === '*' || allowed.includes(moduleKey)
 }
+
+/** GST state / UT codes (first two digits of a GSTIN). */
+export const GST_STATES: { code: string; name: string }[] = [
+  { code: '01', name: 'Jammu & Kashmir' }, { code: '02', name: 'Himachal Pradesh' }, { code: '03', name: 'Punjab' },
+  { code: '04', name: 'Chandigarh' }, { code: '05', name: 'Uttarakhand' }, { code: '06', name: 'Haryana' },
+  { code: '07', name: 'Delhi' }, { code: '08', name: 'Rajasthan' }, { code: '09', name: 'Uttar Pradesh' },
+  { code: '10', name: 'Bihar' }, { code: '11', name: 'Sikkim' }, { code: '12', name: 'Arunachal Pradesh' },
+  { code: '13', name: 'Nagaland' }, { code: '14', name: 'Manipur' }, { code: '15', name: 'Mizoram' },
+  { code: '16', name: 'Tripura' }, { code: '17', name: 'Meghalaya' }, { code: '18', name: 'Assam' },
+  { code: '19', name: 'West Bengal' }, { code: '20', name: 'Jharkhand' }, { code: '21', name: 'Odisha' },
+  { code: '22', name: 'Chhattisgarh' }, { code: '23', name: 'Madhya Pradesh' }, { code: '24', name: 'Gujarat' },
+  { code: '26', name: 'Dadra & Nagar Haveli and Daman & Diu' }, { code: '27', name: 'Maharashtra' },
+  { code: '29', name: 'Karnataka' }, { code: '30', name: 'Goa' }, { code: '31', name: 'Lakshadweep' },
+  { code: '32', name: 'Kerala' }, { code: '33', name: 'Tamil Nadu' }, { code: '34', name: 'Puducherry' },
+  { code: '35', name: 'Andaman & Nicobar Islands' }, { code: '36', name: 'Telangana' }, { code: '37', name: 'Andhra Pradesh' },
+  { code: '38', name: 'Ladakh' }, { code: '97', name: 'Other Territory' },
+]

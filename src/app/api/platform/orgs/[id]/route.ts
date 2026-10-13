@@ -108,6 +108,20 @@ export async function PATCH(req: Request, { params }: Ctx) {
         throw new ApiError('Unknown action', 400)
     }
 
+    // Firms opened by this org's users (multi-firm) share its subscription: copy plan, status and dates over
+    if (['setPlan', 'markPaid', 'setPaidUntil', 'extendTrial', 'suspend', 'activate', 'customize', 'resetCustom'].includes(action)) {
+      const src = await db.company.findUnique({
+        where: { id },
+        select: { planId: true, status: true, billingCycle: true, paidUntil: true, trialEndsAt: true, maxUsers: true, maxWarehouses: true, maxItems: true },
+      })
+      const orgUserIds = (await db.user.findMany({ where: { companyId: id }, select: { id: true } })).map((u) => u.id)
+      const firmIds = orgUserIds.length
+        ? (await db.userCompanyAccess.findMany({ where: { userId: { in: orgUserIds } }, select: { companyId: true } }))
+          .map((a) => a.companyId).filter((cid) => cid !== id)
+        : []
+      if (src && firmIds.length) await db.company.updateMany({ where: { id: { in: firmIds }, isPlatform: false }, data: src })
+    }
+
     await logAudit(db as never, { companyId: id, userName: me.name, action: 'CONFIG', entity: 'COMPANY', entityId: id, details })
     const fresh = await loadOrg(id)
     return ok({ org: orgRow(fresh!), ...extra }, details)

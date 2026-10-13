@@ -5,12 +5,12 @@ import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import { io, type Socket } from 'socket.io-client'
 import {
-  Bell, Building2, CheckCheck, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
-  Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles,
+  Bell, Building2, CheckCheck, ChevronRight, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
+  Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles, Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -21,13 +21,16 @@ import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator,
 } from '@/components/ui/command'
 import { cn } from '@/lib/utils'
-import { fmtDateTime, ROLE_LABEL, canAccessModule } from '@/lib/erp-constants'
+import { fmtDateTime, ROLE_LABEL, canAccessModule, MODULE_PARENT } from '@/lib/erp-constants'
 import { apiGet, apiPatch, apiPost, useList, UNAUTHORIZED_EVENT } from '@/lib/use-api'
+import { MODULE_TAB_EVENT } from '@/components/erp/tab-group'
 import { MODULES, MODULE_GROUPS, findModule } from '@/components/erp/registry'
-import { Kbd } from '@/components/erp/kit'
+import { Kbd, NEW_DOC_EVENT, openCreate } from '@/components/erp/kit'
 import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp/login-screen'
 import ShortcutsDialog from '@/components/erp/shortcuts-help'
 import ChangePasswordDialog from '@/components/erp/change-password-dialog'
+import PinDialog from '@/components/erp/pin-dialog'
+import { CreateFirmDialog, SWITCH_COMPANY_EVENT } from '@/components/erp/modules/company-setup'
 
 interface CompanyRow {
   id: string
@@ -36,6 +39,7 @@ interface CompanyRow {
   city?: string | null
   stateCode?: string | null
   logoText?: string | null
+  isHome?: boolean
 }
 
 interface NotificationRow {
@@ -71,8 +75,12 @@ const LEVEL_DOT: Record<string, string> = {
   CRITICAL: 'bg-red-500',
 }
 
-// Only the platform administrator can switch between companies.
+// The platform administrator can switch between every company; other users only between
+// their home company and firms linked to their login (the server returns just those).
 const TENANT_ADMIN_ROLES = ['SUPER_ADMIN']
+// Only a tenant admin may create additional firms (server-enforced in POST /api/firms).
+const FIRM_CREATOR_ROLE = 'TENANT_ADMIN'
+const NEW_FIRM_VALUE = '__new_firm__'
 
 /** g + key → module key (Gmail-style jump). Only fires for modules the role can access. */
 const GO_KEYS: Record<string, string> = {
@@ -94,6 +102,12 @@ const GO_KEYS: Record<string, string> = {
   u: 'users',
   r: 'reports',
   a: 'audit-log',
+  h: 'deliveries',
+  g: 'grns',
+  y: 'payments',
+  k: 'receivables',
+  f: 'purchase-invoices',
+  x: 'parties',
 }
 
 const initials = (name: string) =>
@@ -177,17 +191,24 @@ export default function ErpApp() {
 
   // ---------- company selection (restricted by role) ----------
   const multiTenant = !!session && TENANT_ADMIN_ROLES.includes(session.user.role)
+  const canCreateFirm = !!session && session.user.role === FIRM_CREATOR_ROLE
+  const [firmOpen, setFirmOpen] = React.useState(false)
+  // Server already scopes the list: every tenant for SUPER_ADMIN, home + linked firms otherwise.
   const companyList = React.useMemo(() => {
-    const all = companies.data?.companies || []
     if (!session) return []
-    return multiTenant ? all : all.filter((c) => c.id === session.user.companyId)
-  }, [companies.data, session, multiTenant])
+    return companies.data?.companies || []
+  }, [companies.data, session])
+  const canSwitch = multiTenant || companyList.length > 1 || canCreateFirm
 
   React.useEffect(() => {
     if (!session || !companies.data || companyId) return
     const saved = window.localStorage.getItem('erp_company_id')
     const allowed = companyList.find((c) => c.id === saved) || companyList.find((c) => c.id === session.user.companyId) || companyList[0]
-    if (allowed) setCompanyId(allowed.id)
+    if (allowed) {
+      // Keep the x-company-id header in step (a stale id would be rejected by the server).
+      try { window.localStorage.setItem('erp_company_id', allowed.id) } catch { /* private mode */ }
+      setCompanyId(allowed.id)
+    }
   }, [session, companies.data, companyId, companyList])
 
   // Keep tenant list fresh when a Company Setup module creates/edits tenants
@@ -197,7 +218,25 @@ export default function ErpApp() {
     return () => window.removeEventListener('erp:companies-changed', handler)
   }, [companies])
 
-  const activeModuleDef = findModule(activeKey)
+  // Other screens (Company Setup) can ask to switch firm, e.g. right after creating one.
+  const switchRef = React.useRef<(id: string) => void>(() => {})
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail
+      if (typeof id === 'string' && id) switchRef.current(id)
+    }
+    window.addEventListener(SWITCH_COMPANY_EVENT, handler)
+    return () => window.removeEventListener(SWITCH_COMPANY_EVENT, handler)
+  }, [])
+
+  // Screens hosted as a tab (e.g. Customers inside Parties) render inside their group entry.
+  const routedKey = MODULE_PARENT[activeKey] ?? activeKey
+
+  // Sidebar accordion: one module group open at a time — the one you're working in.
+  const activeGroup = findModule(routedKey)?.group ?? 'Dashboard'
+  const [openGroup, setOpenGroup] = React.useState<string | null>(null)
+  React.useEffect(() => { setOpenGroup(activeGroup) }, [activeGroup])
+  const activeModuleDef = findModule(routedKey)
   // RBAC: fall back to dashboard when current module is not allowed for this role
   const activeModule = activeModuleDef && canAccessModule(session?.user.role, activeModuleDef.key) ? activeModuleDef : MODULES[0]
 
@@ -268,18 +307,30 @@ export default function ErpApp() {
   }, [paletteQuery, paletteOpen, session, companyId])
 
   const visibleModules = React.useMemo(
-    () => MODULES.filter((m) => canAccessModule(session?.user.role, m.key)),
+    () => MODULES.filter((m) => !m.hidden && canAccessModule(session?.user.role, m.key)),
     [session],
   )
 
+  // Old favourites/recents pointing at a tab screen resolve to its group entry.
+  const listedModule = (k: string) => findModule(MODULE_PARENT[k] ?? k)
   const favModules = React.useMemo(
-    () => favs.map((k) => findModule(k)).filter((m): m is NonNullable<typeof m> => !!m && canAccessModule(session?.user.role, m.key)),
+    () => favs.map(listedModule).filter((m, i, a): m is NonNullable<typeof m> => !!m && a.indexOf(m) === i && canAccessModule(session?.user.role, m.key)),
     [favs, session],
   )
   const recentModules = React.useMemo(
-    () => recents.map((k) => findModule(k)).filter((m): m is NonNullable<typeof m> => !!m && canAccessModule(session?.user.role, m.key)).slice(0, 5),
+    () => recents.map(listedModule).filter((m, i, a): m is NonNullable<typeof m> => !!m && a.indexOf(m) === i && canAccessModule(session?.user.role, m.key)).slice(0, 5),
     [recents, session],
   )
+
+  // Tab screens live inside a group entry: any navigation to one (search result, shortcut, quick
+  // action, old favourite) switches the group to that tab, then settles the key on the group.
+  React.useEffect(() => {
+    const parent = MODULE_PARENT[activeKey]
+    if (!parent) return
+    // The group entry is already mounted (routedKey), so the event reaches its listener.
+    window.dispatchEvent(new CustomEvent(MODULE_TAB_EVENT, { detail: activeKey }))
+    setActiveKey(parent)
+  }, [activeKey])
 
   // group palette search results by target module
   const groupedResults = React.useMemo(() => {
@@ -360,6 +411,14 @@ export default function ErpApp() {
         return
       }
       if (paletteOpen || helpOpen || pwdOpen) return
+      // Vyapar-style: Alt+S new sale invoice, Alt+P new purchase bill (works from anywhere, not inside dialogs)
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyS' || e.code === 'KeyP') && !document.querySelector('[role="dialog"]')) {
+        const target = e.code === 'KeyS' ? 'sales-invoices' : 'purchase-invoices'
+        e.preventDefault()
+        if (canAccessModule(session.user.role, target)) openCreate(target)
+        else toast.error(`${findModule(target)?.label} is not available for your role`)
+        return
+      }
       if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
 
       // g + key sequence (Gmail-style)
@@ -377,6 +436,8 @@ export default function ErpApp() {
       }
       if (e.key === 'g') { goPendingRef.current = Date.now(); return }
       if (e.key === '?') { e.preventDefault(); setHelpOpen((o) => !o); return }
+      // n = new document on the current screen (ignored while any dialog is open)
+      if (e.key === 'n' && !document.querySelector('[role="dialog"]')) { e.preventDefault(); window.dispatchEvent(new CustomEvent(NEW_DOC_EVENT)); return }
       if (e.key === '/') { e.preventDefault(); setPaletteOpen(true); return }
       if (e.key === '[' || e.key === ']') {
         e.preventDefault()
@@ -438,6 +499,10 @@ export default function ErpApp() {
   }
 
   function switchCompany(id: string) {
+    if (id === NEW_FIRM_VALUE) {
+      setFirmOpen(true)
+      return
+    }
     if (id === companyId) return
     setSwitching(true)
     window.localStorage.setItem('erp_company_id', id)
@@ -448,6 +513,7 @@ export default function ErpApp() {
       toast.success('Tenant switched — data isolated per company')
     }, 250)
   }
+  React.useEffect(() => { switchRef.current = switchCompany })
 
   async function markAllRead() {
     if (!companyId) return
@@ -476,7 +542,7 @@ export default function ErpApp() {
   const currentCompany = companyList.find((c) => c.id === companyId)
 
   function renderModuleRow(m: (typeof MODULES)[number], opts: { collapsed: boolean; star?: boolean }) {
-    const active = m.key === activeKey
+    const active = m.key === routedKey
     const isFav = favs.includes(m.key)
     return (
       <div
@@ -536,7 +602,8 @@ export default function ErpApp() {
             </Button>
           )}
         </div>
-        <ScrollArea className="flex-1">
+        {/* Native scroll: min-h-0 lets the list shrink inside the full-height column, so it scrolls with a visible bar */}
+        <div className="sidebar-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <nav className={cn('pb-6', isCollapsed ? 'p-1.5' : 'p-2')} aria-label="ERP modules">
             {favRows.length > 0 && (
               <div className="mb-1">
@@ -553,19 +620,38 @@ export default function ErpApp() {
             {MODULE_GROUPS.map((group) => {
               const mods = visibleModules.filter((m) => m.group === group)
               if (!mods.length) return null
+              // Icon-only rail and the single-item Dashboard group are always expanded.
+              if (isCollapsed || group === 'Dashboard') {
+                return (
+                  <div key={group} className="mb-1">
+                    {isCollapsed ? <div className="mx-2 my-2 border-t" /> : <div className="pt-1" />}
+                    {mods.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
+                  </div>
+                )
+              }
+              const open = openGroup === group
+              const hasActive = group === activeGroup
               return (
-                <div key={group} className="mb-1">
-                  {isCollapsed ? (
-                    <div className="mx-2 my-2 border-t" />
-                  ) : (
-                    <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group}</p>
-                  )}
-                  {mods.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
+                <div key={group} className="mb-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setOpenGroup(open ? null : group)}
+                    aria-expanded={open}
+                    className={cn(
+                      'flex w-full items-center gap-1.5 rounded-md px-2.5 pt-2.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-foreground',
+                      hasActive && !open ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/70',
+                    )}
+                  >
+                    <span className="flex-1 text-left">{group}</span>
+                    {!open && <span className="rounded bg-muted px-1.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground">{mods.length}</span>}
+                    <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
+                  </button>
+                  {open && mods.map((m) => renderModuleRow(m, { collapsed: false, star: true }))}
                 </div>
               )
             })}
           </nav>
-        </ScrollArea>
+        </div>
         <div className={cn('border-t shrink-0', isCollapsed ? 'px-1.5 py-2.5' : 'px-4 py-2.5')}>
           {isCollapsed ? (
             <div className="h-4" aria-hidden="true" />
@@ -659,7 +745,7 @@ export default function ErpApp() {
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               {switching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="hidden md:inline">Tenant:</span>}
             </div>
-            <Select value={companyId ?? ''} onValueChange={switchCompany} disabled={!multiTenant && companyList.length <= 1}>
+            <Select value={companyId ?? ''} onValueChange={switchCompany} disabled={!canSwitch}>
               <SelectTrigger className="h-9 w-[130px] sm:w-[200px] text-xs" aria-label="Switch company (tenant)">
                 <SelectValue placeholder="Loading…" />
               </SelectTrigger>
@@ -670,6 +756,15 @@ export default function ErpApp() {
                     <span className="text-muted-foreground ml-1.5">{c.city || ''}</span>
                   </SelectItem>
                 ))}
+                {canCreateFirm && (
+                  <>
+                    <SelectSeparator />
+                    <SelectItem value={NEW_FIRM_VALUE} className="text-xs text-emerald-700 dark:text-emerald-400">
+                      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                      Create new firm
+                    </SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -779,7 +874,7 @@ export default function ErpApp() {
               </div>
             </div>
           ) : (
-            <activeModule.component key={`${companyId}-${activeKey}`} companyId={companyId} />
+            <activeModule.component key={`${companyId}-${routedKey}`} companyId={companyId} />
           )}
         </main>
 
@@ -909,6 +1004,14 @@ export default function ErpApp() {
 
       {/* Keyboard shortcuts help */}
       <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
+
+      {/* Security PIN prompt — registers itself with api() via setPinPrompt */}
+      <PinDialog />
+
+      {/* Create new firm (tenant admin) — switches to it once created */}
+      {canCreateFirm && (
+        <CreateFirmDialog open={firmOpen} onOpenChange={setFirmOpen} onCreated={(firm) => switchCompany(firm.id)} />
+      )}
 
       {/* Change password */}
       <ChangePasswordDialog

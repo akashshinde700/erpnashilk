@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { requireSecurityPin } from '@/lib/security-pin'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
 
 // SalesOrderItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
@@ -42,6 +43,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // PATCH /api/sales-orders/[id]
 //  - { action: 'confirm' }  : DRAFT → CONFIRMED
 //  - { action: 'cancel' }   : → CANCELLED (blocked if any dispatched qty)
+//  - { action: 'close' }    : DISPATCHED | PARTIALLY_DISPATCHED → COMPLETED (manual short-close)
 //  - otherwise: edit fields/lines (DRAFT only, lines replaced, totals recomputed)
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -49,6 +51,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
+    if (body.action !== 'confirm') await requireSecurityPin(req, companyId)
 
     const current = await db.salesOrder.findFirst({ where: { id, companyId }, include: { items: true } })
     if (!current) throw new ApiError('Sales order not found', 404)
@@ -95,7 +98,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return ok(updated, 'Sales order cancelled')
     }
 
-    if (body.action) throw new ApiError(`Unknown action "${body.action}" (use confirm | cancel)`, 400)
+    if (body.action === 'close') {
+      const CLOSABLE = ['DISPATCHED', 'PARTIALLY_DISPATCHED']
+      if (!CLOSABLE.includes(current.status)) {
+        throw new ApiError(`Only dispatched sales orders can be closed (current: ${current.status})`, 400)
+      }
+      const updated = await db.$transaction(async (tx) => {
+        const t = tx as any
+        await claimStatus(t.salesOrder, id, CLOSABLE, 'COMPLETED')
+        const u = await tx.salesOrder.findUniqueOrThrow({ where: { id } })
+        await logAudit(t, {
+          companyId, userName: body.userName, action: 'UPDATE', entity: 'SalesOrder', entityId: id,
+          details: `Sales order ${current.number} closed (${current.status} → COMPLETED)`,
+        })
+        return u
+      })
+      return ok(updated, 'Sales order closed')
+    }
+
+    if (body.action) throw new ApiError(`Unknown action "${body.action}" (use confirm | cancel | close)`, 400)
 
     // ---- Edit (DRAFT only) ----
     if (current.status !== 'DRAFT') throw new ApiError('Sales order can only be edited while DRAFT', 400)
@@ -124,7 +145,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         return {
           itemId: String(l.itemId),
           qty: r2(qty),
-          rate: r2(rate),
+          rate: Math.round(rate * 10000) / 10000, // 4 dp: alt-unit rates (₹100 / 24 PCS) must not drift the line total
           discountPct: Number(l.discountPct ?? 0) || 0,
           gstRate: l.gstRate === undefined || l.gstRate === null || l.gstRate === '' ? 18 : Number(l.gstRate),
         }
@@ -157,6 +178,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (body.orderDate !== undefined) data.orderDate = new Date(body.orderDate)
       if (body.deliveryDate !== undefined) data.deliveryDate = body.deliveryDate ? new Date(body.deliveryDate) : null
       if (body.notes !== undefined) data.notes = body.notes ?? null
+      for (const k of ['customerPoNo', 'paymentTerms', 'deliveryTerms', 'shippingAddress'] as const) {
+        if (body[k] !== undefined) data[k] = body[k] === null || String(body[k]).trim() === '' ? null : String(body[k]).trim()
+      }
+      if (body.customerPoDate !== undefined) data.customerPoDate = body.customerPoDate ? new Date(body.customerPoDate) : null
       if (itemsCreate && totals) {
         data.subtotal = totals.subtotal
         data.discountTotal = totals.discountTotal
@@ -193,6 +218,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body?.companyId)
+    await requireSecurityPin(req, companyId)
 
     const current = await db.salesOrder.findFirst({ where: { id, companyId } })
     if (!current) throw new ApiError('Sales order not found', 404)

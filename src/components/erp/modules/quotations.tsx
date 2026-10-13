@@ -3,27 +3,42 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ArrowRightCircle, Mail, MessageCircle, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml,
+  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useCreatePreset
 } from '@/components/erp/kit'
 import { apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtDate, fmtMoney } from '@/lib/erp-constants'
+import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, unitOptions } from '@/lib/units'
+import { ItemPicker, QuickItemDialog, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } from '@/components/erp/item-picker'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
-interface ItemRow { id: string; code?: string | null; name?: string | null; sellingPrice?: number | null; gstRate?: number | null }
+interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; sellingPrice?: number | null; gstRate?: number | null; barcode?: string | null; partNo?: string | null
+  altUom?: string | null; altFactor?: number | null; mrp?: number | null; priceIncludesTax?: boolean | null }
 interface QtItem { id: string; itemId: string; qty: number; rate: number; discountPct: number; gstRate: number; lineTotal: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }
 interface QuotationRow {
   id: string; number: string; enquiryId?: string | null; customerId?: string | null; date: string; validUntil?: string | null
   status: string; subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number
   grandTotal: number; notes?: string | null
+  kindAttn?: string | null; paymentTerms?: string | null; deliveryTerms?: string | null; terms?: string | null
   customer?: { name?: string | null; city?: string | null; state?: string | null; gstin?: string | null; phone?: string | null; email?: string | null } | null
   items?: QtItem[] | null
 }
-interface CompanyInfo { name?: string | null }
-interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
+interface CompanyInfo { name?: string | null; quotationTerms?: string | null }
+// unit: the item's secondary unit when chosen (qty/rate are then per that unit; converted to base on save)
+interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number; unit?: string }
+interface LastRate { rate: number; discountPct: number; date: string; ref: string }
+
+// Rate last billed to this customer for an item (null when never sold to them / on error).
+async function lastRateFor(companyId: string, customerId: string, itemId: string): Promise<LastRate | null> {
+  try {
+    const r = await apiGet<{ rates?: Record<string, LastRate> }>(`/api/parties/last-rates?companyId=${companyId}&kind=customer&partyId=${encodeURIComponent(customerId)}&itemIds=${encodeURIComponent(itemId)}`)
+    return r.rates?.[itemId] ?? null
+  } catch { return null }
+}
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 const today = () => new Date().toISOString().slice(0, 10)
@@ -52,6 +67,11 @@ function mailtoUrl(email: string | null | undefined, subject: string, body: stri
   return `mailto:${email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 
+// Minimal HTML escaping for user-entered text dropped into the print template
+function esc(v: string | null | undefined): string {
+  return (v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 // Share text for both the WhatsApp and email actions on a quotation.
 function quotationMessage(q: QuotationRow, company?: CompanyInfo): string {
   const customerName = q.customer?.name || 'Customer'
@@ -72,13 +92,20 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
   const [date, setDate] = React.useState(today)
   const [validUntil, setValidUntil] = React.useState('')
   const [notes, setNotes] = React.useState('')
+  const [kindAttn, setKindAttn] = React.useState('')
+  const [paymentTerms, setPaymentTerms] = React.useState('')
+  const [deliveryTerms, setDeliveryTerms] = React.useState('')
+  const [terms, setTerms] = React.useState('')
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
   const [convertRow, setConvertRow] = React.useState<QuotationRow | null>(null)
   const [converting, setConverting] = React.useState(false)
+  const [newItemFor, setNewItemFor] = React.useState<{ idx: number; name: string } | null>(null)
+  const [lastHints, setLastHints] = React.useState<Record<string, string>>({})
 
   const rows = list.data?.items ?? []
   const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.id }))
-  const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.id }))
+  const itemRows = items.data?.items ?? []
+  const itemRow = (itemId: string) => itemRows.find((o) => o.id === itemId)
   const enquiryOpts = (enquiries.data?.items ?? []).filter((e) => e.number).map((e) => ({ value: e.id, label: e.number }))
 
   // Picking an enquiry fills the customer and its requested items (priced from the item master).
@@ -90,17 +117,57 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
     const master = items.data?.items ?? []
     const fromEnq = (enq.items ?? []).filter((l) => l.itemId).map((l) => {
       const it = master.find((o) => o.id === l.itemId)
-      return { ...emptyLine(), itemId: l.itemId, qty: l.qty, rate: Number(it?.sellingPrice || 0), gstRate: it?.gstRate ?? emptyLine().gstRate }
+      return { ...emptyLine(), itemId: l.itemId, qty: l.qty, rate: defaultSellRate(it), gstRate: it?.gstRate ?? emptyLine().gstRate }
     })
     if (fromEnq.length && !lines.some((l) => l.itemId)) setLines(fromEnq)
   }
 
+  /** Set a line's item (rate/GST from the item master); an item already on another line adds this qty there instead. */
+  function pickItem(idx: number, it: PickerItem) {
+    const r = pickIntoLines(lines, idx, it.id, (x) => ({ ...x, itemId: it.id, rate: x.rate || defaultSellRate(itemRow(it.id) ?? it), gstRate: it.gstRate ?? x.gstRate, unit: it.id === x.itemId ? x.unit : undefined }))
+    if (r.merged) toast.info('Item already on this quotation — quantity added to that line')
+    setLines(r.lines)
+    if (!r.merged) void applyLastRate(it.id)
+  }
+
+  /** The customer's last billed rate/discount for this item replaces the master selling price. */
+  async function applyLastRate(itemId: string) {
+    if (!customerId) return
+    const lr = await lastRateFor(companyId, customerId, itemId)
+    if (!lr) return
+    setLines((ls) => ls.map((x) => (x.itemId === itemId ? { ...x, rate: convertRate(lr.rate, undefined, x.unit, itemRow(itemId)), discountPct: lr.discountPct ?? x.discountPct } : x)))
+    setLastHints((h) => ({ ...h, [itemId]: `Last rate ₹${lr.rate} on ${lr.ref}` }))
+  }
+
+  // Barcode scan: +1 on the item's line, or a new line priced from the item master
+  function scanItem(it: PickerItem) {
+    setLines((ls) => scanIntoLines(ls, it.id, () => ({ ...emptyLine(), itemId: it.id, qty: 1, rate: defaultSellRate(itemRow(it.id) ?? it), gstRate: it.gstRate ?? emptyLine().gstRate })))
+  }
+
   function resetForm() {
     setEditId(null); setCustomerId(''); setEnquiryId(''); setDate(today()); setValidUntil(''); setNotes('')
+    setKindAttn(''); setPaymentTerms(''); setDeliveryTerms(''); setTerms('')
     setLines([emptyLine()])
   }
 
-  function openCreate() { resetForm(); setOpen(true) }
+  // New quotations start with the company's default terms (Settings → quotation terms), if any.
+  async function applyDefaultTerms() {
+    try {
+      const company = await apiGet<CompanyInfo>(`/api/settings?companyId=${companyId}`)
+      if (company?.quotationTerms) setTerms((t) => t || company.quotationTerms || '')
+    } catch { /* defaults are best-effort */ }
+  }
+
+  // Shortcuts from other screens (party view, row actions, quick actions) open this form pre-filled
+  useCreatePreset('quotations', (d) => {
+    resetForm()
+    if (d.customerId) setCustomerId(String(d.customerId))
+    if (d.enquiryId) pickEnquiry(String(d.enquiryId))
+    void applyDefaultTerms()
+    setOpen(true)
+  })
+
+  function openCreate() { resetForm(); void applyDefaultTerms(); setOpen(true) }
 
   async function openEdit(q: QuotationRow) {
     setSaving(true)
@@ -110,6 +177,8 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
       setEnquiryId(detail.enquiryId || ''); setDate((detail.date || today()).slice(0, 10))
       setValidUntil(detail.validUntil ? detail.validUntil.slice(0, 10) : '')
       setNotes(detail.notes || '')
+      setKindAttn(detail.kindAttn || ''); setPaymentTerms(detail.paymentTerms || '')
+      setDeliveryTerms(detail.deliveryTerms || ''); setTerms(detail.terms || '')
       setLines((detail.items ?? []).map((it) => ({ itemId: it.itemId, qty: it.qty, rate: it.rate, discountPct: it.discountPct, gstRate: it.gstRate })))
       if (!(detail.items ?? []).length) setLines([emptyLine()])
       setOpen(true)
@@ -118,15 +187,17 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
 
   async function submit() {
     if (!customerId) { toast.error('Select a customer'); return }
-    const valid = lines.filter((l) => l.itemId && l.qty > 0)
+    // qty / rate go to the API in the item's base unit
+    const valid = lines.filter((l) => l.itemId && l.qty > 0).map((l) => lineToBase(l, itemRow(l.itemId)))
     if (!valid.length) { toast.error('Add at least one line with item and qty'); return }
     setSaving(true)
+    const extra = { kindAttn, paymentTerms, deliveryTerms, terms }
     try {
       if (editId) {
-        await apiPatch(`/api/quotations/${editId}`, { companyId, customerId, date, validUntil: validUntil || undefined, notes: notes || undefined, items: valid })
+        await apiPatch(`/api/quotations/${editId}`, { companyId, customerId, date, validUntil: validUntil || undefined, notes: notes || undefined, ...extra, items: valid })
         toast.success('Quotation updated')
       } else {
-        await apiPost('/api/quotations', { companyId, customerId, enquiryId: enquiryId || undefined, date, validUntil: validUntil || undefined, notes: notes || undefined, items: valid })
+        await apiPost('/api/quotations', { companyId, customerId, enquiryId: enquiryId || undefined, date, validUntil: validUntil || undefined, notes: notes || undefined, ...extra, items: valid })
         toast.success('Quotation created')
       }
       setOpen(false); resetForm(); void list.refetch()
@@ -215,7 +286,8 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
           ${q.validUntil ? `<div class="muted">Valid until: ${new Date(q.validUntil).toLocaleDateString('en-IN')}</div>` : ''}</div>
       </div>
       <p><strong>To:</strong> ${q.customer?.name || '—'}${q.customer?.gstin ? ` · GSTIN ${q.customer.gstin}` : ''}
-      ${q.customer?.city ? `<br/><span class="muted">${q.customer.city}${q.customer.state ? ', ' + q.customer.state : ''}</span>` : ''}</p>
+      ${q.customer?.city ? `<br/><span class="muted">${q.customer.city}${q.customer.state ? ', ' + q.customer.state : ''}</span>` : ''}
+      ${q.kindAttn ? `<br/><strong>Kind Attn:</strong> ${esc(q.kindAttn)}` : ''}</p>
       <table>
         <thead><tr><th>#</th><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Disc %</th><th class="num">GST %</th><th class="num">Amount</th></tr></thead>
         <tbody>
@@ -230,12 +302,15 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
         ${q.igst ? `<tr><td>IGST</td><td class="num">${fmtMoney(q.igst)}</td></tr>` : ''}
         <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(q.grandTotal)}</td></tr>
       </table>
-      ${q.notes ? `<p class="muted">Notes: ${q.notes}</p>` : ''}
+      ${q.notes ? `<p class="muted">Notes: ${esc(q.notes)}</p>` : ''}
+      ${q.paymentTerms ? `<p><strong>Payment Terms:</strong> ${esc(q.paymentTerms)}</p>` : ''}
+      ${q.deliveryTerms ? `<p><strong>Delivery Terms:</strong> ${esc(q.deliveryTerms)}</p>` : ''}
+      ${q.terms ? `<div style="margin-top:10px"><strong>Terms &amp; Conditions</strong><div style="white-space:pre-wrap;font-size:11px;margin-top:4px">${esc(q.terms)}</div></div>` : ''}
       <p class="muted">This is a computer generated quotation. Prices valid as per validity date above.</p>`
     printHtml(`Quotation ${q.number}`, body)
   }
 
-  const totals = computeTotals(lines)
+  const totals = computeTotals(lines.map((l) => lineToBase(l, itemRow(l.itemId))))
 
   const columns: Column<QuotationRow>[] = [
     { key: 'number', header: 'Quotation #', render: (r) => <span className="font-medium">{r.number}</span> },
@@ -281,13 +356,13 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
       <PageHeader
         title="Quotations"
         description="Prepare, send and approve price quotations"
-        actions={<Button onClick={openCreate}><Plus className="h-4 w-4 mr-1.5" />New Quotation</Button>}
+        actions={<Button onClick={openCreate}><Plus className="h-4 w-4 mr-1.5" />Quotation</Button>}
       />
       <DataTable columns={columns} rows={rows} loading={list.loading || saving} searchPlaceholder="Search quotations…" sortable moduleKey="quotations" savedViewsKey={`${companyId}:quotations`} />
 
       <FormDialog
         open={open} onOpenChange={setOpen} wide
-        title={editId ? 'Edit Quotation (Draft)' : 'New Quotation'}
+        title={editId ? 'Edit Quotation (Draft)' : 'Quotation'}
         submitLabel={editId ? 'Save Changes' : 'Create Quotation'}
         description="CGST + SGST split shown is a client-side preview" loading={saving} onSubmit={submit}
       >
@@ -298,32 +373,53 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
           </Field>
           <Field label="Date" required><DateInput value={date} onChange={setDate} /></Field>
           <Field label="Valid Until"><DateInput value={validUntil} onChange={setValidUntil} /></Field>
-          <Field label="Notes" className="sm:col-span-2"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Terms / remarks…" /></Field>
+          <Field label="Kind Attn"><TextInput value={kindAttn} onChange={(e) => setKindAttn(e.target.value)} placeholder="e.g. Mr. Ravi Sharma (Purchase)" /></Field>
+          <Field label="Payment Terms"><TextInput value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. 30 days from invoice" /></Field>
+          <Field label="Delivery Terms"><TextInput value={deliveryTerms} onChange={(e) => setDeliveryTerms(e.target.value)} placeholder="e.g. Ex-works, 2 weeks" /></Field>
+          <Field label="Notes" className="sm:col-span-2"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Remarks…" /></Field>
+          <Field label="Terms & Conditions" className="sm:col-span-3">
+            <Textarea value={terms} onChange={(e) => setTerms(e.target.value)} rows={3} placeholder="Printed on the quotation" />
+          </Field>
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Lines</span>
-            <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
-              <Plus className="h-3.5 w-3.5 mr-1" />Add Line
-            </Button>
+            <div className="flex items-center gap-2">
+              <ScanToAdd items={itemRows} onScan={scanItem} className="w-44 sm:w-56" />
+              <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
+                <Plus className="h-3.5 w-3.5 mr-1" />Add Line
+              </Button>
+            </div>
           </div>
           {lines.map((l, idx) => (
             <div key={idx} className="grid grid-cols-12 gap-2 items-center">
               <div className="col-span-12 sm:col-span-4">
-                <SelectInput
-                  value={l.itemId} options={itemOpts} placeholder="Select item…"
-                  onChange={(v) => setLines((ls) => ls.map((x, i) => {
-                    if (i !== idx) return x
-                    const it = (items.data?.items ?? []).find((o) => o.id === v)
-                    return { ...x, itemId: v, rate: x.rate || Number(it?.sellingPrice || 0), gstRate: it?.gstRate ?? x.gstRate }
-                  }))}
+                <ItemPicker
+                  items={itemRows}
+                  value={l.itemId}
+                  onChange={(id) => { const it = itemRows.find((o) => o.id === id); if (it) pickItem(idx, it) }}
+                  onCreate={(typed) => setNewItemFor({ idx, name: typed })}
                 />
               </div>
-              <NumberInput className="col-span-3 sm:col-span-2" value={l.qty} min={0} placeholder="Qty"
-                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
-              <NumberInput className="col-span-3 sm:col-span-2" value={l.rate} min={0} placeholder="Rate"
-                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, rate: n } : x)))} />
+              <div className="col-span-3 sm:col-span-2 grid gap-0.5">
+                <div className="flex gap-1">
+                  <NumberInput className="min-w-0 flex-1" value={l.qty} min={0} placeholder="Qty"
+                    onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
+                  {unitOptions(itemRow(l.itemId)).length > 0 && (
+                    <div className="w-20 shrink-0">
+                      <SelectInput value={l.unit || itemRow(l.itemId)?.uom || ''} options={unitOptions(itemRow(l.itemId))}
+                        onChange={(u) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, unit: u, rate: convertRate(x.rate, x.unit, u, itemRow(x.itemId)) } : x)))} />
+                    </div>
+                  )}
+                </div>
+                {baseQtyHint(l.qty, l.unit, itemRow(l.itemId)) && <span className="text-[10px] leading-tight text-muted-foreground">{baseQtyHint(l.qty, l.unit, itemRow(l.itemId))}</span>}
+              </div>
+              <div className="col-span-3 sm:col-span-2 grid gap-0.5">
+                <NumberInput value={l.rate} min={0} placeholder="Rate" title={lastHints[l.itemId] || undefined}
+                  onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, rate: n } : x)))} />
+                {!lastHints[l.itemId] && inclGstHint(itemRow(l.itemId), l.unit) && <span className="text-[10px] leading-tight text-muted-foreground truncate">{inclGstHint(itemRow(l.itemId), l.unit)}</span>}
+              </div>
               <NumberInput className="col-span-3 sm:col-span-1" value={l.discountPct} min={0} placeholder="Disc %"
                 onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, discountPct: n } : x)))} />
               <NumberInput className="col-span-2 sm:col-span-1" value={l.gstRate} min={0} placeholder="GST %"
@@ -345,6 +441,16 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
           </div>
         </div>
       </FormDialog>
+
+      <QuickItemDialog
+        open={!!newItemFor}
+        onOpenChange={(o) => { if (!o) setNewItemFor(null) }}
+        initialName={newItemFor?.name ?? ''}
+        items={itemRows}
+        defaultType="FINISHED"
+        onCreated={(it) => { if (newItemFor) pickItem(newItemFor.idx, it); void items.refetch() }}
+        onUseExisting={(it) => { if (newItemFor) pickItem(newItemFor.idx, it) }}
+      />
 
       {convertRow && convertibleLines(convertRow).length > 0 && (
         <FormDialog

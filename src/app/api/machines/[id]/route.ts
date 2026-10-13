@@ -11,6 +11,30 @@ function num(v: unknown, def = 0, field = 'value'): number {
   return n
 }
 
+function optDate(v: unknown, field: string): Date | null {
+  if (v === undefined || v === null || v === '') return null
+  const s = String(v).trim()
+  if (!s) return null
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00.000Z` : s)
+  if (Number.isNaN(d.getTime())) throw new ApiError(`${field} must be a valid date`, 400)
+  return d
+}
+
+function optInt(v: unknown, field: string): number | null {
+  if (v === undefined || v === null || v === '') return null
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 0) throw new ApiError(`${field} must be a whole number of 0 or more`, 400)
+  return n
+}
+
+const optStr = (v: unknown): string | null => (v === undefined || v === null ? null : String(v).trim() || null)
+
+/** next service = last service + interval (days), when both are known */
+function computeNextService(last: Date | null, intervalDays: number | null): Date | null {
+  if (!last || !intervalDays) return null
+  return new Date(last.getTime() + intervalDays * 86_400_000)
+}
+
 // ============================== GET /api/machines/[id] ==============================
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -47,6 +71,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.status !== undefined) data.status = String(body.status)
     if (body.hourlyRate !== undefined) data.hourlyRate = num(body.hourlyRate, 0, 'hourlyRate')
     if (body.notes !== undefined) data.notes = body.notes || null
+    if (body.make !== undefined) data.make = optStr(body.make)
+    if (body.model !== undefined) data.model = optStr(body.model)
+    if (body.serialNo !== undefined) data.serialNo = optStr(body.serialNo)
+    if (body.purchaseDate !== undefined) data.purchaseDate = optDate(body.purchaseDate, 'purchaseDate')
+    if (body.lastServiceDate !== undefined) data.lastServiceDate = optDate(body.lastServiceDate, 'lastServiceDate')
+    if (body.serviceIntervalDays !== undefined) {
+      data.serviceIntervalDays = optInt(body.serviceIntervalDays, 'serviceIntervalDays')
+    }
+    if (body.nextServiceDate !== undefined) data.nextServiceDate = optDate(body.nextServiceDate, 'nextServiceDate')
+    // Auto-schedule: when the next service date is left empty (or not sent) but the
+    // service schedule changed, derive it from last service + interval.
+    const scheduleTouched = body.lastServiceDate !== undefined || body.serviceIntervalDays !== undefined
+    if (scheduleTouched && !data.nextServiceDate && (body.nextServiceDate !== undefined || !existing.nextServiceDate)) {
+      const last = body.lastServiceDate !== undefined ? (data.lastServiceDate as Date | null) : existing.lastServiceDate
+      const interval =
+        body.serviceIntervalDays !== undefined ? (data.serviceIntervalDays as number | null) : existing.serviceIntervalDays
+      const next = computeNextService(last, interval)
+      if (next) data.nextServiceDate = next
+    }
 
     const machine = await db.$transaction(async (tx) => {
       const updated = await tx.machine.update({ where: { id: existing.id }, data })

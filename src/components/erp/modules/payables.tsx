@@ -2,10 +2,10 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, FileText, IndianRupee, ReceiptText } from 'lucide-react'
+import { AlertTriangle, BadgeIndianRupee, FileText, IndianRupee, ReceiptText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  Column, DataTable, DateCell, DateInput, Money, PageHeader, PrintButton, SectionCard, StatCard, StatusBadge, printHtml,
+  Column, DataTable, DateCell, DateInput, Money, PageHeader, PrintButton, SectionCard, StatCard, StatusBadge, printHtml, openCreate,
 } from '@/components/erp/kit'
 import { fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { apiGet, useList } from '@/lib/use-api'
@@ -222,9 +222,17 @@ export default function PayablesModule({ companyId }: { companyId: string }) {
     {
       key: 'actions', header: 'Actions',
       render: (r) => (
-        <Button variant="ghost" size="sm" className="h-7" title="Print statement of account" onClick={() => void printStatement(r)}>
-          <FileText className="h-3.5 w-3.5" />
-        </Button>
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {r.supplierId && outstandingOf(r) > 0 && (
+            <Button variant="ghost" size="sm" className="h-7" title="Record a payment against this invoice"
+              onClick={() => openCreate('payments', { type: 'PAYMENT', partyId: r.supplierId || undefined, invoiceId: r.id, amount: outstandingOf(r) })}>
+              <BadgeIndianRupee className="h-3.5 w-3.5 mr-0.5" />Payment Out
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className="h-7" title="Print statement of account" onClick={() => void printStatement(r)}>
+            <FileText className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       ),
     },
   ]

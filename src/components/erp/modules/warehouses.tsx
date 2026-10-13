@@ -4,6 +4,7 @@ import * as React from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
 import {
   ConfirmAction,
@@ -25,6 +26,8 @@ interface WarehouseRow {
   name: string
   type: string
   location?: string | null
+  address?: string | null
+  inCharge?: string | null
 }
 
 interface WarehousesResponse {
@@ -37,9 +40,11 @@ interface FormState {
   name: string
   type: string
   location: string
+  address: string
+  inCharge: string
 }
 
-const emptyForm: FormState = { code: '', name: '', type: 'GENERAL', location: '' }
+const emptyForm: FormState = { code: '', name: '', type: 'GENERAL', location: '', address: '', inCharge: '' }
 
 const WAREHOUSE_TYPES = [
   { value: 'RM', label: 'RM — Raw Material' },
@@ -68,7 +73,14 @@ export default function WarehousesModule({ companyId }: { companyId: string }) {
 
   function openEdit(row: WarehouseRow) {
     setEditing(row)
-    setForm({ code: row.code, name: row.name, type: row.type, location: row.location ?? '' })
+    setForm({
+      code: row.code,
+      name: row.name,
+      type: row.type,
+      location: row.location ?? '',
+      address: row.address ?? '',
+      inCharge: row.inCharge ?? '',
+    })
     setOpen(true)
   }
 
@@ -85,6 +97,8 @@ export default function WarehousesModule({ companyId }: { companyId: string }) {
         name: form.name.trim(),
         type: form.type,
         location: form.location.trim() || null,
+        address: form.address.trim() || null,
+        inCharge: form.inCharge.trim() || null,
       }
       if (editing) await apiPatch(`/api/warehouses/${editing.id}`, body)
       else await apiPost('/api/warehouses', body)
@@ -119,6 +133,12 @@ export default function WarehousesModule({ companyId }: { companyId: string }) {
       render: (r) => <span className="text-muted-foreground">{r.location || '—'}</span>,
     },
     {
+      key: 'inCharge',
+      header: 'In-charge',
+      hideOnMobile: true,
+      render: (r) => <span className="text-muted-foreground">{r.inCharge || '—'}</span>,
+    },
+    {
       key: 'actions',
       header: '',
       className: 'text-right',
@@ -150,7 +170,7 @@ export default function WarehousesModule({ companyId }: { companyId: string }) {
         description="Storage locations for raw material, finished goods and scrap"
         actions={
           <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Warehouse
+            <Plus className="h-4 w-4 mr-1.5" /> Warehouse
           </Button>
         }
       />
@@ -166,7 +186,7 @@ export default function WarehousesModule({ companyId }: { companyId: string }) {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title={editing ? 'Edit Warehouse' : 'New Warehouse'}
+        title={editing ? 'Edit Warehouse' : 'Warehouse'}
         description={editing ? `Updating ${editing.code}` : 'Add a new storage location'}
         onSubmit={submit}
         loading={saving}
@@ -184,6 +204,18 @@ export default function WarehousesModule({ companyId }: { companyId: string }) {
           </Field>
           <Field label="Location">
             <TextInput value={form.location} onChange={(e) => set('location', e.target.value)} placeholder="Plant 1, Bay A" />
+          </Field>
+          <Field label="In-charge">
+            <TextInput value={form.inCharge} onChange={(e) => set('inCharge', e.target.value)} placeholder="Store keeper name" />
+          </Field>
+          <div className="hidden sm:block" />
+          <Field label="Address" className="sm:col-span-2">
+            <Textarea
+              value={form.address}
+              onChange={(e) => set('address', e.target.value)}
+              rows={2}
+              placeholder="Full address (for delivery challans / transfers)"
+            />
           </Field>
         </div>
       </FormDialog>

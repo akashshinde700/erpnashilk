@@ -31,6 +31,10 @@ interface OrgRow {
   billingCycle: 'MONTHLY' | 'YEARLY'
   paidUntil: string | null
   trialEndsAt: string | null
+  /** List endpoint only: number of firms (other orgs) this org's users also run */
+  linkedFirms?: number
+  /** List endpoint only: the parent org when this org is a firm of another one */
+  firmOf?: { id: string; name: string | null } | null
 }
 
 interface PlanRow {
@@ -171,7 +175,10 @@ const EMPTY_CREATE: CreateForm = {
 function Organizations() {
   const orgs = useList<{ items: OrgRow[] }>('/api/platform/orgs')
   const plans = useList<{ items: PlanRow[] }>('/api/platform/plans')
-  const rows = orgs.data?.items ?? []
+  const allRows = orgs.data?.items ?? []
+  const [hideFirms, setHideFirms] = React.useState(false)
+  const firmCount = allRows.filter((r) => r.firmOf).length
+  const rows = hideFirms ? allRows.filter((r) => !r.firmOf) : allRows
   const planOpts = [{ value: '', label: '— No plan (unlimited) —' }, ...(plans.data?.items ?? []).map((p) => ({ value: p.id, label: p.name }))]
 
   // Passwords generated this session (shown until the page is reloaded; never stored server-side in plain text)
@@ -192,7 +199,8 @@ function Organizations() {
   const [busy, setBusy] = React.useState<string | null>(null)
 
   function replaceRow(org: OrgRow) {
-    orgs.setData((d) => (d ? { items: d.items.map((r) => (r.id === org.id ? org : r)) } : d))
+    // PATCH returns the plain org row — keep the list-only firm fields (linkedFirms / firmOf)
+    orgs.setData((d) => (d ? { items: d.items.map((r) => (r.id === org.id ? { ...r, ...org, linkedFirms: org.linkedFirms ?? r.linkedFirms, firmOf: org.firmOf !== undefined ? org.firmOf : r.firmOf } : r)) } : d))
   }
 
   async function act(row: OrgRow, body: Record<string, unknown>, msg?: string) {
@@ -269,7 +277,17 @@ function Organizations() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">Organizations ({rows.length})</h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold">Organizations ({rows.length}{hideFirms && firmCount ? ` of ${allRows.length}` : ''})</h2>
+          <Button
+            variant={hideFirms ? 'default' : 'outline'} size="sm"
+            className={cn('h-8 rounded-full px-3 text-xs', hideFirms && 'bg-emerald-700 hover:bg-emerald-700/90')}
+            onClick={() => setHideFirms((v) => !v)}
+            title="Hide organizations that are firms of another organization"
+          >
+            {hideFirms ? 'Firms hidden' : 'Hide firms'}{firmCount ? ` (${firmCount})` : ''}
+          </Button>
+        </div>
         <Button className="rounded-full bg-emerald-700 hover:bg-emerald-700/90" onClick={() => { setForm(EMPTY_CREATE); setCreateOpen(true) }}>
           <Plus className="mr-1.5 h-4 w-4" />Create organization
         </Button>
@@ -293,12 +311,20 @@ function Organizations() {
               <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></TableCell></TableRow>
             )}
             {!orgs.loading && !rows.length && (
-              <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">No organizations yet — create the first one.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{allRows.length ? 'All organizations are firms — turn off "Hide firms" to see them.' : 'No organizations yet — create the first one.'}</TableCell></TableRow>
             )}
             {rows.map((r) => (
               <TableRow key={r.id} className="align-top">
                 <TableCell>
-                  <p className="font-medium">{r.name}</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="font-medium">{r.name}</p>
+                    {!!r.linkedFirms && (
+                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300" title="Other organizations run by this organization's users">
+                        +{r.linkedFirms} {r.linkedFirms === 1 ? 'firm' : 'firms'}
+                      </span>
+                    )}
+                  </div>
+                  {r.firmOf && <p className="text-xs text-violet-700 dark:text-violet-300">Firm of: {r.firmOf.name || '—'}</p>}
                   <p className="text-xs text-muted-foreground">{r.slug}{r.city ? ` · ${r.city}` : ''}</p>
                 </TableCell>
                 <TableCell>
@@ -495,7 +521,7 @@ function Plans() {
           <p className="text-sm text-muted-foreground">Limits apply to every organization on the plan unless customized. 0 = unlimited.</p>
         </div>
         <Button className="rounded-full bg-emerald-700 hover:bg-emerald-700/90" onClick={() => { setEditId(null); setForm(EMPTY_PLAN); setOpen(true) }}>
-          <Plus className="mr-1.5 h-4 w-4" />New plan
+          <Plus className="mr-1.5 h-4 w-4" />Plan
         </Button>
       </div>
       <Card className="overflow-hidden p-0">
@@ -544,7 +570,7 @@ function Plans() {
         </Table>
       </Card>
 
-      <FormDialog open={open} onOpenChange={setOpen} title={editId ? 'Edit plan' : 'New plan'} onSubmit={save} loading={saving} submitLabel={editId ? 'Save' : 'Create'}>
+      <FormDialog open={open} onOpenChange={setOpen} title={editId ? 'Edit plan' : 'Plan'} onSubmit={save} loading={saving} submitLabel={editId ? 'Save' : 'Create'}>
         <Field label="Plan name" required><TextInput value={form.name} onChange={setF('name')} placeholder="Standard" /></Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Price / month (₹)"><TextInput type="number" min={0} value={form.priceMonthly} onChange={setF('priceMonthly')} /></Field>

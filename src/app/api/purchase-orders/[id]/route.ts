@@ -1,8 +1,12 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { requireSecurityPin } from '@/lib/security-pin'
 import {
   ok, handleError, companyRequired, computeGst, isInterStateParty, logAudit, ApiError, r2, requireWrite, trustedUserName, claimStatus,
 } from '@/lib/erp-helpers'
+
+/** Unit rates keep 4 decimals (₹0.0125 per piece); money totals stay at 2. */
+const r4 = (n: number) => Math.round(n * 10000) / 10000
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -79,6 +83,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params
     const body = await req.json()
     const companyId = await companyRequired(req, body.companyId)
+    if (!body.action || body.action === 'cancel') await requireSecurityPin(req, companyId)
     const po = await findPo(id, companyId)
 
     // --- Workflow actions ---
@@ -188,9 +193,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body.orderDate) data.orderDate = toDate(body.orderDate) || po.orderDate
     if (body.expectedDate !== undefined) data.expectedDate = toDate(body.expectedDate)
     if (body.notes !== undefined) data.notes = body.notes || null
+    if (body.paymentTerms !== undefined) data.paymentTerms = body.paymentTerms ? String(body.paymentTerms).trim() || null : null
+    if (body.deliveryTerms !== undefined) data.deliveryTerms = body.deliveryTerms ? String(body.deliveryTerms).trim() || null : null
 
     if (lines) {
-      const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r2(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
+      const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r4(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
       const totals = computeGst(taxLines, interState)
       data.subtotal = totals.subtotal
       data.discountTotal = totals.discountTotal
@@ -203,7 +210,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const updated = await db.$transaction(async (txRaw) => {
         const tx = txRaw as HelperTx
       if (lines) {
-        const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r2(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
+        const taxLines = lines.map((l) => ({ qty: r2(Number(l.qty)), rate: r4(Number(l.rate)), gstRate: Number(l.gstRate ?? 18) }))
         const totals = computeGst(taxLines, interState)
         await tx.purchaseOrderItem.deleteMany({ where: { poId: po.id } })
         await tx.purchaseOrderItem.createMany({
@@ -237,6 +244,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const { id } = await params
     const body = await req.json().catch(() => ({}) as { companyId?: string; userName?: string })
     const companyId = await companyRequired(req, body.companyId)
+    await requireSecurityPin(req, companyId)
     const po = await db.purchaseOrder.findFirst({ where: { id, companyId }, include: { items: true } })
     if (!po) throw new ApiError('Purchase order not found', 404)
     if (po.status !== 'DRAFT') throw new ApiError('Only DRAFT purchase orders can be deleted', 400)

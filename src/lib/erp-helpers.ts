@@ -18,7 +18,8 @@ export function fail(message: string, status = 400, code = 'ERR') {
 
 // ============ Company (tenant) resolution ============
 
-// Only the platform SUPER_ADMIN may act on a company other than their own.
+// Only the platform SUPER_ADMIN may act on any company; other users on their home
+// company plus firms linked to them via UserCompanyAccess.
 export const PLATFORM_ROLE = 'SUPER_ADMIN'
 
 /** User columns safe to return from the API (never the password hash). */
@@ -94,20 +95,59 @@ export async function assertLimit(companyId: string, kind: LimitKind, adding = 1
   }
 }
 
+const firmCache = new WeakMap<Request, Promise<Set<string>>>()
+
+/**
+ * Extra firms (companies other than the home company) this user may open — rows in
+ * UserCompanyAccess, created when a TENANT_ADMIN creates another firm. Cached per request.
+ */
+export function linkedFirmIds(req: Request): Promise<Set<string>> {
+  let p = firmCache.get(req)
+  if (!p) {
+    p = (async () => {
+      const user = await sessionUser(req)
+      const rows = await db.userCompanyAccess.findMany({ where: { userId: user.id }, select: { companyId: true } })
+      return new Set(rows.map((r) => r.companyId).filter((c) => c !== user.companyId))
+    })()
+    firmCache.set(req, p)
+  }
+  return p
+}
+
+/**
+ * Throw 403 unless the signed-in user may act on company `cid`: their home company,
+ * a linked firm, or any company for the platform SUPER_ADMIN. For everyone else the
+ * target firm's subscription must also be usable (not suspended / expired).
+ * Returns false when the company does not exist.
+ */
+export async function assertFirmAccess(req: Request, cid: string): Promise<boolean> {
+  const user = await sessionUser(req)
+  if (user.role === PLATFORM_ROLE) {
+    return !!(await db.company.findUnique({ where: { id: cid }, select: { id: true } }))
+  }
+  if (cid !== user.companyId && !(await linkedFirmIds(req)).has(cid)) {
+    throw new ApiError('You do not have access to this company', 403)
+  }
+  const company = await db.company.findUnique({
+    where: { id: cid },
+    select: { id: true, isPlatform: true, status: true, paidUntil: true, trialEndsAt: true },
+  })
+  if (!company) return false
+  const blocked = accessProblem(company)
+  if (blocked) throw new ApiError(blocked, 403)
+  return true
+}
+
 /**
  * Tenant for this request: the requested company (body, then ?companyId, then the
- * x-company-id header), defaulting to the user's own company. Everyone except the
- * platform SUPER_ADMIN is pinned to their own company.
+ * x-company-id header), defaulting to the user's own company. Users are pinned to their
+ * home company plus any linked firms; only the platform SUPER_ADMIN may open any company.
  */
 export async function resolveCompanyId(req: Request, bodyCompanyId?: string): Promise<string | null> {
   const user = await sessionUser(req)
   const { searchParams } = new URL(req.url)
   const cid = bodyCompanyId || searchParams.get('companyId') || req.headers.get('x-company-id') || user.companyId
-  if (cid !== user.companyId && user.role !== PLATFORM_ROLE) {
-    throw new ApiError('You do not have access to this company', 403)
-  }
-  const company = await db.company.findUnique({ where: { id: cid }, select: { id: true } })
-  return company ? company.id : null
+  return (await assertFirmAccess(req, cid)) ? cid : null
 }
 
 export function companyRequired(req: Request, bodyCompanyId?: string): Promise<string> {
@@ -209,6 +249,19 @@ export const DOC_PREFIX: Record<string, string> = {
   PR: 'PR', PO: 'PO', GRN: 'GRN', PINV: 'PINV',
   WO: 'WO', MI: 'MI', QC: 'QC',
   RCPT: 'RCPT', PYMT: 'PYMT', EXP: 'EXP', TRF: 'TRF', ADJ: 'ADJ',
+  SRET: 'CN', PRET: 'DBN', // sales return = credit note, purchase return = debit note
+  ATX: 'ATX', // cash & bank entries (adjustments, contra, loans)
+}
+
+/** Prefix for a document type: the company's override (Settings → Document Numbering) or the default. */
+async function docPrefix(companyId: string, docType: string): Promise<string> {
+  try {
+    const c = await db.company.findUnique({ where: { id: companyId }, select: { docPrefixes: true } })
+    const map = c?.docPrefixes ? (JSON.parse(c.docPrefixes) as Record<string, string>) : {}
+    const p = typeof map[docType] === 'string' ? map[docType].trim() : ''
+    if (p) return p
+  } catch { /* malformed setting → default */ }
+  return DOC_PREFIX[docType] || docType
 }
 
 /**
@@ -222,7 +275,7 @@ export async function nextDocNumber(tx: {
   }
 }, companyId: string, docType: string, date: Date = new Date()): Promise<string> {
   const fy = financialYearOf(date)
-  const prefix = DOC_PREFIX[docType] || docType
+  const prefix = await docPrefix(companyId, docType)
   const where = { companyId_docType_financialYear: { companyId, docType, financialYear: fy } }
   // First number of a (company, docType, FY): create the counter row outside the transaction
   // (INSERT IGNORE, auto-committed) so concurrent first documents never race on the insert.
@@ -241,7 +294,7 @@ export async function nextDocNumber(tx: {
 // ============ GST helpers ============
 
 export interface TaxLine {
-  qty: number; rate: number; discountPct?: number; gstRate: number
+  qty: number; rate: number; discountPct?: number; gstRate: number; cessRate?: number
 }
 
 /** Compute per-line taxable value and tax split. interState => IGST, else CGST+SGST */
@@ -263,6 +316,55 @@ export function computeGst(lines: TaxLine[], interState: boolean) {
 }
 
 export const r2 = (n: number) => Math.round(n * 100) / 100
+
+export interface BillAdjustments {
+  billDiscount?: number // flat ₹ off the bill, spread across lines before GST
+  freight?: { amount: number; gstRate: number }
+  packing?: { amount: number; gstRate: number }
+  roundOff?: boolean // round grand total to the rupee
+}
+
+/**
+ * Full bill totals: line discounts, bill discount (pro-rata on line taxable values, so GST is on the
+ * discounted value), freight / packing as taxable charges, CGST+SGST or IGST, optional round-off.
+ * `computed[i].taxable` is the line's final taxable value (store it as lineTotal).
+ */
+export function computeBillTotals(lines: TaxLine[], interState: boolean, adj: BillAdjustments = {}) {
+  let subtotal = 0, lineDisc = 0
+  const pre = lines.map((l) => {
+    const gross = l.qty * l.rate
+    const disc = gross * ((l.discountPct || 0) / 100)
+    subtotal += gross
+    lineDisc += disc
+    return { ...l, base: gross - disc }
+  })
+  const baseSum = pre.reduce((s, l) => s + l.base, 0)
+  const billDiscount = Math.min(Math.max(0, adj.billDiscount || 0), baseSum)
+  let cgst = 0, sgst = 0, igst = 0, cess = 0, taxableSum = 0
+  const addTax = (tax: number) => { if (interState) igst += tax; else { cgst += tax / 2; sgst += tax / 2 } }
+  const computed = pre.map(({ base, ...l }) => {
+    const taxable = baseSum > 0 ? base - billDiscount * (base / baseSum) : base
+    const tax = taxable * (l.gstRate / 100)
+    const lineCess = taxable * ((l.cessRate || 0) / 100)
+    taxableSum += taxable
+    addTax(tax)
+    cess += lineCess
+    return { ...l, taxable: r2(taxable), tax: r2(tax), cess: r2(lineCess) }
+  })
+  const charge = (c?: { amount: number; gstRate: number }) => {
+    const amount = Math.max(0, c?.amount || 0)
+    if (amount) addTax(amount * ((c?.gstRate ?? 18) / 100))
+    return r2(amount)
+  }
+  const freight = charge(adj.freight)
+  const packing = charge(adj.packing)
+  const exact = r2(taxableSum + freight + packing + r2(cgst) + r2(sgst) + r2(igst) + r2(cess))
+  const grandTotal = adj.roundOff ? Math.round(exact) : exact
+  return {
+    computed, subtotal: r2(subtotal), discountTotal: r2(lineDisc + billDiscount), billDiscount: r2(billDiscount),
+    freight, packing, cgst: r2(cgst), sgst: r2(sgst), igst: r2(igst), cess: r2(cess), roundOff: r2(grandTotal - exact), grandTotal: r2(grandTotal),
+  }
+}
 
 /** isInterState if company stateCode differs from party stateCode */
 export function isInterState(companyState?: string | null, partyState?: string | null): boolean {
@@ -313,6 +415,9 @@ interface MinimalTx {
  * Call inside a prisma $transaction. Returns updated balance qty.
  */
 export async function postStock(tx: MinimalTx, input: StockPostInput): Promise<number> {
+  // Services (repair, labour, consultancy) have no stock — no ledger row, no balance check
+  const kind = await (tx as unknown as { item: { findUnique: (a: unknown) => Promise<{ type: string } | null> } }).item.findUnique({ where: { id: input.itemId }, select: { type: true } })
+  if (kind?.type === 'SERVICE') return 0
   const qtyIn = Math.max(0, input.qtyIn || 0)
   const qtyOut = Math.max(0, input.qtyOut || 0)
   const rate = input.rate || 0

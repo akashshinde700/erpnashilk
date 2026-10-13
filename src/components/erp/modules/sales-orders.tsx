@@ -3,26 +3,42 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Factory, Plus, Printer, Trash2, X } from 'lucide-react'
+import { CheckCircle2, Factory, Plus, Printer, Receipt, Trash2, Truck, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight,
+  NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, openCreate, printHtml, useRowHighlight, useCreatePreset
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtMoney } from '@/lib/erp-constants'
+import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, unitOptions } from '@/lib/units'
+import { ItemPicker, QuickItemDialog, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } from '@/components/erp/item-picker'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null }
-interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; sellingPrice?: number | null; gstRate?: number | null }
-interface SoItem { id: string; itemId: string; qty: number; rate: number; discountPct: number; gstRate: number; lineTotal: number; dispatchedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }
+interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; sellingPrice?: number | null; gstRate?: number | null; barcode?: string | null; partNo?: string | null
+  altUom?: string | null; altFactor?: number | null; mrp?: number | null; priceIncludesTax?: boolean | null }
+interface SoItem { id: string; itemId: string; qty: number; rate: number; discountPct: number; gstRate: number; lineTotal: number; dispatchedQty?: number; invoicedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }
 interface SoRow {
   id: string; number: string; orderDate: string; deliveryDate?: string | null; status: string
   subtotal: number; discountTotal: number; cgst: number; sgst: number; igst: number; grandTotal: number
   notes?: string | null; customerId?: string | null
+  customerPoNo?: string | null; customerPoDate?: string | null
+  paymentTerms?: string | null; deliveryTerms?: string | null; shippingAddress?: string | null
   customer?: { name?: string | null; city?: string | null; state?: string | null; gstin?: string | null } | null
   items?: SoItem[] | null
 }
-interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
+// unit: the item's secondary unit when chosen (qty/rate are then per that unit; converted to base on save)
+interface DraftLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number; unit?: string }
+interface LastRate { rate: number; discountPct: number; date: string; ref: string }
+
+// Rate last billed to this customer for an item (null when never sold to them / on error).
+async function lastRateFor(companyId: string, customerId: string, itemId: string): Promise<LastRate | null> {
+  try {
+    const r = await apiGet<{ rates?: Record<string, LastRate> }>(`/api/parties/last-rates?companyId=${companyId}&kind=customer&partyId=${encodeURIComponent(customerId)}&itemIds=${encodeURIComponent(itemId)}`)
+    return r.rates?.[itemId] ?? null
+  } catch { return null }
+}
 interface BomRow { id: string; code?: string | null; version?: string | null; outputItemId?: string | null }
 
 const r2 = (n: number) => Math.round(n * 100) / 100
@@ -37,6 +53,21 @@ function computeTotals(lines: DraftLine[]) {
     subtotal += gross; discount += disc; gst += net * ((l.gstRate || 0) / 100)
   }
   return { subtotal: r2(subtotal), discount: r2(discount), cgst: r2(gst / 2), sgst: r2(gst / 2), grand: r2(subtotal - discount + gst) }
+}
+
+// Minimal HTML escaping for user-entered text dropped into the print template
+function esc(v: string | null | undefined): string {
+  return (v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+const DISPATCHABLE = ['CONFIRMED', 'IN_PRODUCTION', 'READY', 'PARTIALLY_DISPATCHED']
+const INVOICEABLE = ['CONFIRMED', 'IN_PRODUCTION', 'READY', 'PARTIALLY_DISPATCHED', 'DISPATCHED']
+const CLOSABLE = ['DISPATCHED', 'PARTIALLY_DISPATCHED']
+
+// Every line fully invoiced → nothing left to bill on this order
+function fullyInvoiced(so: SoRow): boolean {
+  const ls = so.items ?? []
+  return ls.length > 0 && ls.every((l) => (l.invoicedQty ?? 0) >= l.qty - 0.005)
 }
 
 function emptyLine(): DraftLine { return { itemId: '', qty: 1, rate: 0, discountPct: 0, gstRate: 18 } }
@@ -58,8 +89,15 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
   const [deliveryDate, setDeliveryDate] = React.useState('')
   const [notes, setNotes] = React.useState('')
   const [status, setStatus] = React.useState('CONFIRMED')
+  const [customerPoNo, setCustomerPoNo] = React.useState('')
+  const [customerPoDate, setCustomerPoDate] = React.useState('')
+  const [paymentTerms, setPaymentTerms] = React.useState('')
+  const [deliveryTerms, setDeliveryTerms] = React.useState('')
+  const [shippingAddress, setShippingAddress] = React.useState('')
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
   const [detail, setDetail] = React.useState<SoRow | null>(null)
+  const [newItemFor, setNewItemFor] = React.useState<{ idx: number; name: string } | null>(null)
+  const [lastHints, setLastHints] = React.useState<Record<string, string>>({})
 
   // ---- plan work order dialog ----
   const [woRow, setWoRow] = React.useState<SoRow | null>(null)
@@ -75,7 +113,8 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
 
   const rows = list.data?.items ?? []
   const customerOpts = (customers.data?.items ?? []).map((c) => ({ value: c.id, label: c.name || c.id }))
-  const itemOpts = (items.data?.items ?? []).map((i) => ({ value: i.id, label: i.code && i.name ? `${i.code} — ${i.name}` : i.name || i.id }))
+  const itemRows = items.data?.items ?? []
+  const itemRow = (itemId: string) => itemRows.find((o) => o.id === itemId)
   const quotationOpts = (quotations.data?.items ?? []).filter((q) => q.number).map((q) => ({ value: q.id, label: q.number }))
   const whOpts = (warehouses.data?.items ?? []).map((w) => ({ value: w.id, label: w.code && w.name ? `${w.code} — ${w.name}` : w.name || w.code || w.id }))
   const woItemOpts = (woRow?.items ?? []).filter((l) => l.itemId).map((l) => {
@@ -87,10 +126,41 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
   // /api/boms GET has no itemId filter — filter client-side to the selected item's output
   const woBomOpts = (boms.data?.items ?? []).filter((b) => b.outputItemId === woItemId)
 
+  /** Set a line's item (rate/GST from the item master); an item already on another line adds this qty there instead. */
+  function pickItem(idx: number, it: PickerItem) {
+    const r = pickIntoLines(lines, idx, it.id, (x) => ({ ...x, itemId: it.id, rate: x.rate || defaultSellRate(itemRow(it.id) ?? it), gstRate: it.gstRate ?? x.gstRate, unit: it.id === x.itemId ? x.unit : undefined }))
+    if (r.merged) toast.info('Item already on this order — quantity added to that line')
+    setLines(r.lines)
+    if (!r.merged) void applyLastRate(it.id)
+  }
+
+  /** The customer's last billed rate/discount for this item replaces the master selling price. */
+  async function applyLastRate(itemId: string) {
+    if (!customerId) return
+    const lr = await lastRateFor(companyId, customerId, itemId)
+    if (!lr) return
+    setLines((ls) => ls.map((x) => (x.itemId === itemId ? { ...x, rate: convertRate(lr.rate, undefined, x.unit, itemRow(itemId)), discountPct: lr.discountPct ?? x.discountPct } : x)))
+    setLastHints((h) => ({ ...h, [itemId]: `Last rate ₹${lr.rate} on ${lr.ref}` }))
+  }
+
+  // Barcode scan: +1 on the item's line, or a new line priced from the item master
+  function scanItem(it: PickerItem) {
+    setLines((ls) => scanIntoLines(ls, it.id, () => ({ ...emptyLine(), itemId: it.id, qty: 1, rate: defaultSellRate(itemRow(it.id) ?? it), gstRate: it.gstRate ?? emptyLine().gstRate })))
+  }
+
   function resetForm() {
     setCustomerId(''); setQuotationId(''); setOrderDate(today()); setDeliveryDate(''); setNotes(''); setStatus('CONFIRMED')
+    setCustomerPoNo(''); setCustomerPoDate(''); setPaymentTerms(''); setDeliveryTerms(''); setShippingAddress('')
     setLines([emptyLine()])
   }
+
+  // Shortcuts from other screens (party view, row actions, quick actions) open this form pre-filled
+  useCreatePreset('sales-orders', (d) => {
+    resetForm()
+    if (d.quotationId) void pickQuotation(String(d.quotationId))
+    else if (d.customerId) setCustomerId(String(d.customerId))
+    setOpen(true)
+  })
 
   async function pickQuotation(qid: string) {
     setQuotationId(qid)
@@ -98,6 +168,8 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
     try {
       const qt = await apiGet<SoRow>(`/api/quotations/${qid}?companyId=${companyId}`)
       if (qt.customerId) setCustomerId(qt.customerId)
+      if (qt.paymentTerms) setPaymentTerms(qt.paymentTerms)
+      if (qt.deliveryTerms) setDeliveryTerms(qt.deliveryTerms)
       const mapped = (qt.items ?? []).map((it) => ({ itemId: it.itemId, qty: it.qty, rate: it.rate, discountPct: it.discountPct, gstRate: it.gstRate }))
       setLines(mapped.length ? mapped : [emptyLine()])
       toast.success(`Loaded ${qt.items?.length ?? 0} line(s) from quotation ${qt.number}`)
@@ -106,13 +178,17 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
 
   async function submit() {
     if (!customerId) { toast.error('Select a customer'); return }
-    const valid = lines.filter((l) => l.itemId && l.qty > 0)
+    // qty / rate go to the API in the item's base unit
+    const valid = lines.filter((l) => l.itemId && l.qty > 0).map((l) => lineToBase(l, itemRow(l.itemId)))
     if (!valid.length) { toast.error('Add at least one line with item and qty'); return }
     setSaving(true)
     try {
       await apiPost('/api/sales-orders', {
         companyId, customerId, quotationId: quotationId || undefined, orderDate,
         deliveryDate: deliveryDate || undefined, notes: notes || undefined, status, items: valid,
+        customerPoNo: customerPoNo || undefined, customerPoDate: customerPoDate || undefined,
+        paymentTerms: paymentTerms || undefined, deliveryTerms: deliveryTerms || undefined,
+        shippingAddress: shippingAddress || undefined,
       })
       toast.success('Sales order created')
       setOpen(false); resetForm(); void list.refetch()
@@ -136,7 +212,9 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
           ${so.deliveryDate ? `<div class="muted">Delivery: ${new Date(so.deliveryDate).toLocaleDateString('en-IN')}</div>` : ''}</div>
       </div>
       <p><strong>Customer:</strong> ${so.customer?.name || '—'}${so.customer?.gstin ? ` · GSTIN ${so.customer.gstin}` : ''}
-      ${so.customer?.city ? `<br/><span class="muted">${so.customer.city}${so.customer.state ? ', ' + so.customer.state : ''}</span>` : ''}</p>
+      ${so.customer?.city ? `<br/><span class="muted">${so.customer.city}${so.customer.state ? ', ' + so.customer.state : ''}</span>` : ''}
+      ${so.customerPoNo ? `<br/><strong>Customer PO:</strong> ${esc(so.customerPoNo)}${so.customerPoDate ? ` dt. ${new Date(so.customerPoDate).toLocaleDateString('en-IN')}` : ''}` : ''}</p>
+      ${so.shippingAddress ? `<p><strong>Ship To:</strong><br/><span style="white-space:pre-wrap">${esc(so.shippingAddress)}</span></p>` : ''}
       <table>
         <thead><tr><th>#</th><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Disc %</th><th class="num">GST %</th><th class="num">Amount</th></tr></thead>
         <tbody>${items2.map((it, i) => `<tr><td>${i + 1}</td><td>${it.item?.name || it.itemId}</td><td class="num">${it.qty}${it.item?.uom ? ' ' + it.item.uom : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.discountPct}%</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`).join('')}</tbody>
@@ -149,7 +227,9 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
         ${so.igst ? `<tr><td>IGST</td><td class="num">${fmtMoney(so.igst)}</td></tr>` : ''}
         <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(so.grandTotal)}</td></tr>
       </table>
-      ${so.notes ? `<p class="muted">Notes: ${so.notes}</p>` : ''}`
+      ${so.paymentTerms ? `<p><strong>Payment Terms:</strong> ${esc(so.paymentTerms)}</p>` : ''}
+      ${so.deliveryTerms ? `<p><strong>Delivery Terms:</strong> ${esc(so.deliveryTerms)}</p>` : ''}
+      ${so.notes ? `<p class="muted">Notes: ${esc(so.notes)}</p>` : ''}`
     printHtml(`Sales Order ${so.number}`, html)
   }
 
@@ -195,7 +275,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
     } finally { setPlanning(false) }
   }
 
-  const totals = computeTotals(lines)
+  const totals = computeTotals(lines.map((l) => lineToBase(l, itemRow(l.itemId))))
 
   const columns: Column<SoRow>[] = [
     { key: 'number', header: 'SO #', render: (r) => <span className="font-medium">{r.number}</span> },
@@ -209,10 +289,28 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="sm" className="h-7" title="Print" onClick={() => printSo(r)}><Printer className="h-3.5 w-3.5" /></Button>
-          {r.status === 'CONFIRMED' && (
+          {(r.status === 'CONFIRMED' || r.status === 'IN_PRODUCTION') && (
             <Button variant="ghost" size="sm" className="h-7" title="Plan Work Order" aria-label="Plan Work Order" onClick={() => openWo(r)}>
               <Factory className="h-3.5 w-3.5" />
             </Button>
+          )}
+          {DISPATCHABLE.includes(r.status) && (
+            <Button variant="ghost" size="sm" className="h-7" title="Create Delivery Challan" onClick={() => openCreate('deliveries', { soId: r.id })}>
+              <Truck className="h-3.5 w-3.5 mr-1" />Dispatch
+            </Button>
+          )}
+          {INVOICEABLE.includes(r.status) && !fullyInvoiced(r) && (
+            <Button variant="ghost" size="sm" className="h-7" title="Create Sales Invoice" onClick={() => openCreate('sales-invoices', { soId: r.id })}>
+              <Receipt className="h-3.5 w-3.5 mr-1" />Invoice
+            </Button>
+          )}
+          {CLOSABLE.includes(r.status) && (
+            <ConfirmAction
+              trigger={<Button variant="ghost" size="sm" className="h-7" title="Close sales order"><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Close</Button>}
+              title="Close sales order?"
+              message={`Mark ${r.number} as COMPLETED? Any undispatched or uninvoiced balance will no longer show as pending.`}
+              onConfirm={() => action(r, 'close', `Sales order ${r.number} closed`)}
+            />
           )}
           {r.status === 'DRAFT' && (
             <>
@@ -234,7 +332,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
       <PageHeader
         title="Sales Orders"
         description="Confirmed customer orders feeding production and dispatch"
-        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />New Sales Order</Button>}
+        actions={<Button onClick={() => { resetForm(); setOpen(true) }}><Plus className="h-4 w-4 mr-1.5" />Sales Order</Button>}
       />
       <DataTable
         columns={columns} rows={rows} loading={list.loading} searchPlaceholder="Search sales orders…" onRowClick={(r) => setDetail(r)}
@@ -252,7 +350,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
       />
 
       <FormDialog
-        open={open} onOpenChange={setOpen} wide title="New Sales Order" submitLabel="Create Sales Order"
+        open={open} onOpenChange={setOpen} wide title="Sales Order" submitLabel="Create Sales Order"
         description="Pick an APPROVED quotation to auto-fill lines (GST split preview: CGST+SGST)" loading={saving} onSubmit={submit}
       >
         <div className="grid sm:grid-cols-3 gap-4">
@@ -263,32 +361,54 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
           <Field label="Order Date" required><DateInput value={orderDate} onChange={setOrderDate} /></Field>
           <Field label="Delivery Date"><DateInput value={deliveryDate} onChange={setDeliveryDate} /></Field>
           <Field label="Status"><SelectInput value={status} onChange={setStatus} options={[{ value: 'CONFIRMED', label: 'Confirmed' }, { value: 'DRAFT', label: 'Draft' }]} /></Field>
-          <Field label="Notes" className="sm:col-span-3"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Special instructions…" /></Field>
+          <Field label="Customer PO No."><TextInput value={customerPoNo} onChange={(e) => setCustomerPoNo(e.target.value)} placeholder="Buyer's PO reference" /></Field>
+          <Field label="Customer PO Date"><DateInput value={customerPoDate} onChange={setCustomerPoDate} /></Field>
+          <Field label="Payment Terms"><TextInput value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. 30 days from invoice" /></Field>
+          <Field label="Delivery Terms"><TextInput value={deliveryTerms} onChange={(e) => setDeliveryTerms(e.target.value)} placeholder="e.g. Door delivery" /></Field>
+          <Field label="Notes" className="sm:col-span-2"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Special instructions…" /></Field>
+          <Field label="Shipping Address" className="sm:col-span-3">
+            <Textarea value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} rows={2} placeholder="Leave blank if same as billing address" />
+          </Field>
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Lines</span>
-            <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
-              <Plus className="h-3.5 w-3.5 mr-1" />Add Line
-            </Button>
+            <div className="flex items-center gap-2">
+              <ScanToAdd items={itemRows} onScan={scanItem} className="w-44 sm:w-56" />
+              <Button type="button" variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
+                <Plus className="h-3.5 w-3.5 mr-1" />Add Line
+              </Button>
+            </div>
           </div>
           {lines.map((l, idx) => (
             <div key={idx} className="grid grid-cols-12 gap-2 items-center">
               <div className="col-span-12 sm:col-span-4">
-                <SelectInput
-                  value={l.itemId} options={itemOpts} placeholder="Select item…"
-                  onChange={(v) => setLines((ls) => ls.map((x, i) => {
-                    if (i !== idx) return x
-                    const it = (items.data?.items ?? []).find((o) => o.id === v)
-                    return { ...x, itemId: v, rate: x.rate || Number(it?.sellingPrice || 0), gstRate: it?.gstRate ?? x.gstRate }
-                  }))}
+                <ItemPicker
+                  items={itemRows}
+                  value={l.itemId}
+                  onChange={(id) => { const it = itemRows.find((o) => o.id === id); if (it) pickItem(idx, it) }}
+                  onCreate={(typed) => setNewItemFor({ idx, name: typed })}
                 />
               </div>
-              <NumberInput className="col-span-3 sm:col-span-2" value={l.qty} min={0} placeholder="Qty"
-                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
-              <NumberInput className="col-span-3 sm:col-span-2" value={l.rate} min={0} placeholder="Rate"
-                onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, rate: n } : x)))} />
+              <div className="col-span-3 sm:col-span-2 grid gap-0.5">
+                <div className="flex gap-1">
+                  <NumberInput className="min-w-0 flex-1" value={l.qty} min={0} placeholder="Qty"
+                    onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, qty: n } : x)))} />
+                  {unitOptions(itemRow(l.itemId)).length > 0 && (
+                    <div className="w-20 shrink-0">
+                      <SelectInput value={l.unit || itemRow(l.itemId)?.uom || ''} options={unitOptions(itemRow(l.itemId))}
+                        onChange={(u) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, unit: u, rate: convertRate(x.rate, x.unit, u, itemRow(x.itemId)) } : x)))} />
+                    </div>
+                  )}
+                </div>
+                {baseQtyHint(l.qty, l.unit, itemRow(l.itemId)) && <span className="text-[10px] leading-tight text-muted-foreground">{baseQtyHint(l.qty, l.unit, itemRow(l.itemId))}</span>}
+              </div>
+              <div className="col-span-3 sm:col-span-2 grid gap-0.5">
+                <NumberInput value={l.rate} min={0} placeholder="Rate" title={lastHints[l.itemId] || undefined}
+                  onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, rate: n } : x)))} />
+                {!lastHints[l.itemId] && inclGstHint(itemRow(l.itemId), l.unit) && <span className="text-[10px] leading-tight text-muted-foreground truncate">{inclGstHint(itemRow(l.itemId), l.unit)}</span>}
+              </div>
               <NumberInput className="col-span-3 sm:col-span-1" value={l.discountPct} min={0} placeholder="Disc %"
                 onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, discountPct: n } : x)))} />
               <NumberInput className="col-span-2 sm:col-span-1" value={l.gstRate} min={0} placeholder="GST %"
@@ -310,6 +430,16 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
           </div>
         </div>
       </FormDialog>
+
+      <QuickItemDialog
+        open={!!newItemFor}
+        onOpenChange={(o) => { if (!o) setNewItemFor(null) }}
+        initialName={newItemFor?.name ?? ''}
+        items={itemRows}
+        defaultType="FINISHED"
+        onCreated={(it) => { if (newItemFor) pickItem(newItemFor.idx, it); void items.refetch() }}
+        onUseExisting={(it) => { if (newItemFor) pickItem(newItemFor.idx, it) }}
+      />
 
       <FormDialog
         open={!!woRow} onOpenChange={(o) => { if (!o) { setWoRow(null); resetWoPlan() } }}
@@ -364,6 +494,10 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
                 <div>Order date: <span className="text-foreground font-medium"><DateCell value={detail.orderDate} /></span></div>
                 <div>Delivery: <span className="text-foreground font-medium"><DateCell value={detail.deliveryDate} /></span></div>
                 <div>Lines: <span className="text-foreground font-medium">{detail.items?.length ?? 0}</span></div>
+                {detail.customerPoNo && <div>Customer PO: <span className="text-foreground font-medium">{detail.customerPoNo}</span>{detail.customerPoDate ? <> · <DateCell value={detail.customerPoDate} /></> : null}</div>}
+                {detail.paymentTerms && <div>Payment: <span className="text-foreground font-medium">{detail.paymentTerms}</span></div>}
+                {detail.deliveryTerms && <div>Delivery terms: <span className="text-foreground font-medium">{detail.deliveryTerms}</span></div>}
+                {detail.shippingAddress && <div className="col-span-3">Ship to: <span className="text-foreground font-medium whitespace-pre-wrap">{detail.shippingAddress}</span></div>}
               </div>
               <div className="rounded-lg border overflow-x-auto">
                 <table className="w-full text-xs">

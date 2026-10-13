@@ -10,6 +10,30 @@ function num(v: unknown, def = 0, field = 'value'): number {
   return n
 }
 
+function optDate(v: unknown, field: string): Date | null {
+  if (v === undefined || v === null || v === '') return null
+  const s = String(v).trim()
+  if (!s) return null
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00.000Z` : s)
+  if (Number.isNaN(d.getTime())) throw new ApiError(`${field} must be a valid date`, 400)
+  return d
+}
+
+function optInt(v: unknown, field: string): number | null {
+  if (v === undefined || v === null || v === '') return null
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 0) throw new ApiError(`${field} must be a whole number of 0 or more`, 400)
+  return n
+}
+
+const optStr = (v: unknown): string | null => (v === undefined || v === null ? null : String(v).trim() || null)
+
+/** next service = last service + interval (days), when both are known */
+function computeNextService(last: Date | null, intervalDays: number | null): Date | null {
+  if (!last || !intervalDays) return null
+  return new Date(last.getTime() + intervalDays * 86_400_000)
+}
+
 // ============================== GET /api/machines?q=&status= ==============================
 export async function GET(req: Request) {
   try {
@@ -45,6 +69,10 @@ export async function POST(req: Request) {
     if (!MACHINE_STATUSES.includes(status)) {
       throw new ApiError('status must be one of RUNNING, IDLE, MAINTENANCE, BREAKDOWN', 400)
     }
+    const lastServiceDate = optDate(body.lastServiceDate, 'lastServiceDate')
+    const serviceIntervalDays = optInt(body.serviceIntervalDays, 'serviceIntervalDays')
+    const nextServiceDate =
+      optDate(body.nextServiceDate, 'nextServiceDate') ?? computeNextService(lastServiceDate, serviceIntervalDays)
 
     const machine = await db.$transaction(async (tx) => {
       const created = await tx.machine.create({
@@ -57,6 +85,13 @@ export async function POST(req: Request) {
           status,
           hourlyRate: num(body.hourlyRate, 0, 'hourlyRate'),
           notes: body.notes || null,
+          make: optStr(body.make),
+          model: optStr(body.model),
+          serialNo: optStr(body.serialNo),
+          purchaseDate: optDate(body.purchaseDate, 'purchaseDate'),
+          lastServiceDate,
+          nextServiceDate,
+          serviceIntervalDays,
         },
       })
       await logAudit(tx as any, {

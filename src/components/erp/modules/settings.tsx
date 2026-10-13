@@ -1,12 +1,15 @@
 'use client'
 
 import * as React from 'react'
-import { CheckCheck, Download, Hash, Save } from 'lucide-react'
+import { AlertTriangle, CheckCheck, Download, Hash, ImagePlus, Save, ShieldCheck, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import { Column, DataTable, Field, PageHeader, SectionCard, StatusBadge, TextInput } from '@/components/erp/kit'
 import { fmtDateTime } from '@/lib/erp-constants'
-import { apiPatch, useList } from '@/lib/use-api'
+import { api, apiPatch, useList } from '@/lib/use-api'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface CompanyProfile {
   id: string
@@ -24,13 +27,23 @@ interface CompanyProfile {
   bankAccountNumber?: string | null
   bankIfsc?: string | null
   bankUpiId?: string | null
+  bankName?: string | null
+  bankBranch?: string | null
+  pincode?: string | null
+  invoiceTerms?: string | null
+  quotationTerms?: string | null
+  logoImage?: string | null
+  signatureImage?: string | null
+  roundOffTotals?: boolean
+  lockEnabled?: boolean
 }
 
-type ProfileForm = { [K in keyof Omit<CompanyProfile, 'id'>]: string }
+type ProfileForm = { [K in keyof Omit<CompanyProfile, 'id' | 'logoImage' | 'signatureImage' | 'roundOffTotals' | 'lockEnabled'>]: string }
 
 const EMPTY_PROFILE: ProfileForm = {
   name: '', gstin: '', pan: '', addressLine: '', city: '', state: '', stateCode: '', phone: '', email: '', logoText: '',
-  bankAccountName: '', bankAccountNumber: '', bankIfsc: '', bankUpiId: '',
+  bankAccountName: '', bankAccountNumber: '', bankIfsc: '', bankUpiId: '', bankName: '', bankBranch: '',
+  pincode: '', invoiceTerms: '', quotationTerms: '',
 }
 
 interface SeqRow {
@@ -39,6 +52,117 @@ interface SeqRow {
   prefix: string
   financialYear: string
   nextNumber: number
+}
+
+interface PrefixRow {
+  docType: string
+  defaultPrefix: string
+  prefix: string
+}
+
+const DOC_LABELS: Record<string, string> = {
+  INV: 'Sales Invoice', PINV: 'Purchase Invoice', SO: 'Sales Order', PO: 'Purchase Order', QT: 'Quotation',
+  ENQ: 'Enquiry', DN: 'Delivery Challan', GRN: 'Goods Receipt (GRN)', PR: 'Purchase Requisition', WO: 'Work Order',
+  MI: 'Material Issue', QC: 'Quality Check', RCPT: 'Payment In', PYMT: 'Payment Out', EXP: 'Expense',
+  TRF: 'Stock Transfer', ADJ: 'Stock Adjustment', SRET: 'Credit Note (Sales Return)', PRET: 'Debit Note (Purchase Return)',
+}
+
+/** Current Indian financial year as used in document numbers, e.g. "2627" for Apr 2026 – Mar 2027. */
+function currentFy(d: Date = new Date()): string {
+  const start = d.getMonth() + 1 >= 4 ? d.getFullYear() : d.getFullYear() - 1
+  return `${String(start % 100).padStart(2, '0')}${String((start + 1) % 100).padStart(2, '0')}`
+}
+
+/**
+ * Read a PNG/JPG file, downscale it so the longest side is at most `maxSide` px and return a data URL:
+ * PNG (keeps transparency) unless that is over 400 KB, then JPEG at 0.85 on a white background.
+ */
+async function shrinkImage(file: File, maxSide: number): Promise<string> {
+  if (!/^image\/(png|jpeg)$/.test(file.type)) throw new Error('Choose a PNG or JPG image')
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image()
+      i.onload = () => resolve(i)
+      i.onerror = () => reject(new Error('Could not read the image'))
+      i.src = url
+    })
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
+    const w = Math.max(1, Math.round(img.naturalWidth * scale))
+    const h = Math.max(1, Math.round(img.naturalHeight * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Image processing is not supported in this browser')
+    ctx.drawImage(img, 0, 0, w, h)
+    let out = canvas.toDataURL('image/png')
+    if (out.length * 0.75 > 400_000) {
+      // JPEG has no transparency: paint white behind the image first
+      ctx.globalCompositeOperation = 'destination-over'
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+      out = canvas.toDataURL('image/jpeg', 0.85)
+    }
+    if (out.length > 700_000) throw new Error('Image is too large even after resizing — use a smaller image')
+    return out
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+function ImageUpload({ label, hint, value, maxSide, onChange }: {
+  label: string
+  hint: string
+  value: string
+  maxSide: number
+  onChange: (dataUrl: string) => void
+}) {
+  const ref = React.useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = React.useState(false)
+
+  async function pick(file: File | undefined) {
+    if (!file) return
+    setBusy(true)
+    try {
+      onChange(await shrinkImage(file, maxSide))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load the image')
+    } finally {
+      setBusy(false)
+      if (ref.current) ref.current.value = ''
+    }
+  }
+
+  return (
+    <Field label={label}>
+      <button
+        type="button"
+        onClick={() => ref.current?.click()}
+        disabled={busy}
+        className="flex h-36 w-full items-center justify-center rounded-lg border border-dashed bg-muted/30 p-3 transition-colors hover:bg-muted/60 disabled:opacity-60"
+      >
+        {value ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={value} alt={label} className="max-h-full max-w-full object-contain" />
+        ) : (
+          <span className="flex flex-col items-center gap-1.5 text-xs text-muted-foreground">
+            <ImagePlus className="h-5 w-5" />
+            {busy ? 'Processing…' : 'Click to choose PNG / JPG'}
+          </span>
+        )}
+      </button>
+      <input ref={ref} type="file" accept="image/png,image/jpeg" className="hidden" onChange={(e) => void pick(e.target.files?.[0])} />
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{hint}</p>
+        {value && (
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-600" onClick={() => onChange('')}>
+            <Trash2 className="h-3.5 w-3.5 mr-1" />Remove
+          </Button>
+        )}
+      </div>
+    </Field>
+  )
 }
 
 interface NotificationRow {
@@ -50,12 +174,96 @@ interface NotificationRow {
   createdAt: string
 }
 
+/** Settings → Security: document-lock PIN (admins only). */
+function SecuritySection({ companyId, enabled, isAdmin, onSaved }: {
+  companyId: string; enabled: boolean; isAdmin: boolean; onSaved: () => void | Promise<void>
+}) {
+  const [on, setOn] = React.useState(enabled)
+  const [currentPin, setCurrentPin] = React.useState('')
+  const [newPin, setNewPin] = React.useState('')
+  const [confirmPin, setConfirmPin] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+
+  React.useEffect(() => { setOn(enabled) }, [enabled])
+
+  const digits = (v: string) => v.replace(/\D/g, '').slice(0, 6)
+  const changingPin = newPin !== '' || confirmPin !== ''
+  const dirty = on !== enabled || changingPin
+
+  async function save() {
+    const body: Record<string, unknown> = { companyId }
+    if (on !== enabled) body.lockEnabled = on
+    if (on && (changingPin || !enabled)) {
+      if (!/^\d{4,6}$/.test(newPin)) { toast.error('PIN must be 4 to 6 digits'); return }
+      if (newPin !== confirmPin) { toast.error('PINs do not match'); return }
+      body.newPin = newPin
+    }
+    if (enabled) {
+      if (!currentPin) { toast.error('Enter the current PIN'); return }
+      body.currentPin = currentPin
+    }
+    setSaving(true)
+    try {
+      await apiPatch('/api/settings', body)
+      toast.success(!on ? 'Security PIN turned off' : enabled ? 'Security PIN changed' : 'Security PIN turned on')
+      setCurrentPin(''); setNewPin(''); setConfirmPin('')
+      await onSaved()
+    } catch (e) {
+      toast.error('Could not update security PIN', { description: e instanceof Error ? e.message : undefined })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const pinInput = (value: string, set: (v: string) => void, placeholder: string) => (
+    <TextInput
+      type="password" inputMode="numeric" autoComplete="new-password" maxLength={6}
+      placeholder={placeholder} value={value} onChange={(e) => set(digits(e.target.value))} disabled={!isAdmin}
+    />
+  )
+
+  return (
+    <SectionCard
+      title="Security"
+      actions={isAdmin ? (
+        <Button size="sm" onClick={() => void save()} disabled={saving || !dirty}>
+          <Save className="h-4 w-4 mr-1.5" />
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      ) : undefined}
+    >
+      <label className="flex cursor-pointer items-center justify-between gap-4">
+        <span className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="h-4 w-4 text-emerald-600" /> Require a security PIN for changes to saved documents
+        </span>
+        <Switch checked={on} onCheckedChange={(v) => setOn(v === true)} disabled={!isAdmin} />
+      </label>
+      <p className="text-xs text-muted-foreground mt-2">
+        Staff need this PIN to cancel, delete or edit saved bills, payments and returns.
+        {!isAdmin && ' Only an admin can change this setting.'}
+      </p>
+      {isAdmin && (on || enabled) && (
+        <div className="grid gap-3 sm:grid-cols-3 mt-4">
+          {enabled && <Field label="Current PIN">{pinInput(currentPin, setCurrentPin, 'Current PIN')}</Field>}
+          {on && <Field label={enabled ? 'New PIN (optional)' : 'New PIN'}>{pinInput(newPin, setNewPin, '4–6 digits')}</Field>}
+          {on && <Field label="Confirm new PIN">{pinInput(confirmPin, setConfirmPin, 'Repeat PIN')}</Field>}
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 export default function SettingsModule({ companyId }: { companyId: string }) {
   const settings = useList<CompanyProfile>(`/api/settings?companyId=${companyId}`)
-  const numbering = useList<{ seqs?: SeqRow[] }>(`/api/numbering?companyId=${companyId}`)
+  const numbering = useList<{ seqs?: SeqRow[]; prefixes?: PrefixRow[] }>(`/api/numbering?companyId=${companyId}`)
   const notifications = useList<{ items?: NotificationRow[]; unreadCount?: number }>(`/api/notifications?companyId=${companyId}`)
 
   const [form, setForm] = React.useState<ProfileForm>(EMPTY_PROFILE)
+  const [logoImage, setLogoImage] = React.useState('')
+  const [signatureImage, setSignatureImage] = React.useState('')
+  const [roundOffTotals, setRoundOffTotals] = React.useState(true)
+  const [prefixDraft, setPrefixDraft] = React.useState<Record<string, string>>({})
+  const [savingPrefixes, setSavingPrefixes] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [markingAll, setMarkingAll] = React.useState(false)
   const [downloading, setDownloading] = React.useState(false)
@@ -86,18 +294,60 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
         bankAccountNumber: d.bankAccountNumber || '',
         bankIfsc: d.bankIfsc || '',
         bankUpiId: d.bankUpiId || '',
+        bankName: d.bankName || '',
+        bankBranch: d.bankBranch || '',
+        pincode: d.pincode || '',
+        invoiceTerms: d.invoiceTerms || '',
+        quotationTerms: d.quotationTerms || '',
       })
+      setLogoImage(d.logoImage || '')
+      setSignatureImage(d.signatureImage || '')
+      setRoundOffTotals(d.roundOffTotals ?? true)
     }
   }, [settings.data])
+
+  React.useEffect(() => {
+    const rows = numbering.data?.prefixes
+    if (rows) setPrefixDraft(Object.fromEntries(rows.map((r) => [r.docType, r.prefix === r.defaultPrefix ? '' : r.prefix])))
+  }, [numbering.data])
+
+  async function savePrefixes() {
+    const rows = numbering.data?.prefixes ?? []
+    const prefixes = Object.fromEntries(rows.map((r) => [r.docType, (prefixDraft[r.docType] ?? '').trim().toUpperCase()]))
+    const bad = Object.entries(prefixes).find(([, p]) => p && !/^[A-Z0-9/]{1,10}$/.test(p))
+    if (bad) {
+      toast.error(`Prefix for ${DOC_LABELS[bad[0]] ?? bad[0]} may use A–Z, 0–9 and / (max 10)`)
+      return
+    }
+    setSavingPrefixes(true)
+    try {
+      await apiPatch('/api/numbering', { companyId, prefixes })
+      toast.success('Document prefixes saved')
+      await numbering.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save document prefixes')
+    } finally {
+      setSavingPrefixes(false)
+    }
+  }
 
   async function saveProfile() {
     if (!form.name.trim()) {
       toast.error('Company name is required')
       return
     }
+    const pin = (form.pincode ?? '').trim()
+    if (pin && !/^\d{6}$/.test(pin)) {
+      toast.error('Pincode must be 6 digits')
+      return
+    }
     setSaving(true)
     try {
-      await apiPatch('/api/settings', { companyId, ...form, name: form.name.trim(), userName: 'admin' })
+      await apiPatch('/api/settings', {
+        companyId, ...form, name: form.name.trim(),
+        logoImage: logoImage || null, signatureImage: signatureImage || null, roundOffTotals,
+        userName: 'admin',
+      })
       toast.success('Company profile updated')
       await settings.refetch()
     } catch (e) {
@@ -120,7 +370,7 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
     }
   }
 
-  async function downloadBackup() {
+  async function downloadBackup(): Promise<boolean> {
     setDownloading(true)
     try {
       // Plain fetch (api() helper expects the ok() envelope, the backup returns a
@@ -148,10 +398,58 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
       a.remove()
       URL.revokeObjectURL(url)
       toast.success(`Backup downloaded (${(blob.size / 1024).toFixed(1)} KB)`)
+      return true
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Backup download failed')
+      return false
     } finally {
       setDownloading(false)
+    }
+  }
+
+  // ---------- Restore from a backup file ----------
+  type BackupFile = { meta?: { companyId?: string; companyName?: string; exportedAt?: string; version?: number; counts?: Record<string, number> }; data?: unknown }
+  const fileRef = React.useRef<HTMLInputElement>(null)
+  const [restoreFile, setRestoreFile] = React.useState<{ name: string; json: BackupFile } | null>(null)
+  const [restoreConfirm, setRestoreConfirm] = React.useState('')
+  const [restoring, setRestoring] = React.useState(false)
+
+  async function pickBackup(file: File | undefined) {
+    if (!file) return
+    try {
+      // Daily server backups are gzipped (.json.gz) — unzip in the browser
+      const text = file.name.endsWith('.gz')
+        ? await new Response(file.stream().pipeThrough(new DecompressionStream('gzip'))).text()
+        : await file.text()
+      const json = JSON.parse(text) as BackupFile
+      if (!json?.meta || !json.data) throw new Error('This is not a ManuFlow backup file')
+      if (json.meta.companyId !== companyId) throw new Error(`This backup is of "${json.meta.companyName ?? 'another company'}" — it can only be restored into that company`)
+      setRestoreConfirm('')
+      setRestoreFile({ name: file.name, json })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not read the backup file')
+    } finally {
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  async function runRestore() {
+    if (!restoreFile) return
+    setRestoring(true)
+    try {
+      // Safety net: take a backup of the current data first
+      if (!(await downloadBackup())) throw new Error('Could not back up the current data — restore stopped')
+      const res = await api<{ restored: number }>(`/api/companies/${companyId}/restore`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmName: restoreConfirm.trim(), backup: restoreFile.json }),
+      })
+      toast.success(`Backup restored — ${res.restored} records. Reloading…`)
+      setRestoreFile(null)
+      setTimeout(() => window.location.reload(), 1200)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Restore failed')
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -230,6 +528,15 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
                 placeholder="Maharashtra"
               />
             </Field>
+            <Field label="Pincode">
+              <TextInput
+                inputMode="numeric"
+                maxLength={6}
+                value={form.pincode}
+                onChange={(e) => setForm((f) => ({ ...f, pincode: e.target.value.replace(/\D/g, '') }))}
+                placeholder="411018"
+              />
+            </Field>
             <Field label="State Code">
               <TextInput
                 value={form.stateCode}
@@ -253,6 +560,41 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
             State code drives the GST split — same-state parties get CGST + SGST, other states get IGST.
           </p>
         </SectionCard>
+
+        <SectionCard
+          title="Logo & Signature"
+          actions={
+            <Button size="sm" onClick={() => void saveProfile()} disabled={saving}>
+              <Save className="h-4 w-4 mr-1.5" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          }
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ImageUpload label="Company Logo" hint="Printed on quotations, invoices and other documents" value={logoImage} maxSide={400} onChange={setLogoImage} />
+            <ImageUpload label="Authorised Signature" hint="Printed above “Authorised Signatory” on invoices" value={signatureImage} maxSide={300} onChange={setSignatureImage} />
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">
+            Images are resized automatically. Click Save to apply changes.
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Billing Preferences"
+          actions={
+            <Button size="sm" onClick={() => void saveProfile()} disabled={saving}>
+              <Save className="h-4 w-4 mr-1.5" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          }
+        >
+          <label className="flex cursor-pointer items-center justify-between gap-4">
+            <span className="text-sm">Round off invoice &amp; bill totals to the nearest rupee</span>
+            <Switch checked={roundOffTotals} onCheckedChange={(v) => setRoundOffTotals(v === true)} />
+          </label>
+        </SectionCard>
+
+        <SecuritySection companyId={companyId} enabled={!!settings.data?.lockEnabled} isAdmin={isAdmin} onSaved={settings.refetch} />
 
         <SectionCard
           title="Bank Details"
@@ -286,6 +628,20 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
                 placeholder="HDFC0001234"
               />
             </Field>
+            <Field label="Bank Name">
+              <TextInput
+                value={form.bankName}
+                onChange={(e) => setForm((f) => ({ ...f, bankName: e.target.value }))}
+                placeholder="HDFC Bank"
+              />
+            </Field>
+            <Field label="Branch">
+              <TextInput
+                value={form.bankBranch}
+                onChange={(e) => setForm((f) => ({ ...f, bankBranch: e.target.value }))}
+                placeholder="Bhosari, Pune"
+              />
+            </Field>
             <Field label="UPI ID">
               <TextInput
                 value={form.bankUpiId}
@@ -299,22 +655,94 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
           </p>
         </SectionCard>
 
+        <SectionCard
+          title="Document Terms"
+          actions={
+            <Button size="sm" onClick={() => void saveProfile()} disabled={saving}>
+              <Save className="h-4 w-4 mr-1.5" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          }
+        >
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Invoice Terms & Conditions">
+              <Textarea
+                value={form.invoiceTerms}
+                onChange={(e) => setForm((f) => ({ ...f, invoiceTerms: e.target.value }))}
+                rows={5}
+                placeholder={'1. Goods once sold will not be taken back.\n2. Interest @18% p.a. on overdue bills.\n3. Subject to Pune jurisdiction.'}
+              />
+            </Field>
+            <Field label="Quotation Terms & Conditions">
+              <Textarea
+                value={form.quotationTerms}
+                onChange={(e) => setForm((f) => ({ ...f, quotationTerms: e.target.value }))}
+                rows={5}
+                placeholder={'1. Prices valid for 30 days.\n2. GST extra as applicable.\n3. Delivery: 2–3 weeks from PO.'}
+              />
+            </Field>
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">
+            Invoice terms print on tax invoices; quotation terms are the default for new quotations.
+          </p>
+        </SectionCard>
+
         {isAdmin && (
           <SectionCard
             title="Data & Backup"
             actions={
-              <Button size="sm" onClick={() => void downloadBackup()} disabled={downloading}>
-                <Download className="h-4 w-4 mr-1.5" />
-                {downloading ? 'Preparing…' : 'Download backup (JSON)'}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => void downloadBackup()} disabled={downloading}>
+                  <Download className="h-4 w-4 mr-1.5" />
+                  {downloading ? 'Preparing…' : 'Download backup (JSON)'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} disabled={restoring}>
+                  <Upload className="h-4 w-4 mr-1.5" />Restore from backup
+                </Button>
+                <input ref={fileRef} type="file" accept="application/json,.json,.gz,application/gzip" className="hidden" onChange={(e) => void pickBackup(e.target.files?.[0])} />
+              </div>
             }
           >
             <p className="text-sm text-muted-foreground">
               Exports a complete snapshot of this company&apos;s data — masters, transactions, inventory,
               notifications and audit logs — as a single JSON file. Administrators only.
             </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              <b>Restore</b> replaces all of this company&apos;s data with a backup of the same company. User logins are not changed.
+              A backup of the current data is downloaded automatically first.
+            </p>
           </SectionCard>
         )}
+
+        <Dialog open={!!restoreFile} onOpenChange={(o) => { if (!o && !restoring) setRestoreFile(null) }}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-600"><AlertTriangle className="h-5 w-5" />Restore backup?</DialogTitle>
+              <DialogDescription>
+                All current items, parties, documents, stock and payments of this company will be <b>replaced</b> by the backup. This cannot be undone
+                (a copy of the current data downloads first).
+              </DialogDescription>
+            </DialogHeader>
+            {restoreFile && (
+              <div className="grid gap-1 rounded-md border bg-muted/40 p-3 text-sm">
+                <span>File: <b>{restoreFile.name}</b></span>
+                <span>Company: <b>{restoreFile.json.meta?.companyName}</b></span>
+                <span>Taken on: <b>{restoreFile.json.meta?.exportedAt ? fmtDateTime(restoreFile.json.meta.exportedAt) : '—'}</b></span>
+                <span>Records: <b>{Object.entries(restoreFile.json.meta?.counts ?? {}).filter(([k]) => k !== 'users' && k !== 'company').reduce((t, [, n]) => t + (n || 0), 0)}</b></span>
+              </div>
+            )}
+            <Field label={`Type the company name "${restoreFile?.json.meta?.companyName ?? ''}" to confirm`}>
+              <TextInput value={restoreConfirm} onChange={(e) => setRestoreConfirm(e.target.value)} autoComplete="off" />
+            </Field>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRestoreFile(null)} disabled={restoring}>Cancel</Button>
+              <Button variant="destructive" onClick={() => void runRestore()}
+                disabled={restoring || restoreConfirm.trim() !== (restoreFile?.json.meta?.companyName ?? '').trim()}>
+                {restoring ? 'Restoring…' : 'Restore now'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <SectionCard
           title="Document Numbering"
@@ -329,6 +757,47 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
           />
           <p className="text-xs text-muted-foreground mt-3">
             Numbers auto-advance every financial year (Apr–Mar).
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Document Prefixes"
+          actions={
+            <Button size="sm" onClick={() => void savePrefixes()} disabled={savingPrefixes || !numbering.data?.prefixes?.length}>
+              <Save className="h-4 w-4 mr-1.5" />
+              {savingPrefixes ? 'Saving…' : 'Save'}
+            </Button>
+          }
+        >
+          {numbering.loading && !numbering.data ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
+          ) : (
+            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+              {(numbering.data?.prefixes ?? []).map((r) => {
+                const value = prefixDraft[r.docType] ?? ''
+                const eff = value.trim() || r.defaultPrefix
+                return (
+                  <Field key={r.docType} label={DOC_LABELS[r.docType] ?? r.docType}>
+                    <TextInput
+                      value={value}
+                      maxLength={10}
+                      className="font-mono uppercase"
+                      placeholder={r.defaultPrefix}
+                      onChange={(e) => {
+                        const v = e.target.value.toUpperCase().replace(/[^A-Z0-9/]/g, '').slice(0, 10)
+                        setPrefixDraft((d) => ({ ...d, [r.docType]: v }))
+                      }}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      e.g. <span className="font-mono">{`${eff}-${currentFy()}-000001`}</span>
+                    </p>
+                  </Field>
+                )
+              })}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground mt-4">
+            Applies to new documents only — existing numbers never change. Leave blank for the default prefix.
           </p>
         </SectionCard>
 

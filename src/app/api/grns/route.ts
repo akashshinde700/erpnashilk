@@ -4,6 +4,7 @@ import {
   ok, handleError, companyRequired, nextDocNumber, logAudit, ApiError, r2, requireWrite,
 } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
+import { parseSerials, joinSerials } from '@/lib/batches'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -13,7 +14,7 @@ type HelperTx = Prisma.TransactionClient & Parameters<typeof nextDocNumber>[0] &
 async function attachItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
   const ids = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const items = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
+    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, batchTracked: true, trackSerial: true } })
     : []
   const map = new Map(items.map((i) => [i.id, i]))
   return docs.map((d) => ({ ...d, items: d.items.map((i) => ({ ...i, item: map.get(i.itemId) || null })) }))
@@ -29,6 +30,7 @@ interface GrnLineInput {
   poItemId?: string; itemId?: string
   orderedQty?: number | string; receivedQty?: number | string
   acceptedQty?: number | string; rejectedQty?: number | string
+  batchNo?: string | null; mfgDate?: string | null; expiryDate?: string | null; serials?: string | string[] | null
 }
 
 // ============================== GET /api/grns ==============================
@@ -120,6 +122,30 @@ export async function POST(req: Request) {
         batchByPoItem.set(l.poItemId, r2(batch + received))
       }
 
+      // Batch / serial details per line (only kept for batch- / serial-tracked items; stock moves at Post)
+      const lineItemIds = Array.from(new Set(lines.map((l) => String(l.itemId))))
+      const flagRows = await tx.item.findMany({
+        where: { companyId, id: { in: lineItemIds } },
+        select: { id: true, code: true, name: true, batchTracked: true, trackSerial: true },
+      })
+      const flags = new Map(flagRows.map((f) => [f.id, f]))
+      const tracking = lines.map((l) => {
+        const f = flags.get(String(l.itemId))
+        const accepted = r2(Number(l.acceptedQty) || 0)
+        const batchNo = f?.batchTracked && l.batchNo ? String(l.batchNo).trim() || null : null
+        const mfgDate = f?.batchTracked ? toDate(l.mfgDate) : null
+        const expiryDate = f?.batchTracked ? toDate(l.expiryDate) : null
+        if (mfgDate && expiryDate && expiryDate < mfgDate) throw new ApiError(`Expiry date is before the mfg date for ${f?.code}`, 400)
+        const serials = f?.trackSerial ? parseSerials(l.serials) : []
+        if (f?.trackSerial && accepted > 0) {
+          if (Math.abs(accepted - Math.round(accepted)) > 0.0005) throw new ApiError(`${f.code} ${f.name} is serial-tracked — accepted qty must be a whole number`, 400)
+          if (serials.length !== Math.round(accepted)) {
+            throw new ApiError(`${f.code} ${f.name} is serial-tracked — enter exactly ${Math.round(accepted)} serial no(s) for the accepted qty (got ${serials.length})`, 400)
+          }
+        }
+        return { batchNo, mfgDate, expiryDate, serials: joinSerials(serials) }
+      })
+
       const number = await nextDocNumber(tx, companyId, 'GRN', date)
       const created = await tx.grn.create({
         data: {
@@ -129,12 +155,16 @@ export async function POST(req: Request) {
           warehouseId: body.warehouseId,
           date,
           supplierInvNo: body.supplierInvNo || null,
+          supplierInvDate: toDate(body.supplierInvDate),
+          supplierChallanNo: body.supplierChallanNo ? String(body.supplierChallanNo).trim() || null : null,
+          vehicleNo: body.vehicleNo ? String(body.vehicleNo).trim().toUpperCase() || null : null,
           status: 'PENDING_QC',
           notes: body.notes || null,
           items: {
-            create: lines.map((l) => {
+            create: lines.map((l, idx) => {
               const poItem = po.items.find((p) => p.id === l.poItemId)
               return {
+                ...tracking[idx],
                 poItemId: l.poItemId as string,
                 itemId: l.itemId as string,
                 orderedQty: l.orderedQty != null && Number(l.orderedQty) > 0 ? r2(Number(l.orderedQty)) : poItem ? poItem.qty : 0,

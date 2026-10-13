@@ -174,7 +174,7 @@ export default function UsersModule({ companyId }: { companyId: string }) {
         description="Team members and their roles for this company"
         actions={
           <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-1.5" /> New User
+            <Plus className="h-4 w-4 mr-1.5" /> User
           </Button>
         }
       />
@@ -184,7 +184,7 @@ export default function UsersModule({ companyId }: { companyId: string }) {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title={editing ? 'Edit User' : 'New User'}
+        title={editing ? 'Edit User' : 'User'}
         description={editing ? `Updating ${editing.email}` : 'Invite a team member to this company'}
         onSubmit={submit}
         loading={saving}

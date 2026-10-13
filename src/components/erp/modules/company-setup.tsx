@@ -12,9 +12,9 @@ import {
   TextInput,
   type Column,
 } from '@/components/erp/kit'
-import { apiPatch, apiPost, useList } from '@/lib/use-api'
+import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { toast } from 'sonner'
-import { Boxes, Building2, Info, Pencil, Plus, Users } from 'lucide-react'
+import { Boxes, Building2, Info, Pencil, Plus, Unlink, Users } from 'lucide-react'
 
 interface CompanyRow {
   id: string
@@ -31,6 +31,89 @@ interface CompanyRow {
   createdAt?: string
   userCount: number
   itemCount: number
+  isHome?: boolean
+}
+
+/** Ask the app shell to switch the active company (handled in erp-app.tsx). */
+export const SWITCH_COMPANY_EVENT = 'erp:switch-company'
+
+export interface CreatedFirm {
+  id: string
+  name: string
+}
+
+const EMPTY_FIRM = { name: '', gstin: '', state: '', stateCode: '', city: '' }
+
+/**
+ * "Create new firm" dialog — another company under the same login and subscription
+ * (TENANT_ADMIN only; the server enforces this). Used by the topbar switcher and Company Setup.
+ */
+export function CreateFirmDialog({ open, onOpenChange, onCreated }: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onCreated?: (firm: CreatedFirm) => void
+}) {
+  const [f, setF] = React.useState(EMPTY_FIRM)
+  const [saving, setSaving] = React.useState(false)
+  React.useEffect(() => { if (open) setF(EMPTY_FIRM) }, [open])
+  const bind = (k: keyof typeof EMPTY_FIRM, transform?: (v: string) => string) => ({
+    value: f[k],
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      const v = transform ? transform(e.target.value) : e.target.value
+      setF((x) => ({ ...x, [k]: v }))
+    },
+  })
+
+  async function submit() {
+    const name = f.name.trim()
+    if (!name) { toast.error('Firm name is required'); return }
+    if (f.gstin.trim() && f.gstin.trim().length !== 15) { toast.error('GSTIN must be exactly 15 characters'); return }
+    if (f.stateCode.trim() && !/^\d{2}$/.test(f.stateCode.trim())) { toast.error('State code must be 2 digits'); return }
+    setSaving(true)
+    try {
+      const firm = await apiPost<CreatedFirm>('/api/firms', {
+        name, gstin: f.gstin.trim(), state: f.state.trim(), stateCode: f.stateCode.trim(), city: f.city.trim(),
+      })
+      toast.success(`Firm "${firm.name}" created`)
+      onOpenChange(false)
+      window.dispatchEvent(new CustomEvent('erp:companies-changed'))
+      onCreated?.(firm)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to create firm')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Create new firm"
+      description="A separate company with its own books, stock and documents, on your current plan. Default warehouses (RM / FG / General) are added."
+      submitLabel="Create Firm"
+      loading={saving}
+      onSubmit={submit}
+    >
+      <Field label="Firm name" required>
+        <TextInput {...bind('name')} placeholder="Acme Traders" autoFocus />
+      </Field>
+      <Field label="GSTIN">
+        <TextInput {...bind('gstin', (v) => v.toUpperCase())} placeholder="27ABCDE1234F1Z9" maxLength={15} className="font-mono" />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="City">
+          <TextInput {...bind('city')} placeholder="Pune" />
+        </Field>
+        <Field label="State">
+          <TextInput {...bind('state')} placeholder="Maharashtra" />
+        </Field>
+        <Field label="State code">
+          <TextInput {...bind('stateCode', (v) => v.replace(/\D/g, '').slice(0, 2))} placeholder="27" maxLength={2} />
+        </Field>
+      </div>
+    </FormDialog>
+  )
 }
 
 interface CompanyForm {
@@ -82,12 +165,32 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
   const [saving, setSaving] = React.useState(false)
   // Creating tenants is a platform-admin action (the server enforces this too).
   const [isPlatformAdmin, setIsPlatformAdmin] = React.useState(false)
+  // Tenant admins can add more firms under the same login (Vyapar-style "Create new company").
+  const [isTenantAdmin, setIsTenantAdmin] = React.useState(false)
+  const [firmOpen, setFirmOpen] = React.useState(false)
   React.useEffect(() => {
     try {
       const s = JSON.parse(window.localStorage.getItem('erp_user') || '{}') as { user?: { role?: string } }
       setIsPlatformAdmin(s.user?.role === 'SUPER_ADMIN')
+      setIsTenantAdmin(s.user?.role === 'TENANT_ADMIN')
     } catch { /* ignore */ }
   }, [])
+
+  async function removeFirm(row: CompanyRow) {
+    if (!window.confirm(`Remove "${row.name}" from your firm list? Its data is kept, but you will no longer be able to open it.`)) return
+    try {
+      await apiDelete(`/api/firms/${row.id}`)
+      toast.success('Firm removed from your list')
+      if (row.id === companyId) {
+        const home = companies.find((c) => c.isHome)
+        if (home) window.dispatchEvent(new CustomEvent(SWITCH_COMPANY_EVENT, { detail: home.id }))
+      }
+      await refetch()
+      window.dispatchEvent(new CustomEvent('erp:companies-changed'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to remove firm')
+    }
+  }
 
   const set = (k: keyof CompanyForm) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
   const textProps = (k: keyof CompanyForm) => ({
@@ -202,7 +305,12 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
       header: 'Company',
       render: (row) => (
         <div className="min-w-0">
-          <p className="font-medium truncate">{row.name}</p>
+          <p className="font-medium truncate">
+            {row.name}
+            {row.isHome && !isPlatformAdmin && (
+              <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">HOME</span>
+            )}
+          </p>
           <p className="text-xs text-muted-foreground truncate">
             {[row.city, row.state].filter(Boolean).join(', ') || '—'}
           </p>
@@ -242,10 +350,18 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
       header: '',
       className: 'text-right',
       render: (row) => (
-        <Button variant="outline" size="sm" className="h-8" onClick={() => openEdit(row)}>
-          <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-          Edit
-        </Button>
+        <div className="inline-flex gap-1.5">
+          <Button variant="outline" size="sm" className="h-8" onClick={() => openEdit(row)}>
+            <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+            Edit
+          </Button>
+          {isTenantAdmin && row.isHome === false && (
+            <Button variant="outline" size="sm" className="h-8" onClick={() => void removeFirm(row)} title="Remove from my firms (data is kept)">
+              <Unlink className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="sr-only">Remove firm</span>
+            </Button>
+          )}
+        </div>
       ),
     },
   ]
@@ -308,7 +424,12 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
         actions={isPlatformAdmin ? (
           <Button onClick={openCreate} className="h-9">
             <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
-            New Tenant
+            Tenant
+          </Button>
+        ) : isTenantAdmin ? (
+          <Button onClick={() => setFirmOpen(true)} className="h-9">
+            <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+            Create firm
           </Button>
         ) : undefined}
       />
@@ -346,11 +467,21 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
         </AlertDescription>
       </Alert>
 
+      {/* Create firm (tenant admin) — switches to the new firm once created */}
+      <CreateFirmDialog
+        open={firmOpen}
+        onOpenChange={setFirmOpen}
+        onCreated={(firm) => {
+          void refetch()
+          window.dispatchEvent(new CustomEvent(SWITCH_COMPANY_EVENT, { detail: firm.id }))
+        }}
+      />
+
       {/* Create tenant */}
       <FormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        title="New Tenant"
+        title="Tenant"
         description="Creates the company, its default warehouses (RM / FG / General) and an optional admin user."
         wide
         submitLabel="Create Tenant"

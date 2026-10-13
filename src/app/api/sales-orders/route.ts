@@ -2,6 +2,9 @@ import { db } from '@/lib/db'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterStateParty, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 
+// Optional free-text field: blank → null
+const optStr = (v: unknown) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim())
+
 interface SoLine { itemId: string; qty: number; rate: number; discountPct: number; gstRate: number }
 
 // SalesOrderItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
@@ -25,7 +28,7 @@ function validateLines(raw: any[]): SoLine[] {
     return {
       itemId: String(l.itemId),
       qty: r2(qty),
-      rate: r2(rate),
+      rate: Math.round(rate * 10000) / 10000, // 4 dp: alt-unit rates (₹100 / 24 PCS) must not drift the line total
       discountPct: Number(l.discountPct ?? 0) || 0,
       gstRate: l.gstRate === undefined || l.gstRate === null || l.gstRate === '' ? 18 : Number(l.gstRate),
     }
@@ -66,7 +69,9 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/sales-orders  { companyId, quotationId?, customerId, orderDate?, deliveryDate?, notes?, items: [...], status? ('DRAFT'|'CONFIRMED', default CONFIRMED) }
+// POST /api/sales-orders  { companyId, quotationId?, customerId, orderDate?, deliveryDate?, notes?, customerPoNo?, customerPoDate?,
+//   paymentTerms?, deliveryTerms?, shippingAddress?, items: [...], status? ('DRAFT'|'CONFIRMED', default CONFIRMED) }
+// Payment/delivery terms default to the linked quotation's when not sent.
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'sales-orders')
@@ -90,18 +95,22 @@ export async function POST(req: Request) {
     const itemCount = await db.item.count({ where: { companyId, id: { in: itemIds } } })
     if (itemCount !== itemIds.length) throw new ApiError('One or more itemId values are invalid for this company', 400)
 
-    let linkedQuotation: { id: string; number: string } | null = null
+    let linkedQuotation: { id: string; number: string; paymentTerms: string | null; deliveryTerms: string | null } | null = null
     if (body.quotationId) {
       const qt = await db.quotation.findFirst({ where: { id: body.quotationId, companyId } })
       if (!qt) throw new ApiError('Quotation not found', 404)
       if (!['DRAFT', 'SENT', 'APPROVED'].includes(qt.status)) {
         throw new ApiError(`Quotation ${qt.number} cannot be converted (status: ${qt.status})`, 400)
       }
-      linkedQuotation = { id: qt.id, number: qt.number }
+      linkedQuotation = { id: qt.id, number: qt.number, paymentTerms: qt.paymentTerms, deliveryTerms: qt.deliveryTerms }
     }
 
     const orderDate = body.orderDate ? new Date(body.orderDate) : new Date()
     const deliveryDate = body.deliveryDate ? new Date(body.deliveryDate) : null
+    const customerPoDate = body.customerPoDate ? new Date(body.customerPoDate) : null
+    if (customerPoDate && isNaN(customerPoDate.getTime())) throw new ApiError('customerPoDate is not a valid date', 400)
+    const paymentTerms = body.paymentTerms !== undefined ? optStr(body.paymentTerms) : linkedQuotation?.paymentTerms ?? null
+    const deliveryTerms = body.deliveryTerms !== undefined ? optStr(body.deliveryTerms) : linkedQuotation?.deliveryTerms ?? null
 
     const interState = isInterStateParty(company ?? {}, customer ?? {})
     const totals = computeGst(lines, interState)
@@ -125,6 +134,11 @@ export async function POST(req: Request) {
           igst: totals.igst,
           grandTotal: totals.grandTotal,
           notes: body.notes ?? null,
+          customerPoNo: optStr(body.customerPoNo),
+          customerPoDate,
+          paymentTerms,
+          deliveryTerms,
+          shippingAddress: optStr(body.shippingAddress),
           items: {
             create: lines.map((l, i) => ({
               itemId: l.itemId,

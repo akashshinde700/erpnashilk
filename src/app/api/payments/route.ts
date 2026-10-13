@@ -1,8 +1,9 @@
 import { db } from '@/lib/db'
 import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
+import { accountForMode } from '@/lib/accounts'
 
-// GET /api/payments?companyId=&type=RECEIPT|PAYMENT&customerId=&supplierId=&invoiceId=&q=
+// GET /api/payments?companyId=&type=RECEIPT|PAYMENT&customerId=&supplierId=&invoiceId=&q=&accountId=&cheques=postdated|all
 export async function GET(req: Request) {
   try {
     const companyId = await companyRequired(req)
@@ -12,8 +13,14 @@ export async function GET(req: Request) {
     const supplierId = (searchParams.get('supplierId') || '').trim()
     const invoiceId = (searchParams.get('invoiceId') || '').trim()
     const q = (searchParams.get('q') || '').trim()
+    const accountId = (searchParams.get('accountId') || '').trim()
+    const cheques = (searchParams.get('cheques') || '').trim()
 
     const where: any = { companyId }
+    if (accountId) where.accountId = accountId
+    // postdated = cheques not yet cleared (PENDING / DEPOSITED); all = every cheque payment
+    if (cheques === 'postdated') where.chequeStatus = { in: ['PENDING', 'DEPOSITED'] }
+    else if (cheques === 'all') where.mode = 'CHEQUE'
     if (type) where.type = type
     if (customerId) where.customerId = customerId
     if (supplierId) where.supplierId = supplierId
@@ -28,12 +35,14 @@ export async function GET(req: Request) {
     const salesIds = rows.filter((r) => r.invoiceType === 'SALES' && r.invoiceId).map((r) => r.invoiceId as string)
     const purchaseIds = rows.filter((r) => r.invoiceType === 'PURCHASE' && r.invoiceId).map((r) => r.invoiceId as string)
 
-    const [customers, suppliers, salesInvoices, purchaseInvoices] = await Promise.all([
+    const [customers, suppliers, salesInvoices, purchaseInvoices, accounts] = await Promise.all([
       customerIds.length ? db.customer.findMany({ where: { companyId, id: { in: customerIds } }, select: { id: true, name: true } }) : Promise.resolve([] as { id: string; name: string }[]),
       supplierIds.length ? db.supplier.findMany({ where: { companyId, id: { in: supplierIds } }, select: { id: true, name: true } }) : Promise.resolve([] as { id: string; name: string }[]),
       salesIds.length ? db.salesInvoice.findMany({ where: { companyId, id: { in: salesIds } }, select: { id: true, number: true } }) : Promise.resolve([] as { id: string; number: string }[]),
       purchaseIds.length ? db.purchaseInvoice.findMany({ where: { companyId, id: { in: purchaseIds } }, select: { id: true, number: true } }) : Promise.resolve([] as { id: string; number: string }[]),
+      db.moneyAccount.findMany({ where: { companyId }, select: { id: true, name: true } }),
     ])
+    const accountMap = new Map(accounts.map((a) => [a.id, a.name]))
 
     const customerMap = new Map(customers.map((c) => [c.id, c.name]))
     const supplierMap = new Map(suppliers.map((s) => [s.id, s.name]))
@@ -46,6 +55,7 @@ export async function GET(req: Request) {
       customer: r.customerId ? { name: customerMap.get(r.customerId) ?? null } : null,
       supplier: r.supplierId ? { name: supplierMap.get(r.supplierId) ?? null } : null,
       invoiceNumber: r.invoiceId ? numberMap.get(r.invoiceId) ?? null : null,
+      accountName: r.accountId ? accountMap.get(r.accountId) ?? null : null,
     }))
     return ok({ items, total: items.length })
   } catch (e) {
@@ -55,7 +65,9 @@ export async function GET(req: Request) {
 
 // POST /api/payments
 // { companyId, type: 'RECEIPT'|'PAYMENT', customerId?|supplierId?, invoiceType: 'SALES'|'PURCHASE',
-//   invoiceId, amount, mode?, date?, reference?, notes?, userName? }
+//   invoiceId, amount, mode?, date?, reference?, notes?, accountId?, chequeNo?, chequeDate?, userName? }
+// accountId defaults by mode (CASH → cash account, else default bank). A CHEQUE dated after today is
+// post-dated: chequeStatus PENDING, not counted in account balances until it is CLEARED (PATCH .../[id]).
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'payments')
@@ -68,6 +80,8 @@ export async function POST(req: Request) {
     if (type === 'RECEIPT' && invoiceType !== 'SALES') throw new ApiError('RECEIPT payments must reference a SALES invoice', 400)
     if (type === 'PAYMENT' && invoiceType !== 'PURCHASE') throw new ApiError('PAYMENT payments must reference a PURCHASE invoice', 400)
     if (!body.invoiceId) throw new ApiError('invoiceId is required', 400)
+    // Credit / debit notes are created only by Sales / Purchase Returns (they also move stock)
+    if (body.mode === 'CREDIT_NOTE' || body.mode === 'DEBIT_NOTE') throw new ApiError('Use Sales Return / Purchase Return to create credit or debit notes', 400)
 
     const amount = r2(Number(body.amount))
     if (!(amount > 0)) throw new ApiError('amount must be greater than 0', 400)
@@ -79,6 +93,16 @@ export async function POST(req: Request) {
     if (type === 'PAYMENT' && !supplierId) throw new ApiError('supplierId is required for PAYMENT', 400)
 
     const date = body.date ? new Date(body.date) : new Date()
+    const mode = String(body.mode || 'NEFT')
+    let chequeDate: Date | null = null
+    if (mode === 'CHEQUE' && body.chequeDate) {
+      const s = String(body.chequeDate).trim()
+      chequeDate = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00.000Z` : s)
+      if (Number.isNaN(chequeDate.getTime())) throw new ApiError('chequeDate must be a valid date', 400)
+    }
+    // Post-dated = cheque dated after today (IST calendar day)
+    const todayIst = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)
+    const chequeStatus = chequeDate && chequeDate.toISOString().slice(0, 10) > todayIst ? 'PENDING' : null
 
     const result = await db.$transaction(async (tx) => {
       const t = tx as any
@@ -107,6 +131,12 @@ export async function POST(req: Request) {
       if (amount > outstanding + 0.01) throw new ApiError(`Amount exceeds outstanding (₹${outstanding.toFixed(2)})`)
 
       const number = await nextDocNumber(t, companyId, type === 'RECEIPT' ? 'RCPT' : 'PYMT', date)
+      if (body.accountId) {
+        const acc = await tx.moneyAccount.findFirst({ where: { id: String(body.accountId), companyId } })
+        if (!acc) throw new ApiError('Account not found', 404)
+        if (!acc.active) throw new ApiError(`Account ${acc.name} is inactive`, 400)
+      }
+      const accountId = await accountForMode(tx, companyId, mode, body.accountId ? String(body.accountId) : null)
       const payment = await tx.payment.create({
         data: {
           companyId,
@@ -118,8 +148,12 @@ export async function POST(req: Request) {
           invoiceType,
           invoiceId: body.invoiceId,
           amount,
-          mode: body.mode || 'NEFT',
+          mode,
           date,
+          accountId,
+          chequeNo: mode === 'CHEQUE' && body.chequeNo ? String(body.chequeNo).trim() || null : null,
+          chequeDate,
+          chequeStatus,
           reference: body.reference ?? null,
           notes: body.notes ?? null,
         },
@@ -142,7 +176,7 @@ export async function POST(req: Request) {
 
       await logAudit(t, {
         companyId, userName: body.userName, action: 'CREATE', entity: 'Payment', entityId: payment.id,
-        details: `${type === 'RECEIPT' ? 'Receipt' : 'Payment'} ${number} • ₹${amount.toFixed(2)} ${type === 'RECEIPT' ? 'against' : 'towards'} ${invoice.number} (${invoiceType})`,
+        details: `${type === 'RECEIPT' ? 'Receipt' : 'Payment'} ${number} • ₹${amount.toFixed(2)} ${type === 'RECEIPT' ? 'against' : 'towards'} ${invoice.number} (${invoiceType})${chequeStatus ? ' — post-dated cheque' : ''}`,
       })
 
       return {

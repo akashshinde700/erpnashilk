@@ -1,6 +1,16 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
+import { batchNote, consumeBatches, parseSerials, receiveBatch, receiveSerials, writeOffSerials, type BatchAlloc } from '@/lib/batches'
+
+const REASON_TYPES = ['DAMAGE', 'EXPIRY', 'THEFT', 'SAMPLE', 'CORRECTION', 'OTHER']
+
+function reasonTypeOf(v: unknown, fallback: string): string {
+  if (v === undefined || v === null || v === '') return fallback
+  const t = String(v).trim().toUpperCase()
+  if (!REASON_TYPES.includes(t)) throw new ApiError(`reasonType must be one of ${REASON_TYPES.join(', ')}`, 400)
+  return t
+}
 
 // GET /api/stock-adjustments?companyId= — ADJUST_IN / ADJUST_OUT ledger rows
 export async function GET(req: Request) {
@@ -37,7 +47,12 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/stock-adjustments  { warehouseId, date?, reason?, userName?, lines: [{itemId, qty, reason?}] }
+// POST /api/stock-adjustments  { warehouseId, date?, reason?, reasonType?, userName?, lines: [{itemId, qty, reason?, reasonType?}] }
+// reasonType (DAMAGE|EXPIRY|THEFT|SAMPLE|CORRECTION|OTHER) per line, else the adjustment's, else CORRECTION
+// Tracking (no-op for untracked items), per line:
+//   batch items — IN: batchNo (blank = adjustment number), mfgDate?, expiryDate? · OUT: batchNo? (blank = FEFO)
+//   serial items — serials (newline / comma separated, count = |qty|). IN adds them IN_STOCK; OUT writes them
+//   off: status SOLD with outRefType 'ADJUSTMENT' / outRefId = adjustment number (there is no WRITTEN_OFF status).
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'stock-adjustments')
@@ -54,8 +69,14 @@ export async function POST(req: Request) {
     const adjDate = date ? new Date(date) : new Date()
     if (isNaN(adjDate.getTime())) throw new ApiError('Invalid date', 400)
 
+    const defaultReasonType = reasonTypeOf(body.reasonType, 'CORRECTION')
     const cleanLines = lines
-      .map((l: any) => ({ itemId: String(l.itemId || ''), qty: r2(Number(l.qty) || 0), lineReason: (l.reason || '') as string }))
+      .map((l: any) => ({
+        itemId: String(l.itemId || ''), qty: r2(Number(l.qty) || 0), lineReason: (l.reason || '') as string,
+        reasonType: reasonTypeOf(l?.reasonType, defaultReasonType),
+        batchNo: String(l?.batchNo || '').trim(), mfgDate: l?.mfgDate || null, expiryDate: l?.expiryDate || null,
+        serials: parseSerials(l?.serials),
+      }))
       .filter((l: any) => l.itemId && l.qty !== 0)
     if (cleanLines.length === 0) throw new ApiError('Adjustment qty cannot be zero', 400)
 
@@ -84,10 +105,18 @@ export async function POST(req: Request) {
           notes: lineNotes || undefined,
         }
 
+        let allocs: BatchAlloc[] = []
         if (l.qty > 0) {
           await postStock(tx as any, {
             ...base, type: 'ADJUST_IN', qtyIn: l.qty,
             rate: bal?.avgRate && bal.avgRate > 0 ? bal.avgRate : item.standardCost,
+          })
+          const got = await receiveBatch(tx, {
+            companyId, itemId: l.itemId, warehouseId, batchNo: l.batchNo || number, mfgDate: l.mfgDate, expiryDate: l.expiryDate, qty: l.qty,
+          })
+          if (got) allocs = [got]
+          await receiveSerials(tx, {
+            companyId, itemId: l.itemId, warehouseId, serials: l.serials, qty: l.qty, ref: { type: 'ADJUSTMENT', id: number },
           })
         } else {
           const qtyOut = r2(-l.qty)
@@ -99,7 +128,15 @@ export async function POST(req: Request) {
             ...base, type: 'ADJUST_OUT', qtyOut,
             rate: bal?.avgRate && bal.avgRate > 0 ? bal.avgRate : item.standardCost,
           })
+          allocs = await consumeBatches(tx, { companyId, itemId: l.itemId, warehouseId, qty: qtyOut, batchNo: l.batchNo || null })
+          await writeOffSerials(tx, { companyId, itemId: l.itemId, warehouseId, serials: l.serials, qty: qtyOut, refId: number })
         }
+        // postStock has no reasonType — tag the row it just wrote (the only untagged one for
+        // this item in this adjustment, so repeated lines of one item each keep their own reason)
+        await tx.stockLedger.updateMany({
+          where: { companyId, refType: 'ADJUSTMENT', refNumber: number, itemId: l.itemId, warehouseId, reasonType: null },
+          data: { reasonType: l.reasonType, ...(allocs.length ? { notes: `${lineNotes}${batchNote(allocs)}` } : {}) },
+        })
       }
 
       await logAudit(tx as any, {
