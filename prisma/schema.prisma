@@ -41,6 +41,9 @@ model Company {
   docPrefixes       String?  @db.Text        // JSON { INV: "SI", PINV: "PB", ... } overrides of default prefixes
   lockEnabled       Boolean  @default(false) // PIN needed to edit / cancel / delete saved documents
   lockPinHash       String?
+  // Go-live (cutover) date: the first day the books are kept in ManuFlow. Imported opening figures are
+  // dated just before it (src/lib/go-live.ts). Locked once opening stock has been imported against it.
+  goLiveDate        DateTime?
 
   // ---- Subscription (managed from /platform-admin) ----
   isPlatform    Boolean   @default(false) // the platform operator's own company (not a customer org)

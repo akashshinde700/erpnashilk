@@ -964,10 +964,10 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         companyId={companyId}
         apiPath="/api/items/import"
         entityLabel="items"
-        templateHeaders={['code', 'name', 'type', 'uom', 'standardCost', 'sellPrice', 'reorderLevel', 'openingStock', 'mrp', 'rack', 'altUom', 'altFactor', 'cessRate', 'barcode', 'brand']}
+        templateHeaders={['code', 'name', 'type', 'uom', 'hsn', 'gstRate', 'category', 'purchasePrice', 'standardCost', 'sellPrice', 'reorderLevel', 'openingStock', 'mrp', 'rack', 'altUom', 'altFactor', 'cessRate', 'barcode', 'brand']}
         templateSample={[
-          ['RM-STEEL-1', 'Steel Rod 10mm', 'RAW', 'KG', '120', '185', '50', '100', '', 'A-01', '', '', '0', '', 'Tata'],
-          ['FG-MOTOR-2', 'Motor Assembly 5HP', 'FINISHED', 'NOS', '9500', '12500', '10', '5', '14000', 'B-03', 'BOX', '4', '0', '8901234567890', ''],
+          ['RM-STEEL-1', 'Steel Rod 10mm', 'RAW', 'KG', '7214', '18', 'Steel', '110', '120', '185', '50', '100', '', 'A-01', '', '', '0', '', 'Tata'],
+          ['FG-MOTOR-2', 'Motor Assembly 5HP', 'FINISHED', 'NOS', '8501', '18', 'Motors', '9000', '9500', '12500', '10', '5', '14000', 'B-03', 'BOX', '4', '0', '8901234567890', ''],
         ]}
         onImported={() => void refetch()}
       />

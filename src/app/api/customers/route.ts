@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
-import { nextPartyCode, partyData } from '@/lib/party'
-import { requireWrite, ok, handleError, companyRequired, ApiError, logAudit } from '@/lib/erp-helpers'
+import { createParty } from '@/lib/services/parties'
+import { requireWrite, ok, handleError, companyRequired } from '@/lib/erp-helpers'
 
 
 // ============================== GET /api/customers?q=&status=&page=&pageSize= ==============================
@@ -41,31 +41,8 @@ export async function POST(req: Request) {
     requireWrite(req, 'customers')
     const body = await req.json().catch(() => ({}))
     const companyId = await companyRequired(req, body.companyId)
-    const name = String(body.name || '').trim()
-    if (!name) throw new ApiError('Party name is required', 400)
     // Code is optional: blank → next free C-0001 style code.
-    const code = String(body.code || '').trim() || (await nextPartyCode(companyId, 'customer'))
-
-    const customer = await db.$transaction(async (tx) => {
-      const created = await tx.customer.create({
-        data: {
-          companyId,
-          code,
-          name,
-          ...partyData(body, 'create'),
-          status: body.status || 'ACTIVE',
-        },
-      })
-      await logAudit(tx as any, {
-        companyId,
-        userName: body.userName,
-        action: 'CREATE',
-        entity: 'Customer',
-        entityId: created.id,
-        details: `${code} — ${name}`,
-      })
-      return created
-    })
+    const customer = await db.$transaction((tx) => createParty(tx, companyId, 'customer', body, { userName: body.userName }))
     return ok(customer, 'Customer created')
   } catch (e) {
     return handleError(e)

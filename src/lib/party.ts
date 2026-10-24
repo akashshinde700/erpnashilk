@@ -106,18 +106,52 @@ export function partyData(body: Body, mode: 'create' | 'update') {
   return out
 }
 
+const partyPrefix = (kind: 'customer' | 'supplier') => (kind === 'customer' ? 'C-' : 'S-')
+const partyCode = (prefix: string, n: number) => `${prefix}${String(n).padStart(4, '0')}`
+
+function maxPartyNumber(rows: { code: string }[], prefix: string): number {
+  return rows.reduce((m, r) => {
+    // case-insensitive like the DB's startsWith filter (default MySQL collation)
+    if (!r.code.toUpperCase().startsWith(prefix)) return m
+    const n = Number(r.code.slice(prefix.length))
+    return Number.isInteger(n) && n > m ? n : m
+  }, 0)
+}
+
 /** Next free party code for a company: C-0001… for customers, S-0001… for suppliers. */
 export async function nextPartyCode(companyId: string, kind: 'customer' | 'supplier'): Promise<string> {
-  const prefix = kind === 'customer' ? 'C-' : 'S-'
+  const prefix = partyPrefix(kind)
   const where = { companyId, code: { startsWith: prefix } }
   const rows = kind === 'customer'
     ? await db.customer.findMany({ where, select: { code: true } })
     : await db.supplier.findMany({ where, select: { code: true } })
-  const max = rows.reduce((m, r) => {
-    const n = Number(r.code.slice(prefix.length))
-    return Number.isInteger(n) && n > m ? n : m
-  }, 0)
-  return `${prefix}${String(max + 1).padStart(4, '0')}`
+  return partyCode(prefix, maxPartyNumber(rows, prefix) + 1)
+}
+
+/**
+ * Bulk form of nextPartyCode for imports: reads the company's codes once, then hands out
+ * the same C-0001 / S-0001 series in order, skipping any code already taken (case-insensitive).
+ */
+export async function partyCodeAllocator(companyId: string, kind: 'customer' | 'supplier') {
+  const prefix = partyPrefix(kind)
+  const rows = kind === 'customer'
+    ? await db.customer.findMany({ where: { companyId }, select: { code: true } })
+    : await db.supplier.findMany({ where: { companyId }, select: { code: true } })
+  const inDb = new Set(rows.map((r) => r.code.toUpperCase()))
+  const taken = new Set(inDb)
+  let n = maxPartyNumber(rows, prefix)
+  return {
+    /** Code already used by a saved party. */
+    exists: (code: string) => inDb.has(code.toUpperCase()),
+    /** Mark a code as used (saved, reserved or handed out) so next() never returns it. */
+    take: (code: string) => { taken.add(code.toUpperCase()) },
+    next: () => {
+      let code = partyCode(prefix, ++n)
+      while (taken.has(code.toUpperCase())) code = partyCode(prefix, ++n)
+      taken.add(code.toUpperCase())
+      return code
+    },
+  }
 }
 
 /**

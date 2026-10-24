@@ -103,6 +103,22 @@ async function rawApi<T>(url: string, init?: RequestInit): Promise<T> {
   return json.data as T
 }
 
+/** multipart/form-data POST (file uploads) — same tenant header, 401 handling and error shape as api(). */
+export async function apiUpload<T>(url: string, form: FormData): Promise<T> {
+  const res = await fetch(url, { method: 'POST', body: form, credentials: 'same-origin', headers: tenantHeader() })
+  let json: ApiResponse<T>
+  try {
+    json = (await res.json()) as ApiResponse<T>
+  } catch {
+    throw new Error(`Upload failed (${res.status})`)
+  }
+  if (res.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: json.error?.message }))
+  }
+  if (!json.success) throw new Error(json.error?.message || `Upload failed (${res.status})`)
+  return json.data as T
+}
+
 export const apiGet = <T,>(url: string) => api<T>(url)
 export const apiPost = <T,>(url: string, body: unknown) => api<T>(url, { method: 'POST', body: JSON.stringify(body) })
 export const apiPatch = <T,>(url: string, body: unknown) => api<T>(url, { method: 'PATCH', body: JSON.stringify(body) })

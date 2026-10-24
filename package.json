@@ -7,6 +7,9 @@
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
+    "test": "bun test",
+    "test:types": "tsc --noEmit -p tests/tsconfig.json",
+    "test:db:prepare": "NODE_ENV=test bun tests/setup/prepare-db.ts",
     "db:push": "prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -78,7 +81,7 @@
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^11.1.0",
     "vaul": "^1.1.2",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "z-ai-web-dev-sdk": "^0.0.18",
     "zod": "^4.0.2",
     "zustand": "^5.0.6"

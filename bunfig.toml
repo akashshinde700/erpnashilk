@@ -1,0 +1,4 @@
+[test]
+# Automated tests run only against the guarded test database (tests/setup/test-db-guard.ts).
+root = "./tests"
+preload = ["./tests/setup/preload.ts"]

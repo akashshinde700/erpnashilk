@@ -189,10 +189,10 @@ export default function CustomersModule({ companyId }: { companyId: string }) {
         companyId={companyId}
         apiPath="/api/customers/import"
         entityLabel="customers"
-        templateHeaders={['name', 'gstin', 'city', 'state', 'stateCode', 'phone', 'email', 'addressLine']}
+        templateHeaders={['name', 'code', 'partyType', 'gstin', 'gstType', 'pan', 'contactPerson', 'phone', 'email', 'addressLine', 'city', 'state', 'stateCode', 'pincode']}
         templateSample={[
-          ['Precision Tools Pvt Ltd', '27ABCDE1234F1Z5', 'Pune', 'Maharashtra', '27', '9876543210', 'sales@precisiontools.in', 'Plot 14, MIDC Bhosari'],
-          ['Vadodara Bearings', '', 'Vadodara', 'Gujarat', '24', '', 'orders@vdbearings.com', 'GIDC Makarpura'],
+          ['Precision Tools Pvt Ltd', '', 'CUSTOMER', '27ABCDE1234F1Z5', '', '', 'R. Kulkarni', '9876543210', 'sales@precisiontools.in', 'Plot 14, MIDC Bhosari', 'Pune', 'Maharashtra', '', '411026'],
+          ['Vadodara Bearings', '', 'BOTH', '', 'UNREGISTERED', '', '', '', 'orders@vdbearings.com', 'GIDC Makarpura', 'Vadodara', 'Gujarat', '24', ''],
         ]}
         onImported={() => void refetch()}
       />
