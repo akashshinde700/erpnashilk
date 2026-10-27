@@ -1,10 +1,11 @@
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, r2, requireFinancialReports } from '@/lib/erp-helpers'
 import { listTransactions, parsePeriod } from '@/lib/accounting'
 
 // GET /api/reports/daybook?companyId=&date=YYYY-MM-DD  (or from=&to=; default current FY → today)
 // Every document of the period in time order with money in / out (see listTransactions in src/lib/accounting.ts).
 export async function GET(req: Request) {
   try {
+    requireFinancialReports(req) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { fromStr, toStr, from, to } = parsePeriod(searchParams)

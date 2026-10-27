@@ -14,12 +14,13 @@ import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Field, SelectInput } from '@/components/erp/kit'
 import GoLivePanel, { type GoLive } from '@/components/erp/import-center/go-live-panel'
+import TallyConnectorPanel from '@/components/erp/import-center/tally-connector-panel'
 import { ITEM_TYPES, ITEM_TYPE_LABEL, fmtDate, fmtDateTime } from '@/lib/erp-constants'
 import { IMPORT_DATA_TYPES, IMPORT_LIMITS, findDataType, suggestMapping, type ColumnMapping, type MappingSuggestion } from '@/lib/import/fields'
 import type { TableRow as FileRow } from '@/lib/import/parse-file'
 import type { RunResult, RunRow, RunRowStatus } from '@/lib/import/run'
 import type { TallyCheck } from '@/lib/tally/client'
-import { DATA_TYPE_MR, STATUS_MR, downloadText, friendlyError, problemRowsCsv, templateCsv } from '@/lib/import/wizard-helpers'
+import { DATA_TYPE_UI, STATUS_LABEL, downloadText, friendlyError, problemRowsCsv, templateCsv } from '@/lib/import/wizard-helpers'
 import { apiGet, apiPost, apiUpload, useList } from '@/lib/use-api'
 import { cn } from '@/lib/utils'
 
@@ -27,7 +28,7 @@ import { cn } from '@/lib/utils'
  * Import Center wizard (popup). One flow for the three entry cards:
  *   1 Source → 2 Connection / file → 3 Company + data type → 4 Preview + checks → 5 Confirm → 6 Result.
  * It only uses the existing Import Center API: parse (upload, nothing stored), preview (read-only),
- * commit (writes only after "होय, Import करा", re-validated on the server). Closing the popup before
+ * commit (writes only after "Yes, import", re-validated on the server). Closing the popup before
  * step 5 saves nothing. Direct Tally / Vyapar data transfer is not available yet and is shown as such.
  */
 
@@ -35,12 +36,12 @@ export type ImportEntry = 'tally' | 'vyapar' | 'excel'
 type Route = 'direct' | 'file'
 
 const ENTRY: Record<ImportEntry, { title: string; source: string; emoji: string }> = {
-  tally: { title: 'Tally मधून डेटा आणा', source: 'TALLY', emoji: '📘' },
-  vyapar: { title: 'Vyapar मधून डेटा आणा', source: 'VYAPAR', emoji: '🟢' },
-  excel: { title: 'Excel / CSV मधून डेटा आणा', source: 'EXCEL', emoji: '📊' },
+  tally: { title: 'Import from Tally', source: 'TALLY', emoji: '📘' },
+  vyapar: { title: 'Import from Vyapar', source: 'VYAPAR', emoji: '🟢' },
+  excel: { title: 'Import from Excel / CSV', source: 'EXCEL', emoji: '📊' },
 }
 
-const STEPS = ['Source', 'Connection / फाइल', 'Data प्रकार', 'Preview', 'Confirm', 'Result']
+const STEPS = ['Source', 'Connection / File', 'Data Type', 'Preview', 'Confirm', 'Result']
 
 const STATUS_STYLE: Record<RunRowStatus, { cls: string; icon: typeof CheckCircle2 }> = {
   ready: { cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300', icon: CheckCircle2 },
@@ -104,7 +105,7 @@ function Choice({ selected, disabled, onSelect, icon: Icon, title, text, badge, 
         <span className="flex flex-wrap items-center gap-2 font-medium">{title}{badge && <Badge variant="outline" className="font-normal">{badge}</Badge>}</span>
         <span className="mt-0.5 block text-sm text-muted-foreground">{text}</span>
       </span>
-      {selected && <CheckCircle2 className="ml-auto h-5 w-5 shrink-0 text-emerald-600" aria-label="निवडले" />}
+      {selected && <CheckCircle2 className="ml-auto h-5 w-5 shrink-0 text-emerald-600" aria-label="Selected" />}
     </button>
   )
 }
@@ -118,8 +119,10 @@ function SummaryCard({ label, value, tone, icon: Icon }: { label: string; value:
   )
 }
 
-export default function ImportWizard({ entry, open, onOpenChange, companyId, companyName }: {
+export default function ImportWizard({ entry, open, onOpenChange, companyId, companyName, onConnectDirect }: {
   entry: ImportEntry; open: boolean; onOpenChange: (o: boolean) => void; companyId: string; companyName: string
+  /** Tally: "Connect to Tally directly" opens the connector flow (tally-import.tsx) instead of this wizard's step. */
+  onConnectDirect?: () => void
 }) {
   const meta = ENTRY[entry]
   const [step, setStep] = React.useState(1)
@@ -246,13 +249,13 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   const missingRequired = dataType ? dataType.fields.filter((f) => f.required && mapping[f.key] === undefined) : []
   const missingOneOf = dataType ? (dataType.requireOneOf ?? []).filter((g) => !g.fields.some((f) => mapping[f] !== undefined)) : []
   const needsItemType = isItems && mapping.type === undefined && !itemType
-  const optionProblem = !parsed ? '' : missingRequired.length ? `या माहितीचा column फाइलमध्ये सापडला नाही: ${missingRequired.map((f) => f.label).join(', ')} — Step 4 मध्ये "Columns बदला" वापरा`
-    : missingOneOf.length ? `यापैकी किमान एक column हवा: ${missingOneOf.map((g) => g.label).join('; ')}`
-      : dataType?.needsGoLive && !goLive?.goLiveDate ? 'आधी Go-live date ठरवा'
-        : needsItemType ? 'सर्व items चा प्रकार निवडा'
-          : kind === 'opening-stock' && mapping.warehouse === undefined && !defaultWarehouseId ? 'Warehouse निवडा'
-            : kind === 'opening-balances' && !partyKind ? 'हे कोणाचे balances आहेत ते निवडा'
-              : dataRowCount === 0 ? 'Header खाली डेटा नाही' : ''
+  const optionProblem = !parsed ? '' : missingRequired.length ? `No column was found for: ${missingRequired.map((f) => f.label).join(', ')} — use "Change columns" in step 4`
+    : missingOneOf.length ? `At least one of these columns is needed: ${missingOneOf.map((g) => g.label).join('; ')}`
+      : dataType?.needsGoLive && !goLive?.goLiveDate ? 'Set the go-live date first'
+        : needsItemType ? 'Choose the item type'
+          : kind === 'opening-stock' && mapping.warehouse === undefined && !defaultWarehouseId ? 'Choose a warehouse'
+            : kind === 'opening-balances' && !partyKind ? 'Choose whose balances these are'
+              : dataRowCount === 0 ? 'There is no data below the header row' : ''
   const fileOk = !!file && !fileProblem
 
   const canNext = step === 1 ? !!route
@@ -284,10 +287,10 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
     setDataTypeKey('')
     if (!f) { setFileProblem(''); return }
     const ext = f.name.toLowerCase().split('.').pop() ?? ''
-    if (ext === 'vyb') setFileProblem('Vyapar backup (.vyb) फाइल वाचता येत नाही. Vyapar मधून Report Excel मध्ये Export करा आणि ती फाइल निवडा.')
-    else if (ext === 'xls') setFileProblem('जुनी Excel (.xls) फाइल चालत नाही. Excel मध्ये उघडून "Save As → .xlsx" करा.')
-    else if (!['csv', 'tsv', 'txt', 'xlsx'].includes(ext)) setFileProblem('फक्त .xlsx किंवा .csv फाइल चालते.')
-    else if (f.size > IMPORT_LIMITS.maxFileBytes) setFileProblem(`फाइल खूप मोठी आहे (${(f.size / 1024 / 1024).toFixed(1)} MB). मर्यादा ${IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB.`)
+    if (ext === 'vyb') setFileProblem('Vyapar backup files (.vyb) cannot be read. Export the report from Vyapar to Excel and choose that file.')
+    else if (ext === 'xls') setFileProblem('Old Excel files (.xls) are not supported. Open the file in Excel and use "Save As → .xlsx".')
+    else if (!['csv', 'tsv', 'txt', 'xlsx'].includes(ext)) setFileProblem('Only .xlsx or .csv files are supported.')
+    else if (f.size > IMPORT_LIMITS.maxFileBytes) setFileProblem(`The file is too large (${(f.size / 1024 / 1024).toFixed(1)} MB). The limit is ${IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB.`)
     else setFileProblem('')
   }
 
@@ -314,12 +317,12 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   const shown = (result ?? preview)?.rows.filter((r) => filter === 'all'
     || (filter === 'problems' ? ['error', 'failed', 'duplicate'].includes(r.status) : r.warnings.length > 0)) ?? []
   const keyCols: [string, string][] = isItems
-    ? [['code', 'Code'], ['hsn', 'HSN'], ['gstRate', 'GST %'], ['uom', 'Unit'], ['purchasePrice', 'खरेदी किंमत']]
+    ? [['code', 'Code'], ['hsn', 'HSN'], ['gstRate', 'GST %'], ['uom', 'Unit'], ['purchasePrice', 'Purchase price']]
     : kind === 'opening-stock'
       ? [['x.item', 'Item'], ['x.warehouse', 'Warehouse'], ['x.qty', 'Qty'], ['x.rate', 'Rate'], ['x.value', 'Value']]
       : kind === 'opening-balances'
-        ? [['x.party', 'Party'], ['x.side', 'Dr/Cr'], ['x.amount', 'रक्कम'], ['x.existing', 'आधीची नोंद']]
-        : [['code', 'Code'], ['gstin', 'GSTIN'], ['phone', 'फोन'], ['city', 'शहर']]
+        ? [['x.party', 'Party'], ['x.side', 'Dr/Cr'], ['x.amount', 'Amount'], ['x.existing', 'Already recorded']]
+        : [['code', 'Code'], ['gstin', 'GSTIN'], ['phone', 'Phone'], ['city', 'City']]
   const cellOf = (r: RunRow, k: string) => {
     if (k.startsWith('x.')) { const v = r.extra?.[k.slice(2)]; return typeof v === 'number' ? num(v) : v ?? '' }
     return (k === 'code' ? r.code || r.values.code : r.values[k]) ?? ''
@@ -357,7 +360,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
         {error && (
           <Alert variant="destructive" role="alert">
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>अडचण आली</AlertTitle>
+            <AlertTitle>Something went wrong</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
@@ -366,27 +369,27 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 1: source ---------------- */}
           {step === 1 && (
             <section className="space-y-3">
-              <h3 className="text-base font-semibold">Step 1 · डेटा कुठून आणायचा?</h3>
+              <h3 className="text-base font-semibold">Step 1 · Where is the data coming from?</h3>
               <div className="grid gap-3" role="radiogroup" aria-label="Source">
                 {entry === 'tally' && (
                   <>
-                    <Choice selected={route === 'direct'} onSelect={() => setRoute('direct')} icon={PlugZap} title="Tally शी थेट जोडा"
-                      text="तुमच्या कॉम्प्युटरवरील TallyPrime शी connection तपासा. (थेट डेटा आणणे अजून विकसित होत आहे)" />
-                    <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Tally मधून Export केलेली फाइल वापरा"
-                      text="Tally मधील List of Ledgers / Stock Summary वगैरे Excel किंवा CSV मध्ये Export करून ती फाइल निवडा." badge="शिफारस" />
+                    <Choice selected={route === 'direct'} onSelect={() => (onConnectDirect ? onConnectDirect() : setRoute('direct'))} icon={PlugZap} title="Connect to Tally directly"
+                      text="Read customers, suppliers and stock items from TallyPrime through the ManuFlow Tally Connector." />
+                    <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Use a file exported from Tally"
+                      text="Export a report such as List of Ledgers or Stock Summary from Tally to Excel or CSV and choose that file." badge="Recommended" />
                   </>
                 )}
                 {entry === 'vyapar' && (
                   <>
-                    <Choice selected={false} disabled onSelect={() => {}} icon={Unplug} title="Vyapar कनेक्ट करा" badge="उपलब्ध नाही"
-                      text="Vyapar साठी अधिकृत API किंवा connector उपलब्ध नाही, त्यामुळे थेट connection शक्य नाही." />
-                    <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Vyapar मधून Export केलेली फाइल निवडा"
-                      text="Vyapar मधील Party / Item report Excel मध्ये Export करा आणि ती फाइल निवडा." badge="शिफारस" />
+                    <Choice selected={false} disabled onSelect={() => {}} icon={Unplug} title="Connect to Vyapar" badge="Not available"
+                      text="Vyapar has no official API or connector, so a direct connection is not possible." />
+                    <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Choose a file exported from Vyapar"
+                      text="Export the party or item report from Vyapar to Excel and choose that file." badge="Recommended" />
                   </>
                 )}
                 {entry === 'excel' && (
-                  <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Excel / CSV फाइल"
-                    text="तुमची स्वतःची Excel (.xlsx) किंवा CSV फाइल. नमुना template पुढील Steps मध्ये download करता येईल." />
+                  <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Excel / CSV file"
+                    text="Your own Excel (.xlsx) or CSV file. A sample template is available in step 3." />
                 )}
               </div>
             </section>
@@ -395,48 +398,50 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 2: connection ---------------- */}
           {step === 2 && route === 'direct' && (
             <section className="space-y-4">
-              <h3 className="text-base font-semibold">Step 2 · Tally शी कनेक्ट करा</h3>
+              <h3 className="text-base font-semibold">Step 2 · Connect to Tally</h3>
+              <TallyConnectorPanel companyId={companyId} />
+              <p className="text-xs text-muted-foreground">Only for ManuFlow installed on a computer in your own office (not the online service):</p>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className={cn('gap-1.5 py-1 text-sm', tally?.status === 'connected' ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground')}>
                   {tally?.status === 'connected' ? <PlugZap className="h-4 w-4" aria-hidden /> : <Unplug className="h-4 w-4" aria-hidden />}
-                  {tally?.status === 'connected' ? 'Tally server सापडला' : 'कनेक्ट झालेले नाही'}
+                  {tally?.status === 'connected' ? 'Tally server found' : 'Not connected'}
                 </Badge>
                 <Button size="lg" onClick={() => void checkTally()} disabled={tallyBusy}>
-                  {tallyBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Tally Connection तपासा
+                  {tallyBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Check Tally connection
                 </Button>
                 <Button size="lg" variant="outline" onClick={() => setTallyHelp((v) => !v)} aria-expanded={tallyHelp}>
-                  <HelpCircle className="h-4 w-4 mr-2" /> मला मदत हवी आहे
+                  <HelpCircle className="h-4 w-4 mr-2" /> I need help
                 </Button>
               </div>
               {tally && (
                 <p className="text-sm">
                   {tally.status === 'not_configured'
-                    ? 'या ManuFlow server साठी Tally connection setup केलेले नाही. ManuFlow online (cloud) वर चालतो, त्यामुळे तुमच्या कॉम्प्युटरवरील Tally पर्यंत पोहोचण्यासाठी एक छोटा ManuFlow Connector लागेल — तो अजून उपलब्ध नाही.'
-                    : tally.status === 'connected' ? 'Tally चा XML server प्रतिसाद देतो.' : 'Tally पर्यंत पोहोचता आले नाही.'}
-                  <span className="block text-xs text-muted-foreground">तपासले: {fmtDateTime(tally.checkedAt)}</span>
+                    ? 'No Tally connection is set up for this ManuFlow server. ManuFlow runs online (in the cloud), so reaching Tally on your computer needs a small ManuFlow Connector, which is not available yet.'
+                    : tally.status === 'connected' ? 'Tally’s XML server is responding.' : 'Tally could not be reached.'}
+                  <span className="block text-xs text-muted-foreground">Checked: {fmtDateTime(tally.checkedAt)}</span>
                 </p>
               )}
               {tallyHelp && (
                 <Alert>
                   <HelpCircle className="h-4 w-4" />
-                  <AlertTitle>Tally तयार कसे करावे</AlertTitle>
+                  <AlertTitle>How to prepare Tally</AlertTitle>
                   <AlertDescription>
                     <ol className="list-decimal space-y-1 pl-5">
-                      <li>TallyPrime उघडा आणि हवी ती Company load करा.</li>
-                      <li>Exchange → Data Synchronization मध्ये “TallyPrime act as” = Server (किंवा Both) निवडा. Port (साधारण 9000) लक्षात ठेवा.</li>
-                      <li>Windows firewall मध्ये तो port फक्त ManuFlow Connector साठी उघडा.</li>
+                      <li>Open TallyPrime and load the company you want to import.</li>
+                      <li>In Exchange → Data Synchronization, set “TallyPrime act as” to Server (or Both). Note the port (usually 9000).</li>
+                      <li>In Windows Firewall, open that port for the ManuFlow Connector only.</li>
                     </ol>
                   </AlertDescription>
                 </Alert>
               )}
               <Alert>
                 <Info className="h-4 w-4" />
-                <AlertTitle>Tally मधून थेट डेटा आणणे अजून उपलब्ध नाही</AlertTitle>
+                <AlertTitle>Importing directly from Tally is not available yet</AlertTitle>
                 <AlertDescription>
-                  <p>Company list, Customers, Suppliers, Stock Items, Opening Stock, Balances आणि Vouchers — हे सर्व “लवकरच”. Connection यशस्वी झाले तरी अजून डेटा आणता येत नाही.</p>
-                  <p className="mt-1">आत्ता Tally मधील report Excel/CSV मध्ये Export करा आणि ती फाइल वापरा:</p>
+                  <p>Company list, customers, suppliers, stock items, opening stock, balances and vouchers are all coming soon. Even with a working connection, data cannot be imported directly yet.</p>
+                  <p className="mt-1">For now, export the report from Tally to Excel or CSV and use that file:</p>
                   <Button className="mt-2" variant="secondary" onClick={() => { setRoute('file'); setTally(null) }}>
-                    <FileSpreadsheet className="h-4 w-4 mr-2" /> त्याऐवजी Export फाइल वापरा
+                    <FileSpreadsheet className="h-4 w-4 mr-2" /> Use an exported file instead
                   </Button>
                 </AlertDescription>
               </Alert>
@@ -446,22 +451,22 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 2: file ---------------- */}
           {step === 2 && route === 'file' && (
             <section className="space-y-4">
-              <h3 className="text-base font-semibold">Step 2 · फाइल निवडा</h3>
+              <h3 className="text-base font-semibold">Step 2 · Choose a file</h3>
               <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center hover:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-600">
                 <Upload className="h-8 w-8 text-emerald-600" aria-hidden />
-                <span className="font-medium">{file ? file.name : 'फाइल निवडण्यासाठी येथे क्लिक करा'}</span>
-                <span className="text-xs text-muted-foreground">.xlsx किंवा .csv · कमाल {IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB · कमाल {IMPORT_LIMITS.maxDataRows} ओळी</span>
-                <Input type="file" accept={ACCEPT} className="sr-only" aria-label="Import फाइल निवडा" onChange={(e) => chooseFile(e.target.files?.[0] ?? null)} />
+                <span className="font-medium">{file ? file.name : 'Click here to choose a file'}</span>
+                <span className="text-xs text-muted-foreground">.xlsx or .csv · up to {IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB · up to {IMPORT_LIMITS.maxDataRows} rows</span>
+                <Input type="file" accept={ACCEPT} className="sr-only" aria-label="Choose the file to import" onChange={(e) => chooseFile(e.target.files?.[0] ?? null)} />
               </label>
-              {file && !fileProblem && <p className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4" /> {file.name} · {(file.size / 1024).toFixed(0)} KB — फाइल फक्त तपासणीसाठी वाचली जाईल, साठवली जाणार नाही.</p>}
+              {file && !fileProblem && <p className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4" /> {file.name} · {(file.size / 1024).toFixed(0)} KB — the file is only read to check it; it is not stored.</p>}
               {fileProblem && <p className="flex items-center gap-1.5 text-sm text-red-700 dark:text-red-400" role="alert"><XCircle className="h-4 w-4" /> {fileProblem}</p>}
               <Alert>
                 <Info className="h-4 w-4" />
-                <AlertTitle>{entry === 'tally' ? 'Tally मधून फाइल कशी काढावी' : entry === 'vyapar' ? 'Vyapar मधून फाइल कशी काढावी' : 'कोणती फाइल चालते'}</AlertTitle>
+                <AlertTitle>{entry === 'tally' ? 'How to export a file from Tally' : entry === 'vyapar' ? 'How to export a file from Vyapar' : 'Supported files'}</AlertTitle>
                 <AlertDescription>
-                  {entry === 'tally' && <p>TallyPrime मध्ये हवा तो report उघडा (उदा. List of Ledgers, Stock Summary) → Export → Excel (.xlsx) किंवा CSV. वरच्या title ओळी आपोआप ओळखल्या जातात.</p>}
-                  {entry === 'vyapar' && <p>Vyapar मध्ये Party किंवा Item report उघडा → Excel मध्ये Export करा. Vyapar backup (.vyb) फाइल चालत नाही.</p>}
-                  {entry === 'excel' && <p>पहिल्या ओळीत column ची नावे असावीत (उदा. Customer Name, GSTIN, Mobile). नमुना template Step 3 मध्ये मिळेल.</p>}
+                  {entry === 'tally' && <p>In TallyPrime, open the report you need (for example List of Ledgers or Stock Summary) → Export → Excel (.xlsx) or CSV. Title rows at the top are detected automatically.</p>}
+                  {entry === 'vyapar' && <p>In Vyapar, open the party or item report → export it to Excel. Vyapar backup files (.vyb) are not supported.</p>}
+                  {entry === 'excel' && <p>The first row should contain the column names (for example Customer Name, GSTIN, Mobile). A sample template is available in step 3.</p>}
                 </AlertDescription>
               </Alert>
             </section>
@@ -470,13 +475,13 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 3: company + data type ---------------- */}
           {step === 3 && (
             <section className="space-y-4">
-              <h3 className="text-base font-semibold">Step 3 · Company आणि डेटा प्रकार निवडा</h3>
+              <h3 className="text-base font-semibold">Step 3 · Choose the company and data type</h3>
               <div className="flex items-center gap-2 rounded-lg border p-3 text-sm">
                 <Building2 className="h-5 w-5 text-emerald-600" aria-hidden />
-                <span>डेटा या Company मध्ये येईल: <span className="font-semibold">{companyName || '—'}</span></span>
-                <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">दुसरी company हवी असल्यास वरच्या Tenant मधून बदला</span>
+                <span>Data will be imported into: <span className="font-semibold">{companyName || '—'}</span></span>
+                <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">To use another company, switch it in the tenant selector at the top</span>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Data प्रकार">
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Data type">
                 {IMPORT_DATA_TYPES.map((d) => (
                   <Choice
                     key={d.key}
@@ -484,22 +489,22 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                     disabled={!d.available || parsing}
                     onSelect={() => chooseDataType(d.key)}
                     icon={d.available ? FileSpreadsheet : Ban}
-                    title={DATA_TYPE_MR[d.key]?.name ?? d.label}
-                    text={d.available ? (DATA_TYPE_MR[d.key]?.hint ?? '') : 'लवकरच उपलब्ध होईल'}
+                    title={DATA_TYPE_UI[d.key]?.name ?? d.label}
+                    text={d.available ? (DATA_TYPE_UI[d.key]?.hint ?? '') : 'Coming soon'}
                     tooltip={d.available ? undefined : d.plannedNote}
-                    badge={!d.available ? 'लवकरच' : d.commit === false ? 'फक्त तपासणी' : undefined}
+                    badge={!d.available ? 'Coming soon' : d.commit === false ? 'Check only' : undefined}
                   />
                 ))}
               </div>
               {dataType && templateCsv(dataType.key) && (
                 <Button variant="link" className="h-auto p-0" onClick={() => downloadText(`${dataType.key}-template.csv`, templateCsv(dataType.key) as string)}>
-                  <Download className="h-4 w-4 mr-1.5" /> {DATA_TYPE_MR[dataType.key]?.name} चा नमुना template download करा
+                  <Download className="h-4 w-4 mr-1.5" /> Download the {DATA_TYPE_UI[dataType.key]?.name} sample template
                 </Button>
               )}
-              {parsing && <Working label="फाइल वाचत आहे…" />}
+              {parsing && <Working label="Reading the file…" />}
               {parsed && dataType && (
                 <div className="space-y-3 rounded-lg border p-3">
-                  <p className="flex items-center gap-1.5 text-sm"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> {parsed.fileName} · {dataRowCount} ओळी सापडल्या</p>
+                  <p className="flex items-center gap-1.5 text-sm"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> {parsed.fileName} · {dataRowCount} rows found</p>
                   {parsed.sheetNames.length > 1 && (
                     <div className="max-w-xs">
                       <Field label="Excel sheet">
@@ -510,25 +515,25 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                   {dataType.needsGoLive && <GoLivePanel companyId={companyId} onChange={setGoLive} />}
                   {isItems && mapping.type === undefined && (
                     <div className="max-w-xs">
-                      <Field label="सर्व items चा प्रकार" required>
-                        <SelectInput value={itemType} onChange={setItemType} options={ITEM_TYPES.map((t) => ({ value: t, label: ITEM_TYPE_LABEL[t] ?? t }))} placeholder="प्रकार निवडा" />
+                      <Field label="Item type for all rows" required>
+                        <SelectInput value={itemType} onChange={setItemType} options={ITEM_TYPES.map((t) => ({ value: t, label: ITEM_TYPE_LABEL[t] ?? t }))} placeholder="Choose the item type" />
                       </Field>
                     </div>
                   )}
                   {kind === 'opening-stock' && mapping.warehouse === undefined && (
                     <div className="max-w-xs">
-                      <Field label="सर्व ओळींसाठी Warehouse" required>
-                        <SelectInput value={defaultWarehouseId} onChange={setDefaultWarehouseId} options={(warehouses.data?.items ?? []).map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` }))} placeholder="Warehouse निवडा" />
+                      <Field label="Warehouse for all rows" required>
+                        <SelectInput value={defaultWarehouseId} onChange={setDefaultWarehouseId} options={(warehouses.data?.items ?? []).map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` }))} placeholder="Choose a warehouse" />
                       </Field>
                     </div>
                   )}
                   {kind === 'opening-balances' && (
                     <div className="grid max-w-xl gap-3 sm:grid-cols-2">
-                      <Field label="हे balances कोणाचे आहेत?" required>
-                        <SelectInput value={partyKind} onChange={setPartyKind} options={[{ value: 'customer', label: 'ग्राहक (Debtors)' }, { value: 'supplier', label: 'पुरवठादार (Creditors)' }]} placeholder="निवडा" />
+                      <Field label="These balances belong to" required>
+                        <SelectInput value={partyKind} onChange={setPartyKind} options={[{ value: 'customer', label: 'Customers (debtors)' }, { value: 'supplier', label: 'Suppliers (creditors)' }]} placeholder="Choose" />
                       </Field>
-                      <Field label="Dr / Cr नसलेल्या रकमा">
-                        <SelectInput value={unsignedMeans} onChange={setUnsignedMeans} options={[{ value: '', label: 'चूक म्हणून दाखवा' }, { value: 'DR', label: 'Debit (Dr) समजा' }, { value: 'CR', label: 'Credit (Cr) समजा' }]} />
+                      <Field label="Amounts without Dr / Cr">
+                        <SelectInput value={unsignedMeans} onChange={setUnsignedMeans} options={[{ value: '', label: 'Show as an error' }, { value: 'DR', label: 'Treat as debit (Dr)' }, { value: 'CR', label: 'Treat as credit (Cr)' }]} />
                       </Field>
                     </div>
                   )}
@@ -541,27 +546,27 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 4: preview ---------------- */}
           {step === 4 && dataType && (
             <section className="space-y-4">
-              <h3 className="text-base font-semibold">Step 4 · Preview आणि तपासणी <span className="text-sm font-normal text-muted-foreground">— अजून काहीही save झालेले नाही</span></h3>
-              {previewing && <Working label="सर्व ओळी तपासत आहे…" />}
+              <h3 className="text-base font-semibold">Step 4 · Preview and checks <span className="text-sm font-normal text-muted-foreground">— nothing has been saved yet</span></h3>
+              {previewing && <Working label="Checking all rows…" />}
               {preview && (
                 <>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                    <SummaryCard label="एकूण Records" value={preview.counts.total} tone="" icon={FileSpreadsheet} />
-                    <SummaryCard label="Import साठी तयार" value={preview.counts.ready} tone="border-emerald-300 text-emerald-800 dark:text-emerald-300" icon={CheckCircle2} />
+                    <SummaryCard label="Total records" value={preview.counts.total} tone="" icon={FileSpreadsheet} />
+                    <SummaryCard label="Ready to import" value={preview.counts.ready} tone="border-emerald-300 text-emerald-800 dark:text-emerald-300" icon={CheckCircle2} />
                     <SummaryCard label="Warnings" value={preview.counts.withWarnings} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={AlertTriangle} />
                     <SummaryCard label="Errors" value={preview.counts.errors} tone="border-red-300 text-red-800 dark:text-red-300" icon={XCircle} />
-                    <SummaryCard label="Duplicate Records" value={preview.counts.duplicates} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={Ban} />
+                    <SummaryCard label="Duplicates" value={preview.counts.duplicates} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={Ban} />
                   </div>
                   {!!preview.notes.length && (
-                    <Alert><Info className="h-4 w-4" /><AlertTitle>लक्षात घ्या</AlertTitle><AlertDescription><ul className="list-disc pl-4">{preview.notes.map((n) => <li key={n}>{n}</li>)}</ul></AlertDescription></Alert>
+                    <Alert><Info className="h-4 w-4" /><AlertTitle>Please note</AlertTitle><AlertDescription><ul className="list-disc pl-4">{preview.notes.map((n) => <li key={n}>{n}</li>)}</ul></AlertDescription></Alert>
                   )}
                   {preview.balanceTotals && (
                     <div className="rounded-lg border p-3 text-sm">
-                      <p className="font-medium">Source report शी जुळवून पाहा</p>
+                      <p className="font-medium">Compare with the source report</p>
                       <div className="mt-1 grid gap-x-6 gap-y-1 sm:grid-cols-3">
-                        <span>जुळलेल्या parties: {preview.balanceTotals.matched} / {preview.balanceTotals.rows}</span>
-                        <span>एकूण Debit: ₹{num(preview.balanceTotals.debit)}</span>
-                        <span>एकूण Credit: ₹{num(preview.balanceTotals.credit)}</span>
+                        <span>Matched parties: {preview.balanceTotals.matched} / {preview.balanceTotals.rows}</span>
+                        <span>Total debit: ₹{num(preview.balanceTotals.debit)}</span>
+                        <span>Total credit: ₹{num(preview.balanceTotals.credit)}</span>
                         <span>Net: ₹{num(preview.balanceTotals.net)}</span>
                       </div>
                     </div>
@@ -572,22 +577,22 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
               {/* Mapping (advanced) */}
               <div className="rounded-lg border">
                 <button type="button" className="flex w-full items-center justify-between p-3 text-left text-sm font-medium" onClick={() => setShowMapping((v) => !v)} aria-expanded={showMapping}>
-                  <span>Columns अशा जुळवल्या आहेत ({Object.keys(mapping).length} / {dataType.fields.length}) — {showMapping ? 'लपवा' : 'पाहा / बदला'}</span>
+                  <span>Column mapping ({Object.keys(mapping).length} / {dataType.fields.length}) — {showMapping ? 'Hide' : 'View / change'}</span>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', showMapping && 'rotate-180')} aria-hidden />
                 </button>
                 {!showMapping && (
                   <p className="px-3 pb-3 text-xs text-muted-foreground">
-                    {dataType.fields.filter((f) => mapping[f.key] !== undefined).map((f) => `${f.label} ← “${headers[mapping[f.key]] || columnLetter(mapping[f.key])}”`).join(' · ') || 'एकही column जुळला नाही'}
+                    {dataType.fields.filter((f) => mapping[f.key] !== undefined).map((f) => `${f.label} ← “${headers[mapping[f.key]] || columnLetter(mapping[f.key])}”`).join(' · ') || 'No columns matched'}
                   </p>
                 )}
                 {showMapping && parsed && (
                   <div className="space-y-3 border-t p-3">
                     <div className="max-w-sm">
-                      <Field label="Column नावांची ओळ (header row)">
+                      <Field label="Header row (column names)">
                         <SelectInput
                           value={String(headerRow)}
                           onChange={(v) => { const r = Number(v); setHeaderRow(r); const s = suggestMapping(dataType, parsed.table[r]?.cells ?? []); setSuggestion(s); setMapping(s.mapping); setPreview(null); setMappingOk(false) }}
-                          options={parsed.table.slice(0, IMPORT_LIMITS.headerScanRows).map((r, i) => ({ value: String(i), label: `ओळ ${r.line}: ${r.cells.filter(Boolean).slice(0, 4).join(' · ').slice(0, 50) || '(रिकामी)'}` }))}
+                          options={parsed.table.slice(0, IMPORT_LIMITS.headerScanRows).map((r, i) => ({ value: String(i), label: `Row ${r.line}: ${r.cells.filter(Boolean).slice(0, 4).join(' · ').slice(0, 50) || '(empty)'}` }))}
                         />
                       </Field>
                     </div>
@@ -597,16 +602,16 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                           <SelectInput
                             value={mapping[f.key] === undefined ? '' : String(mapping[f.key])}
                             onChange={(v) => changeMapping(f.key, v)}
-                            options={[{ value: '', label: '— घेऊ नका —' }, ...headers.map((h, i) => ({ value: String(i), label: `${columnLetter(i)}: ${h || '(नाव नाही)'}` }))]}
+                            options={[{ value: '', label: '— Do not import —' }, ...headers.map((h, i) => ({ value: String(i), label: `${columnLetter(i)}: ${h || '(no heading)'}` }))]}
                           />
                         </Field>
                       ))}
                     </div>
                     {!!suggestion?.notImported.length && (
-                      <p className="text-xs text-muted-foreground">हे columns ओळखले पण Import होत नाहीत: {suggestion.notImported.map((n) => n.header).join(', ')}</p>
+                      <p className="text-xs text-muted-foreground">Recognised but not imported: {suggestion.notImported.map((n) => n.header).join(', ')}</p>
                     )}
                     <Button variant="outline" onClick={() => void runPreview()} disabled={previewing || !!optionProblem}>
-                      <RefreshCw className="h-4 w-4 mr-2" /> पुन्हा Preview करा
+                      <RefreshCw className="h-4 w-4 mr-2" /> Preview again
                     </Button>
                     {optionProblem && <p className="text-xs text-amber-700 dark:text-amber-400">{optionProblem}</p>}
                   </div>
@@ -618,21 +623,21 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                   <div className="flex flex-wrap items-center gap-1.5">
                     {(['all', 'problems', 'warnings'] as const).map((f) => (
                       <Button key={f} size="sm" variant={filter === f ? 'default' : 'outline'} onClick={() => setFilter(f)} aria-pressed={filter === f}>
-                        {f === 'all' ? 'सर्व ओळी' : f === 'problems' ? 'चुका व Duplicate' : 'Warnings'}
+                        {f === 'all' ? 'All rows' : f === 'problems' ? 'Errors and duplicates' : 'Warnings'}
                       </Button>
                     ))}
-                    <Button size="sm" variant="ghost" onClick={() => setShowDetails((v) => !v)} aria-pressed={showDetails}>{showDetails ? 'कमी तपशील' : 'अधिक तपशील'}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setShowDetails((v) => !v)} aria-pressed={showDetails}>{showDetails ? 'Fewer details' : 'More details'}</Button>
                     <Button size="sm" variant="ghost" className="ml-auto" onClick={() => downloadText(`${dataType.key}-problems.csv`, problemRowsCsv(preview.rows))}>
-                      <Download className="h-4 w-4 mr-1.5" /> चुकीच्या ओळींची CSV
+                      <Download className="h-4 w-4 mr-1.5" /> Problem rows (CSV)
                     </Button>
                   </div>
                   <RowsTable rows={shown} keyCols={showDetails ? keyCols : []} nameOf={nameOf} cellOf={cellOf} />
                   {dataType.commit === false ? (
-                    <Alert><Info className="h-4 w-4" /><AlertTitle>फक्त तपासणी — या फाइलमधून अजून Import होत नाही</AlertTitle><AlertDescription>{dataType.commitBlocked}</AlertDescription></Alert>
+                    <Alert><Info className="h-4 w-4" /><AlertTitle>Check only — this file cannot be imported yet</AlertTitle><AlertDescription>{dataType.commitBlocked}</AlertDescription></Alert>
                   ) : (
                     <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
-                      <Checkbox checked={mappingOk} onCheckedChange={(v) => setMappingOk(v === true)} className="mt-0.5" aria-label="Columns तपासल्या" />
-                      <span>Columns योग्य जुळल्या आहेत आणि वरील Preview मी तपासला आहे. <span className="text-muted-foreground">फक्त “तयार” ओळी Import होतील.</span></span>
+                      <Checkbox checked={mappingOk} onCheckedChange={(v) => setMappingOk(v === true)} className="mt-0.5" aria-label="Columns checked" />
+                      <span>I have checked the column mapping and the preview above. <span className="text-muted-foreground">Only rows marked “Ready” will be imported.</span></span>
                     </label>
                   )}
                 </>
@@ -643,27 +648,27 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 5: confirm ---------------- */}
           {step === 5 && dataType && preview && (
             <section className="space-y-4">
-              <h3 className="text-base font-semibold">Step 5 · Import Confirm करा</h3>
-              <p className="text-lg">तुम्ही निवडलेला डेटा ManuFlow ERP मध्ये Import करायचा आहे का?</p>
+              <h3 className="text-base font-semibold">Step 5 · Confirm the import</h3>
+              <p className="text-lg">Do you want to import the selected data into ManuFlow ERP?</p>
               <ul className="space-y-1 rounded-lg border p-3 text-sm">
                 <li>Company: <span className="font-medium">{companyName}</span></li>
-                <li>डेटा: <span className="font-medium">{DATA_TYPE_MR[dataType.key]?.name}</span> · फाइल: {parsed?.fileName}</li>
-                <li className="text-emerald-700 dark:text-emerald-400">Import होतील: <span className="font-semibold">{preview.counts.ready}</span> ओळी</li>
-                <li className="text-muted-foreground">Import होणार नाहीत: {preview.counts.errors} चुकीच्या + {preview.counts.duplicates} आधीच असलेल्या</li>
-                {kind === 'opening-stock' && goLive?.goLiveDate && <li>Stock ची तारीख: {fmtDate(goLive.openingDate)} (Go-live {fmtDate(goLive.goLiveDate)}) — import नंतर go-live date बदलता येणार नाही</li>}
+                <li>Data: <span className="font-medium">{DATA_TYPE_UI[dataType.key]?.name}</span> · File: {parsed?.fileName}</li>
+                <li className="text-emerald-700 dark:text-emerald-400">Rows to import: <span className="font-semibold">{preview.counts.ready}</span></li>
+                <li className="text-muted-foreground">Rows left out: {preview.counts.errors} with errors + {preview.counts.duplicates} already existing</li>
+                {kind === 'opening-stock' && goLive?.goLiveDate && <li>Stock date: {fmtDate(goLive.openingDate)} (go-live {fmtDate(goLive.goLiveDate)}) — the go-live date cannot be changed after this import</li>}
               </ul>
               {importing ? (
-                <Working label={`${preview.counts.ready} ओळी Import होत आहेत… कृपया हा popup बंद करू नका.`} />
+                <Working label={`Importing ${preview.counts.ready} rows… Please do not close this window.`} />
               ) : (
                 <div className="flex flex-wrap gap-2">
                   <Button size="lg" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => void runImport()}>
-                    <CheckCircle2 className="h-5 w-5 mr-2" /> {error ? 'पुन्हा प्रयत्न करा' : 'होय, Import करा'}
+                    <CheckCircle2 className="h-5 w-5 mr-2" /> {error ? 'Try again' : 'Yes, import'}
                   </Button>
-                  <Button size="lg" variant="outline" onClick={goBack}><ArrowLeft className="h-5 w-5 mr-2" /> मागे जा</Button>
+                  <Button size="lg" variant="outline" onClick={goBack}><ArrowLeft className="h-5 w-5 mr-2" /> Back</Button>
                 </div>
               )}
-              {error && !importing && <p className="text-xs text-muted-foreground">पुन्हा प्रयत्न सुरक्षित आहे: आधीच Import झालेल्या ओळी duplicate म्हणून skip होतात.</p>}
-              <p className="text-xs text-muted-foreground">Import आपोआप undo करता येत नाही. चूक झाल्यास Masters त्यांच्या स्क्रीनवरून आणि Stock adjustment ने दुरुस्त करता येतो.</p>
+              {error && !importing && <p className="text-xs text-muted-foreground">Trying again is safe: rows that were already imported are skipped as duplicates.</p>}
+              <p className="text-xs text-muted-foreground">An import cannot be undone automatically. Correct mistakes on the master screens, or with a stock adjustment for stock.</p>
             </section>
           )}
 
@@ -672,28 +677,28 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
             <section className="space-y-4">
               <h3 className={cn('flex items-center gap-2 text-xl font-semibold', result.counts.failed + result.counts.errors ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>
                 {result.counts.failed + result.counts.errors ? <AlertTriangle className="h-6 w-6" aria-hidden /> : <CheckCircle2 className="h-6 w-6" aria-hidden />}
-                {result.counts.failed + result.counts.errors ? 'Import पूर्ण झाला — काही ओळी Import झाल्या नाहीत' : 'Import पूर्ण झाला!'}
+                {result.counts.failed + result.counts.errors ? 'Import finished — some rows were not imported' : 'Import complete!'}
               </h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <SummaryCard label="यशस्वी Records" value={result.counts.imported} tone="border-emerald-300 text-emerald-800 dark:text-emerald-300" icon={CheckCircle2} />
-                <SummaryCard label="Failed Records" value={result.counts.failed + result.counts.errors} tone="border-red-300 text-red-800 dark:text-red-300" icon={XCircle} />
-                <SummaryCard label="Skipped Duplicates" value={result.counts.duplicates} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={Ban} />
+                <SummaryCard label="Imported" value={result.counts.imported} tone="border-emerald-300 text-emerald-800 dark:text-emerald-300" icon={CheckCircle2} />
+                <SummaryCard label="Failed" value={result.counts.failed + result.counts.errors} tone="border-red-300 text-red-800 dark:text-red-300" icon={XCircle} />
+                <SummaryCard label="Skipped duplicates" value={result.counts.duplicates} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={Ban} />
                 <SummaryCard label="Warnings" value={result.counts.withWarnings} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={AlertTriangle} />
               </div>
               {result.reconciliation && (
                 <div className="rounded-lg border p-3 text-sm">
-                  <p className="font-medium">Stock जुळवणी (फाइल विरुद्ध नोंदवलेले) · Reference {result.reconciliation.ref}</p>
-                  <p className="mt-1">फाइल: {num(result.reconciliation.totals.sourceQty)} qty, ₹{num(result.reconciliation.totals.sourceValue)} · नोंदवले: {num(result.reconciliation.totals.postedQty)} qty, ₹{num(result.reconciliation.totals.postedValue)} · फरक: ₹{num(result.reconciliation.totals.valueDiff)}</p>
+                  <p className="font-medium">Stock reconciliation (file vs posted) · Reference {result.reconciliation.ref}</p>
+                  <p className="mt-1">File: {num(result.reconciliation.totals.sourceQty)} qty, ₹{num(result.reconciliation.totals.sourceValue)} · Posted: {num(result.reconciliation.totals.postedQty)} qty, ₹{num(result.reconciliation.totals.postedValue)} · Difference: ₹{num(result.reconciliation.totals.valueDiff)}</p>
                 </div>
               )}
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => setShowReport((v) => !v)} aria-expanded={showReport}><FileSpreadsheet className="h-4 w-4 mr-2" /> Import Report पाहा</Button>
-                <Button variant="outline" onClick={() => downloadText(`${dataType.key}-import-errors.csv`, problemRowsCsv(result.rows))}><Download className="h-4 w-4 mr-2" /> Errors डाउनलोड करा</Button>
-                <Button variant="outline" onClick={startOver}><RotateCcw className="h-4 w-4 mr-2" /> आणखी डेटा Import करा</Button>
-                <Button onClick={() => { onOpenChange(false); window.dispatchEvent(new CustomEvent('erp:goto', { detail: 'dashboard' })) }}>Dashboard वर जा</Button>
+                <Button variant="outline" onClick={() => setShowReport((v) => !v)} aria-expanded={showReport}><FileSpreadsheet className="h-4 w-4 mr-2" /> View import report</Button>
+                <Button variant="outline" onClick={() => downloadText(`${dataType.key}-import-errors.csv`, problemRowsCsv(result.rows))}><Download className="h-4 w-4 mr-2" /> Download errors</Button>
+                <Button variant="outline" onClick={startOver}><RotateCcw className="h-4 w-4 mr-2" /> Import more data</Button>
+                <Button onClick={() => { onOpenChange(false); window.dispatchEvent(new CustomEvent('erp:goto', { detail: 'dashboard' })) }}>Go to Dashboard</Button>
               </div>
               {showReport && <RowsTable rows={result.rows} keyCols={keyCols} nameOf={nameOf} cellOf={cellOf} />}
-              <p className="text-xs text-muted-foreground">हा Import “History” मध्ये नोंदवला आहे.</p>
+              <p className="text-xs text-muted-foreground">This import is recorded in History.</p>
             </section>
           )}
         </div>
@@ -701,17 +706,17 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
         {/* Navigation */}
         {step <= 4 && (
           <DialogFooter className="flex-row flex-wrap justify-between gap-2 sm:justify-between">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>रद्द करा</Button>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <div className="flex gap-2">
-              {step > 1 && <Button variant="outline" size="lg" onClick={goBack}><ArrowLeft className="h-4 w-4 mr-2" /> मागे जा</Button>}
+              {step > 1 && <Button variant="outline" size="lg" onClick={goBack}><ArrowLeft className="h-4 w-4 mr-2" /> Back</Button>}
               <Button size="lg" onClick={goNext} disabled={!canNext} aria-disabled={!canNext}>
-                पुढे जा <ArrowRight className="h-4 w-4 ml-2" />
+                Next <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
           </DialogFooter>
         )}
         {step === 6 && (
-          <DialogFooter><Button variant="ghost" onClick={() => onOpenChange(false)}>बंद करा</Button></DialogFooter>
+          <DialogFooter><Button variant="ghost" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter>
         )}
       </DialogContent>
     </Dialog>
@@ -727,15 +732,15 @@ function RowsTable({ rows, keyCols, nameOf, cellOf }: {
         <TableHeader>
           <TableRow className="bg-muted/50 hover:bg-muted/50">
             <TableHead className="w-14">Row</TableHead>
-            <TableHead>नाव</TableHead>
-            <TableHead>स्थिती</TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead>Status</TableHead>
             {keyCols.map(([k, l]) => <TableHead key={k} className="whitespace-nowrap">{l}</TableHead>)}
-            <TableHead className="min-w-56">समस्या</TableHead>
+            <TableHead className="min-w-56">Problems</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.length === 0 ? (
-            <TableRow><TableCell colSpan={keyCols.length + 4} className="h-16 text-center text-muted-foreground">या यादीत एकही ओळ नाही</TableCell></TableRow>
+            <TableRow><TableCell colSpan={keyCols.length + 4} className="h-16 text-center text-muted-foreground">No rows in this view</TableCell></TableRow>
           ) : rows.map((r) => {
             const st = STATUS_STYLE[r.status]
             const warn = r.status === 'ready' && r.warnings.length > 0
@@ -746,7 +751,7 @@ function RowsTable({ rows, keyCols, nameOf, cellOf }: {
                 <TableCell>
                   <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap', warn ? STATUS_STYLE.duplicate.cls : st.cls)}>
                     {warn ? <AlertTriangle className="h-3 w-3" aria-hidden /> : <st.icon className="h-3 w-3" aria-hidden />}
-                    {warn ? 'Warning' : STATUS_MR[r.status]}
+                    {warn ? 'Warning' : STATUS_LABEL[r.status]}
                   </span>
                 </TableCell>
                 {keyCols.map(([k]) => <TableCell key={k} className="max-w-40 truncate whitespace-nowrap">{cellOf(r, k) || '—'}</TableCell>)}

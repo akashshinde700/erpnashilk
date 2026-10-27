@@ -1,3 +1,4 @@
+import { purchaseReturnRefunds } from '@/lib/party-credits'
 import { db } from '@/lib/db'
 
 // Shared by /api/purchase-returns and /api/purchase-returns/[id] (route files may only export handlers).
@@ -9,16 +10,18 @@ export function billStatus(grandTotal: number, paidAmount: number) {
 }
 
 // PurchaseReturn has no relations besides its items — attach item / bill / supplier / warehouse info for the UI.
-export async function attachReturnInfo<T extends { invoiceId: string; supplierId: string; warehouseId: string; items: { itemId: string }[] }>(companyId: string, docs: T[]) {
+export async function attachReturnInfo<T extends { id: string; number: string; status: string; grandTotal: number; invoiceId: string; supplierId: string; warehouseId: string; items: { itemId: string }[] }>(companyId: string, docs: T[]) {
   const itemIds = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const invIds = Array.from(new Set(docs.map((d) => d.invoiceId)))
   const supIds = Array.from(new Set(docs.map((d) => d.supplierId)))
   const whIds = Array.from(new Set(docs.map((d) => d.warehouseId)))
-  const [items, invoices, suppliers, warehouses] = await Promise.all([
+  const [items, invoices, suppliers, warehouses, refunds] = await Promise.all([
     itemIds.length ? db.item.findMany({ where: { companyId, id: { in: itemIds } }, select: { id: true, code: true, name: true, uom: true, hsn: true } }) : [],
     invIds.length ? db.purchaseInvoice.findMany({ where: { companyId, id: { in: invIds } }, select: { id: true, number: true, date: true, supplierInvNo: true, supplierInvDate: true } }) : [],
     supIds.length ? db.supplier.findMany({ where: { companyId, id: { in: supIds } }, select: { id: true, code: true, name: true, gstin: true, addressLine: true, city: true, state: true, stateCode: true } }) : [],
     whIds.length ? db.warehouse.findMany({ where: { companyId, id: { in: whIds } }, select: { id: true, code: true, name: true } }) : [],
+    // refund on the note: applied to its bill / received / still due from the supplier
+    purchaseReturnRefunds(db, companyId, docs),
   ])
   const im = new Map(items.map((i) => [i.id, i] as const))
   const vm = new Map(invoices.map((i) => [i.id, i] as const))
@@ -30,5 +33,6 @@ export async function attachReturnInfo<T extends { invoiceId: string; supplierId
     supplier: sm.get(d.supplierId) || null,
     warehouse: wm.get(d.warehouseId) || null,
     items: d.items.map((i) => ({ ...i, item: im.get(i.itemId) || null })),
+    refund: refunds.get(d.id) ?? null,
   }))
 }

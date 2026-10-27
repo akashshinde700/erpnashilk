@@ -1,11 +1,14 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2, requireWrite } from '@/lib/erp-helpers'
-import { CbTx, MODULE_KEY, activeAccount, money, optStr, parseDate } from '../accounts/_shared'
+import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2, requireWrite, requireRead } from '@/lib/erp-helpers'
+import { businessDate } from '@/lib/business-date'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
+import { CbTx, MODULE_KEY, activeAccount, money, optStr } from '../accounts/_shared'
 
 // GET /api/loans?companyId=&status=OPEN|CLOSED
 // → { items: (Loan & { principalPaid, interestPaid, outstanding, emiCount, lastEmiDate, receivedAccountName })[], total, outstanding }
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'cash-bank') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const status = (searchParams.get('status') || '').trim().toUpperCase()
@@ -55,6 +58,7 @@ export async function GET(req: Request) {
 // Creates the Loan and a LOAN_IN entry crediting (principal − processing fee) to the received account.
 // The processing fee stays on the Loan (it's reported as a finance expense in P&L).
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, MODULE_KEY)
     const body = await req.json().catch(() => ({}) as Record<string, unknown>)
@@ -70,11 +74,13 @@ export async function POST(req: Request) {
     const termMonths = body?.termMonths === undefined || body?.termMonths === null || body?.termMonths === '' ? null : Math.round(Number(body.termMonths))
     if (termMonths !== null && (!Number.isFinite(termMonths) || termMonths <= 0)) throw new ApiError('termMonths must be a positive number', 400)
     const emiAmount = body?.emiAmount ? money(body.emiAmount, 'emiAmount', { allowZero: true }) : null
-    const startDate = parseDate(body?.startDate, 'startDate') ?? new Date()
+    const startDate = businessDate(body?.startDate, 'Start date')
+    idem = await claimIdempotency(req, companyId, 'POST /api/loans', body)
+    if (idem.replay) return idem.replay
 
     const loan = await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
-      const acc = await activeAccount(tx, companyId, body?.receivedAccountId, 'Received in account')
+      const acc = await activeAccount(tx, companyId, body?.receivedAccountId, 'Received in account', startDate)
       const created = await tx.loan.create({
         data: {
           companyId, name,
@@ -98,10 +104,12 @@ export async function POST(req: Request) {
         companyId, userName: body?.userName, action: 'CREATE', entity: 'Loan', entityId: created.id,
         details: `Loan "${name}" ₹${principal.toFixed(2)} received in ${acc.name}${processingFee > 0 ? ` (processing fee ₹${processingFee.toFixed(2)})` : ''}`,
       })
+      await idem!.done(txRaw, created, 'Loan recorded')
       return created
     })
     return ok(loan, 'Loan recorded')
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

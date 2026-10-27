@@ -1,4 +1,4 @@
-import { ok, handleError, companyRequired } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, requireFinancialReports } from '@/lib/erp-helpers'
 import { parseAsOf, positionAsOf, trialBalanceFrom } from '@/lib/accounting'
 
 // GET /api/reports/trial-balance?companyId=&asOf=YYYY-MM-DD (default today)
@@ -6,6 +6,7 @@ import { parseAsOf, positionAsOf, trialBalanceFrom } from '@/lib/accounting'
 // contra entry in the documents, so they show up as the "difference" line when the totals don't agree.
 export async function GET(req: Request) {
   try {
+    requireFinancialReports(req) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { asOfStr, asOf } = parseAsOf(searchParams)

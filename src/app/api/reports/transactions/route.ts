@@ -1,10 +1,11 @@
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, r2, requireFinancialReports } from '@/lib/erp-helpers'
 import { listTransactions, parsePeriod, TXN_TYPE_LABEL } from '@/lib/accounting'
 
 // GET /api/reports/transactions?companyId=&from=&to=&type=SALE,PAYMENT_IN&partyId=&q=
 // All transactions of the period (same sources as the daybook) with filters and per-type totals.
 export async function GET(req: Request) {
   try {
+    requireFinancialReports(req) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { fromStr, toStr, from, to } = parsePeriod(searchParams)

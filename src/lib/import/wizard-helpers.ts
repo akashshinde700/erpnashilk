@@ -2,24 +2,24 @@
 import { findDataType } from '@/lib/import/fields'
 import type { RunRow, RunRowStatus } from '@/lib/import/run'
 
-/** Marathi names shown in the wizard (the catalogue keeps the English labels used in history / audit). */
-export const DATA_TYPE_MR: Record<string, { name: string; hint: string }> = {
-  customers: { name: 'ग्राहक (Customers)', hint: 'नाव, GSTIN, फोन, पत्ता' },
-  suppliers: { name: 'पुरवठादार (Suppliers)', hint: 'नाव, GSTIN, बँक तपशील' },
-  items: { name: 'Items / वस्तू', hint: 'नाव, HSN, GST दर, Unit, किंमत' },
-  'opening-stock': { name: 'Opening Stock', hint: 'Go-live च्या दिवशीचा साठा' },
-  'opening-balances': { name: 'Opening Balances', hint: 'फक्त तपासणी — save होत नाही' },
-  sales: { name: 'Sales Transactions', hint: 'लवकरच' },
-  purchases: { name: 'Purchase Transactions', hint: 'लवकरच' },
-  receipts: { name: 'Receipts', hint: 'लवकरच' },
-  payments: { name: 'Payments', hint: 'लवकरच' },
-  'credit-notes': { name: 'Credit Notes', hint: 'लवकरच' },
-  'debit-notes': { name: 'Debit Notes', hint: 'लवकरच' },
-  'company-info': { name: 'Company Information', hint: 'लवकरच' },
+/** Names and one-line hints of the data types as shown in the wizard. */
+export const DATA_TYPE_UI: Record<string, { name: string; hint: string }> = {
+  customers: { name: 'Customers', hint: 'Name, GSTIN, phone, address' },
+  suppliers: { name: 'Suppliers', hint: 'Name, GSTIN, bank details' },
+  items: { name: 'Items', hint: 'Name, HSN, GST rate, unit, price' },
+  'opening-stock': { name: 'Opening Stock', hint: 'Stock on hand at the go-live date' },
+  'opening-balances': { name: 'Opening Balances', hint: 'Check only — nothing is saved' },
+  sales: { name: 'Sales Transactions', hint: 'Coming soon' },
+  purchases: { name: 'Purchase Transactions', hint: 'Coming soon' },
+  receipts: { name: 'Receipts', hint: 'Coming soon' },
+  payments: { name: 'Payments', hint: 'Coming soon' },
+  'credit-notes': { name: 'Credit Notes', hint: 'Coming soon' },
+  'debit-notes': { name: 'Debit Notes', hint: 'Coming soon' },
+  'company-info': { name: 'Company Information', hint: 'Coming soon' },
 }
 
-export const STATUS_MR: Record<RunRowStatus, string> = {
-  ready: 'तयार', duplicate: 'Skip (आधीच आहे)', error: 'चूक', imported: 'Import झाला', failed: 'अयशस्वी',
+export const STATUS_LABEL: Record<RunRowStatus, string> = {
+  ready: 'Ready', duplicate: 'Skipped (already exists)', error: 'Error', imported: 'Imported', failed: 'Failed',
 }
 
 /** Example values for the sample templates (keys = catalogue field keys). */
@@ -72,24 +72,24 @@ export function problemRowsCsv(rows: RunRow[]): string {
   const out = [['Row', 'Status', 'Name', 'Problems', 'Warnings']]
   for (const r of rows) {
     if (r.status === 'ready' || r.status === 'imported') { if (!r.warnings.length) continue }
-    out.push([String(r.line), STATUS_MR[r.status], r.values.name || r.values.itemName || r.values.itemCode || '', r.messages.join('; '), r.warnings.join('; ')])
+    out.push([String(r.line), STATUS_LABEL[r.status], r.values.name || r.values.itemName || r.values.itemCode || '', r.messages.join('; '), r.warnings.join('; ')])
   }
   return out.map((r) => r.map(reportCell).join(',')).join('\n')
 }
 
-/** Message for a failed request, in plain Marathi where the cause is generic; the server's own text otherwise. */
+/** Message for a failed request, in plain words where the cause is generic; the server's own text otherwise. */
 export function friendlyError(e: unknown): string {
   const msg = e instanceof Error ? e.message : ''
-  if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) return 'सर्व्हरशी संपर्क तुटला. Internet तपासा आणि पुन्हा प्रयत्न करा.'
-  if (/not allowed|permission|403/i.test(msg)) return 'तुम्हाला हे करण्याची परवानगी नाही. Admin शी संपर्क करा.'
-  if (/larger than|413/i.test(msg)) return 'फाइल खूप मोठी आहे (मर्यादा 2 MB). फाइलचे भाग करून Import करा.'
-  if (/session|sign in/i.test(msg)) return 'तुमचे login संपले आहे. पुन्हा login करा.'
-  if (/already running/i.test(msg)) return 'याच प्रकारचा दुसरा Import आत्ता चालू आहे. तो पूर्ण झाल्यावर पुन्हा प्रयत्न करा.'
-  if (/Request failed \(5|Something went wrong/i.test(msg)) return 'सर्व्हरवर अडचण आली. थोड्या वेळाने पुन्हा प्रयत्न करा.'
-  return msg || 'काहीतरी चूक झाली. पुन्हा प्रयत्न करा.'
+  if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) return 'Could not reach the server. Check your internet connection and try again.'
+  if (/not allowed|permission|403/i.test(msg)) return 'You do not have permission to do this. Please contact your administrator.'
+  if (/larger than|413/i.test(msg)) return 'The file is too large (limit 2 MB). Split it into smaller files and import them one by one.'
+  if (/session|sign in/i.test(msg)) return 'Your session has ended. Please sign in again.'
+  if (/already running/i.test(msg)) return 'Another import of this kind is running right now. Try again when it has finished.'
+  if (/Request failed \(5|Something went wrong/i.test(msg)) return 'Something went wrong on the server. Please try again in a moment.'
+  return msg || 'Something went wrong. Please try again.'
 }
 
-/** Browser download of a text file (UTF-8 with BOM so Excel shows Marathi / ₹ correctly). */
+/** Browser download of a text file (UTF-8 with BOM so Excel shows non-ASCII text and ₹ correctly). */
 export function downloadText(fileName: string, text: string) {
   const blob = new Blob(['\ufeff' + text], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)

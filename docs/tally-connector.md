@@ -1,8 +1,9 @@
 # Direct import from Tally — connector design
 
 Status: **diagnostics only.** ManuFlow can check whether a configured TallyPrime XML server answers
-(`GET /api/import-center/tally/status`). It does not list Tally companies or import data from Tally
-yet. The Import Center shows "Not connected" until that check really succeeds.
+(`GET /api/import-center/tally/status`, self-hosted installs) and — as a proof of concept that is off by default —
+whether a paired ManuFlow Tally Connector can reach Tally (see below). It does not list Tally companies or import data
+from Tally yet. The Import Center shows "Not connected" until a check really succeeds.
 
 ## How TallyPrime exposes data
 
@@ -50,23 +51,150 @@ calling private-network addresses).
 `TALLY_HTTP_URL` is only meaningful when ManuFlow runs on the same machine or network as Tally
 (self-hosted). On the cloud deployment it stays unset.
 
-## Proposed connector (next phase)
+## ManuFlow Tally Connector — proof of concept (built, OFF by default)
 
-A small program installed on the Tally PC (Windows service / tray app):
+Status: **local proof of concept.** Pairing, heartbeat, status, disconnect / reconnect, the Tally company list and
+importing **customers (Sundry Debtors), suppliers (Sundry Creditors) and stock items** work end to end against a
+**mock** Tally server and in the browser. **Not tested against a real TallyPrime** — the export requests and the Tally
+field names are unverified. Vouchers, orders, other ledgers, opening balances / stock and date ranges are not built.
+Disabled unless the server has `TALLY_CONNECTOR_POC=1`; without it every connector endpoint answers 503 and the
+Import Center shows "Connector not available".
 
-1. **Outbound only.** The connector polls ManuFlow over HTTPS (`/api/tally-connector/...`, to be
-   built); ManuFlow never connects inbound to the customer network. No port forwarding.
-2. **Pairing.** A tenant admin creates a connector token in ManuFlow (per company, shown once, stored
-   hashed, revocable, expiring). The token only authorises the connector endpoints for that company.
-3. **Allow-listed requests.** ManuFlow can only ask for named jobs (e.g. "list companies",
-   "export ledgers of company X", "export stock items"). The connector builds the Tally XML itself;
-   ManuFlow never sends raw XML or URLs to execute.
-4. **Local Tally access.** The connector talks to `http://127.0.0.1:9000` only (configurable port),
-   with timeouts and size limits, and parses replies without DTD / external entities.
-5. **Upload into the existing pipeline.** Exported rows are posted to ManuFlow and go through the same
-   mapping → preview → explicit confirmation → import flow as file uploads (`src/lib/import/run.ts`,
-   the shared customer / item import services). No direct database writes.
-6. **Audit.** Pairing, each job and each import are written to the audit log.
+### Where TallyPrime runs (affects where the connector runs)
+
+- TallyPrime is supported **only on 64-bit Windows** (Windows 7 / Server 2008 R2 or later, incl. Windows 11) per
+  Tally's "Recommended system configuration" page; Tally's FAQ says it cannot be installed on a Mac. No Linux build
+  is documented. Wine / VMs / remote-desktop hosting are not assumed to work.
+- The connector itself is a plain Node.js (18+) script with no packages, so it can run on Windows, macOS or Linux —
+  but it must be able to reach Tally's port: normally on the Tally PC itself (`http://127.0.0.1:9000`), otherwise on
+  another computer in the same office network (`http://192.168.x.x:9000`, with Windows Firewall allowing only that
+  computer). Only the Windows-on-same-PC case is the expected setup; none has been tried with real Tally.
+
+### Import from Tally (UI: `tally-import.tsx`, opened by the Tally card)
+
+1. **Connect Tally** — connector status (Connected / Not connected / Waiting for pairing / Connector offline /
+   Tally not reachable), Connect / Reconnect / Disconnect, last check-in and last successful Tally contact. "Next"
+   only when the connector is online **and** TallyPrime answers.
+2. **Choose company** — job `list-companies`; Tally's real list (only companies open in TallyPrime), search when
+   more than 6, 50 at a time, Refresh keeps a still-valid choice. Empty list → "No company is open in TallyPrime".
+3. **Select data** — Customers, Suppliers, Stock items (+ the item type, which Tally does not have — required, not
+   guessed). Vouchers, orders, other masters and the date range are listed as not available.
+4. **Review & import** — reads the chosen data (jobs `export-customers` / `export-suppliers` / `export-items`), runs
+   the normal Import Center **preview** on it in 500-row batches (new / already in ManuFlow / need attention), then
+   one **Import data** button imports batch by batch with progress (never 100 % before the end), "Stop after this
+   part", a list + CSV of rows not imported, and one Import History entry per batch. Running it again skips what was
+   imported (the services' duplicate rules), so a retry / double click creates no duplicates.
+
+Records go through `src/lib/tally/to-import.ts` → `runImport()` (the same validation and import services as an
+uploaded file). Tally's GUID is not stored (no column); opening balances and opening stock are not imported.
+
+### Flow
+
+```
+Admin in ManuFlow ──"Connect Tally"──► POST /api/import-center/tally/connector  → code ABCDE-FGHJK (10 min, once)
+Connector (office PC) ── pair --code ─► POST /api/tally-connector/pair          → token (once, stored hashed)
+Connector every 5–30 s: POST <tally 127.0.0.1:9000> fixed health request (read-only)
+                       POST /api/tally-connector/heartbeat (Bearer token) { tally: { status, latencyMs, endpoint } }
+                                       ← { nextHeartbeatSec, job?: { id, type: one of 4 names, company? } }
+When a job comes: POST <tally> the connector's own fixed Export XML for that name → POST /api/tally-connector/result
+                  { jobId, ok, records | error code }
+Browser: POST/GET/DELETE /api/import-center/tally/jobs (queue / poll / cancel) → POST /api/import-center/tally/import
+         { jobId, dataType, mode: preview | commit, batch } (Tally data stays on the server)
+Admin ──"Disconnect"──► DELETE /api/import-center/tally/connector → token revoked → next heartbeat 401 → connector
+                                                                    deletes its settings and stops
+```
+
+| Piece | File |
+|---|---|
+| Server logic (codes, tokens, heartbeat, status, rate limits, store) | `src/lib/tally/connector.ts` |
+| Admin routes (GET status, POST code, DELETE disconnect) | `src/app/api/import-center/tally/connector/route.ts` |
+| Connector routes (no session; public in `src/middleware.ts`) | `src/app/api/tally-connector/{pair,heartbeat}/route.ts` |
+| Connector program | `connector/tally/manuflow-tally-connector.mjs` |
+| UI | `src/components/erp/import-center/tally-connector-panel.tsx` (wizard step 2, "Connect to Tally directly") |
+| Tests | `tests/tally-connector.test.ts` |
+
+### Security design
+
+- **Tally's port never faces the internet.** The connector only makes outbound HTTPS calls; no port forwarding,
+  tunnel or VPN.
+- **No SSRF.** ManuFlow never makes a request to a Tally address and never sends the connector a URL, XML or
+  command; a heartbeat reply carries at most one job **name** from a fixed list of four, plus a Tally company name
+  that must appear in Tally's own latest company list. The connector refuses unknown names. The Tally address is set on the connector's computer
+  and must be `localhost` / `127.x` / `[::1]` or a private IPv4 (10/8, 172.16/12, 192.168/16) — never a host name
+  (DNS) or a public address.
+- **Read-only towards Tally.** Every request is `TALLYREQUEST=Export` (the health check plus four collection exports
+  built by the connector; the company name is XML-escaped). Tests assert no Import / Alter / Delete and check every
+  request the mock Tally received. Replies: ≤ 64 MB, 120 s, no DTD / entities, UTF-8 or UTF-16.
+- **Job results:** only the connector's own *running* job (cancelled / timed-out jobs drop late results); ≤ 8 MB
+  (below the middleware's body limit), ≤ 20 000 records, only the known fields of that job type, length-capped,
+  control characters removed; malformed data fails the job. Jobs and their records are kept 30 minutes, per company.
+  Exports need the same write right as the import (customers / suppliers / items).
+- **Pairing code:** 10 characters (31-symbol alphabet, ~49 bits), 10 minutes, single use, SHA-256 hash only, one open
+  code per company, shown once, never returned by the status endpoint. Wrong codes: 10 per IP per 15 min, then 429.
+  Codes: 10 per company per hour.
+- **Connector token:** `mftc_<24 hex id>_<32 random bytes>`; only its SHA-256 is kept, compared in constant time;
+  returned once. Pairing again revokes the previous connector; Disconnect revokes at once.
+- **Authorization / tenants:** status needs Import Center access; creating codes and disconnecting need Tenant Admin /
+  Management / Super Admin. A token is bound to the company of its code; the company comes from the token, never
+  from the request. Pairing / disconnect are written to the audit log (never the code or token).
+- **Input limits:** connector requests ≤ 4 KB; heartbeat status must be one of five values; endpoint kept only if it
+  is a loopback / private `host:port`; one heartbeat per 5 s per connector. Messages shown in the UI are written by
+  the server, not taken from the connector.
+- **Connector settings:** `%APPDATA%\ManuFlowTallyConnector\connector.json` (Windows),
+  `~/Library/Application Support/ManuFlowTallyConnector/` (macOS), `$XDG_CONFIG_HOME/manuflow-tally-connector/`
+  (Linux); file mode 0600, folder 0700 (on Windows the user-profile ACL applies instead). The token is never printed.
+  Redirects from ManuFlow are refused, so the token cannot be forwarded elsewhere.
+
+### Known limitations of the proof of concept
+
+1. **In-memory storage.** Codes and connectors live in the server process: lost on restart, not shared between PM2
+   instances. Production needs two tables (schema change, not made):
+
+   ```prisma
+   model TallyConnectorPairing {
+     id        String   @id @default(cuid())
+     companyId String
+     codeHash  String   @unique
+     createdBy String
+     expiresAt DateTime
+     createdAt DateTime @default(now())
+     @@index([companyId])
+   }
+   model TallyConnector {
+     id                 String    @id
+     companyId          String
+     secretHash         String
+     pairedBy           String
+     pairedAt           DateTime  @default(now())
+     revokedAt          DateTime?
+     lastSeenAt         DateTime?
+     lastTallyStatus    String?
+     lastTallyCheckAt   DateTime?
+     lastTallySuccessAt DateTime?
+     lastLatencyMs      Int?
+     tallyEndpoint      String?
+     version            String?
+     platform           String?
+     @@index([companyId, revokedAt])
+   }
+   ```
+   Single use must then be one conditional `DELETE … WHERE codeHash = ?` (affected rows = 1).
+2. **Rate limits are per process** (like the login throttle) and reset on restart.
+3. **IP for rate limiting** comes from `X-Forwarded-For` — correct only behind the CloudPanel proxy that sets it.
+4. **Token at rest on the PC** is protected by file permissions only; Windows DPAPI / macOS Keychain would be better.
+5. **No signed installer / download.** Customers would need Node.js and the `.mjs` file; an installer (signed
+   Windows build, run as a service) is still to do.
+6. **Masters only.** Vouchers etc. need accounting decisions and a schema change (Tally GUID per record) first.
+7. **Unverified against real TallyPrime:** the company-list / ledger / stock-item export XML, and the reply fields
+   read (`PARTYGSTIN` vs `LEDGSTREGDETAILS.LIST`, `LEDMAILINGDETAILS.LIST`, `GSTDETAILS.LIST/RATEDETAILS.LIST`, …).
+   Capture real replies from at least two TallyPrime releases before relying on it.
+
+### Production would additionally need
+
+- Tables for pairing codes, connectors **and jobs** (proposal above; jobs: id, companyId, connectorId, type,
+  tallyCompany, status, error, timestamps, and the records in a JSON / separate rows table with a 30-minute expiry).
+- A database lock instead of the per-process import lock, if more than one app process runs.
+- Optionally a `tallyGuid` column on customers / suppliers / items for stable re-import matching.
 
 ## Next steps
 

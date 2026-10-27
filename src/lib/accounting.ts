@@ -1,6 +1,8 @@
 import { db } from '@/lib/db'
 import { ApiError, r2 } from '@/lib/erp-helpers'
-import { accountBalances, type AccountBalance } from '@/lib/accounts'
+import { POSTED_EXPENSE, accountBalances, moneyPaymentWhere, type AccountBalance } from '@/lib/accounts'
+import { istDay } from '@/lib/business-date'
+import { partyCreditsAsOf } from '@/lib/party-credits'
 import { GST_STATES } from '@/lib/erp-constants'
 
 /**
@@ -16,7 +18,7 @@ import { GST_STATES } from '@/lib/erp-constants'
 // ============ dates ============
 
 const NOT_CANCELLED = { not: 'CANCELLED' }
-const NON_MONEY_MODES = ['CREDIT_NOTE', 'DEBIT_NOTE']
+const NON_MONEY_MODES = ['CREDIT_NOTE', 'DEBIT_NOTE', 'ADVANCE_ADJ']
 const LOSS_REASONS = ['DAMAGE', 'EXPIRY', 'THEFT']
 /** "Beginning of data" for cumulative figures (retained profit). */
 export const EARLY = new Date('2000-01-01T00:00:00.000Z')
@@ -146,7 +148,7 @@ export async function profitAndLoss(companyId: string, from: Date, to: Date): Pr
     db.purchaseReturn.aggregate({ where: { companyId, status: NOT_CANCELLED, date }, _sum: { subtotal: true } }),
     db.expense.groupBy({
       by: ['expenseType', 'category', 'itcEligible'],
-      where: { companyId, status: NOT_CANCELLED, date },
+      where: { companyId, status: POSTED_EXPENSE, date },
       _sum: { amount: true, gstAmount: true },
     }),
     db.stockLedger.findMany({
@@ -297,7 +299,7 @@ export async function gstTotals(companyId: string, date: { gte?: Date; lte: Date
     }),
     db.purchaseReturn.aggregate({ where: { companyId, status: NOT_CANCELLED, date }, _sum: heads }),
     db.expense.findMany({
-      where: { companyId, status: NOT_CANCELLED, itcEligible: true, gstAmount: { gt: 0 }, date },
+      where: { companyId, status: POSTED_EXPENSE, itcEligible: true, gstAmount: { gt: 0 }, date },
       select: { gstAmount: true, vendorGstin: true },
     }),
   ])
@@ -348,6 +350,12 @@ export interface Position {
   chequesIssued: number
   receivable: number
   payable: number
+  /** Customer advances not yet applied (liability) */
+  customerAdvances: number
+  /** Sales-return credit not yet applied / refunded (liability: refunds due to customers) */
+  customerCredits: number
+  /** Purchase-return excess not yet received (asset: refunds due from suppliers) */
+  supplierRefunds: number
   customerOpening: number
   supplierOpening: number
   stock: number
@@ -359,7 +367,7 @@ export interface Position {
 }
 
 export async function positionAsOf(companyId: string, asOf: Date): Promise<Position> {
-  const [accounts, parties, gst, loanRows, emiRows, adj, chq, pl] = await Promise.all([
+  const [accounts, parties, gst, loanRows, emiRows, adj, chq, pl, credits] = await Promise.all([
     accountBalances(companyId, asOf),
     partyOutstanding(companyId, asOf),
     gstTotals(companyId, { lte: asOf }),
@@ -371,12 +379,17 @@ export async function positionAsOf(companyId: string, asOf: Date): Promise<Posit
       _sum: { amount: true },
     }),
     // Post-dated / deposited cheques: the party is already settled but the money hasn't reached the bank
+    // (on asOf: still pending / deposited, or cleared only after asOf)
     db.payment.groupBy({
       by: ['type'],
-      where: { companyId, date: { lte: asOf }, mode: { notIn: NON_MONEY_MODES }, chequeStatus: { in: ['PENDING', 'DEPOSITED'] } },
+      where: {
+        companyId, date: { lte: asOf }, mode: { notIn: NON_MONEY_MODES },
+        OR: [{ chequeStatus: { in: ['PENDING', 'DEPOSITED'] } }, { chequeStatus: 'CLEARED', clearedDate: { gt: asOf } }],
+      },
       _sum: { amount: true },
     }),
     profitAndLoss(companyId, EARLY, asOf),
+    partyCreditsAsOf(companyId, asOf),
   ])
   const paid = new Map(emiRows.map((e) => [e.loanId, sum(e._sum.principal)]))
   let loans = 0
@@ -398,6 +411,9 @@ export async function positionAsOf(companyId: string, asOf: Date): Promise<Posit
     chequesInHand: r2(sum(chq.find((c) => c.type === 'RECEIPT')?._sum.amount)),
     chequesIssued: r2(sum(chq.find((c) => c.type === 'PAYMENT')?._sum.amount)),
     receivable: parties.receivable,
+    customerAdvances: credits.customerAdvances,
+    customerCredits: credits.customerCredits,
+    supplierRefunds: credits.supplierRefunds,
     payable: parties.payable,
     customerOpening: parties.customerOpening,
     supplierOpening: parties.supplierOpening,
@@ -420,12 +436,15 @@ export function balanceSheetFrom(p: Position) {
   ]
   if (p.chequesInHand) assets.push({ key: 'chequesInHand', label: 'Cheques in hand (uncleared)', amount: p.chequesInHand })
   assets.push({ key: 'receivable', label: 'Sundry debtors (receivables)', amount: p.receivable, note: 'Customer opening balances + unpaid sales invoices' })
+  if (p.supplierRefunds) assets.push({ key: 'supplierRefunds', label: 'Refunds due from suppliers', amount: p.supplierRefunds, note: 'Purchase-return excess not yet received' })
   assets.push({ key: 'stock', label: 'Closing stock', amount: p.stock, note: 'Qty at date × current average rate' })
   if (p.gst.net < 0) assets.push({ key: 'gstCredit', label: 'Input GST credit (net)', amount: r2(-p.gst.net) })
 
   const liabilities: StatementLine[] = [
     { key: 'payable', label: 'Sundry creditors (payables)', amount: p.payable, note: 'Supplier opening balances + unpaid bills' },
   ]
+  if (p.customerAdvances) liabilities.push({ key: 'customerAdvances', label: 'Customer advances', amount: p.customerAdvances, note: 'Received before an invoice, not yet applied' })
+  if (p.customerCredits) liabilities.push({ key: 'customerCredits', label: 'Refunds due to customers', amount: p.customerCredits, note: 'Sales-return credit not yet applied or refunded' })
   if (p.loans) liabilities.push({ key: 'loans', label: 'Loans outstanding', amount: p.loans })
   if (p.gst.net > 0) liabilities.push({ key: 'gstPayable', label: 'GST payable (net)', amount: p.gst.net })
   if (p.chequesIssued) liabilities.push({ key: 'chequesIssued', label: 'Cheques issued (uncleared)', amount: p.chequesIssued })
@@ -461,6 +480,9 @@ export function trialBalanceFrom(p: Position) {
   for (const a of p.accounts) dr(`acc-${a.id}`, a.name, a.balance, a.type === 'CASH' ? 'Cash' : 'Bank')
   dr('chequesInHand', 'Cheques in hand (uncleared)', p.chequesInHand, 'Current assets')
   dr('receivable', 'Sundry debtors', p.receivable, 'Current assets')
+  dr('supplierRefunds', 'Refunds due from suppliers', p.supplierRefunds, 'Current assets')
+  cr('customerAdvances', 'Customer advances', p.customerAdvances, 'Current liabilities')
+  cr('customerCredits', 'Refunds due to customers', p.customerCredits, 'Current liabilities')
   dr('stock', 'Stock in hand (closing)', p.stock, 'Current assets')
   dr('inputGst', 'Input GST', p.gst.inputTotal, 'Duties & taxes')
   cr('outputGst', 'Output GST', p.gst.outputTotal, 'Duties & taxes')
@@ -490,12 +512,13 @@ export function trialBalanceFrom(p: Position) {
 
 export async function cashFlow(companyId: string, from: Date, to: Date) {
   const date = { gte: from, lte: to }
-  const moneyWhere = { companyId, mode: { notIn: NON_MONEY_MODES }, OR: [{ chequeStatus: null }, { chequeStatus: 'CLEARED' }], date }
+  // Payments by the day their money moved (a cleared post-dated cheque on its clearing date) — as accountBalances()
+  const moneyWhere = moneyPaymentWhere(companyId, date)
   const [openingAcc, closingAcc, payments, expenses, txns, accounts] = await Promise.all([
     accountBalances(companyId, new Date(from.getTime() - 1)),
     accountBalances(companyId, to),
     db.payment.groupBy({ by: ['type', 'partyType', 'mode'], where: moneyWhere, _sum: { amount: true } }),
-    db.expense.groupBy({ by: ['expenseType'], where: { companyId, status: NOT_CANCELLED, date }, _sum: { amount: true } }),
+    db.expense.groupBy({ by: ['expenseType'], where: { companyId, status: POSTED_EXPENSE, date }, _sum: { amount: true } }),
     db.accountTxn.findMany({ where: { companyId, date }, select: { type: true, category: true, amount: true, fromAccountId: true, toAccountId: true } }),
     db.moneyAccount.findMany({ where: { companyId }, select: { id: true, openingBalance: true, openingDate: true } }),
   ])
@@ -568,21 +591,26 @@ export interface TxnRow {
 export const TXN_TYPE_LABEL: Record<string, string> = {
   SALE: 'Sale', PURCHASE: 'Purchase', PAYMENT_IN: 'Payment In', PAYMENT_OUT: 'Payment Out', EXPENSE: 'Expense',
   CREDIT_NOTE: 'Credit Note', DEBIT_NOTE: 'Debit Note', ADJUST_IN: 'Add Money', ADJUST_OUT: 'Reduce Money',
-  CONTRA: 'Contra', LOAN_IN: 'Loan Received', LOAN_EMI: 'Loan EMI',
+  CONTRA: 'Contra', LOAN_IN: 'Loan Received', LOAN_EMI: 'Loan EMI', CHEQUE_CLEARED: 'Cheque Cleared',
 }
 
 /**
  * Every document of the period in time order. Invoices / bills / notes carry only an amount — the money
  * moving against them is the Payment row (incl. "received / paid now"). Money columns follow
- * accountBalances(): uncleared or bounced cheques show no money in/out.
+ * accountBalances(): uncleared or bounced cheques show no money in/out, and a cleared post-dated cheque
+ * shows its money on a CHEQUE_CLEARED row dated on its clearing date.
  */
 export async function listTransactions(companyId: string, from: Date, to: Date): Promise<TxnRow[]> {
   const date = { gte: from, lte: to }
   const [si, pi, pays, exps, srs, prs, txns, accounts, loans] = await Promise.all([
     db.salesInvoice.findMany({ where: { companyId, date }, select: { id: true, number: true, date: true, customerId: true, grandTotal: true, status: true, customer: { select: { name: true } } } }),
     db.purchaseInvoice.findMany({ where: { companyId, date }, select: { id: true, number: true, date: true, supplierId: true, supplierInvNo: true, grandTotal: true, status: true, supplier: { select: { name: true } } } }),
-    db.payment.findMany({ where: { companyId, date, mode: { notIn: NON_MONEY_MODES } }, select: { id: true, number: true, date: true, type: true, partyType: true, customerId: true, supplierId: true, amount: true, mode: true, accountId: true, chequeStatus: true, reference: true } }),
-    db.expense.findMany({ where: { companyId, date, status: NOT_CANCELLED }, select: { id: true, number: true, date: true, category: true, description: true, amount: true, paymentMode: true, paidTo: true, accountId: true, expenseType: true } }),
+    // Payments of the period, plus post-dated cheques cleared in it (their money row is on the clearing date)
+    db.payment.findMany({
+      where: { companyId, mode: { notIn: NON_MONEY_MODES }, OR: [{ date }, { chequeStatus: 'CLEARED', clearedDate: date }] },
+      select: { id: true, number: true, date: true, type: true, partyType: true, customerId: true, supplierId: true, amount: true, mode: true, accountId: true, chequeStatus: true, chequeNo: true, clearedDate: true, reference: true },
+    }),
+    db.expense.findMany({ where: { companyId, date, status: POSTED_EXPENSE }, select: { id: true, number: true, date: true, category: true, description: true, amount: true, paymentMode: true, paidTo: true, accountId: true, expenseType: true } }),
     db.salesReturn.findMany({ where: { companyId, date }, select: { id: true, number: true, date: true, customerId: true, grandTotal: true, status: true } }),
     db.purchaseReturn.findMany({ where: { companyId, date }, select: { id: true, number: true, date: true, supplierId: true, grandTotal: true, status: true } }),
     db.accountTxn.findMany({ where: { companyId, date }, select: { id: true, number: true, date: true, type: true, category: true, amount: true, fromAccountId: true, toAccountId: true, loanId: true, notes: true } }),
@@ -608,17 +636,32 @@ export async function listTransactions(companyId: string, from: Date, to: Date):
 
   for (const i of si) push({ id: `si-${i.id}`, date: i.date, type: 'SALE', number: i.number, partyId: i.customerId, party: i.customer?.name || '—', description: 'Sales invoice', mode: null, account: null, status: i.status, moneyIn: 0, moneyOut: 0, amount: i.status === 'CANCELLED' ? 0 : i.grandTotal })
   for (const b of pi) push({ id: `pi-${b.id}`, date: b.date, type: 'PURCHASE', number: b.number, partyId: b.supplierId, party: b.supplier?.name || '—', description: b.supplierInvNo ? `Purchase bill (supplier inv ${b.supplierInvNo})` : 'Purchase bill', mode: null, account: null, status: b.status, moneyIn: 0, moneyOut: 0, amount: b.status === 'CANCELLED' ? 0 : b.grandTotal })
+  const inPeriod = (d: Date) => d >= from && d <= to
   for (const p of pays) {
-    const counted = p.chequeStatus === null || p.chequeStatus === 'CLEARED'
     const isIn = p.type === 'RECEIPT'
     const partyId = p.customerId || p.supplierId
-    push({
-      id: `pay-${p.id}`, date: p.date, type: isIn ? 'PAYMENT_IN' : 'PAYMENT_OUT', number: p.number, partyId,
-      party: (p.customerId && custName.get(p.customerId)) || (p.supplierId && suppName.get(p.supplierId)) || '—',
-      description: `${isIn ? 'Received' : 'Paid'} by ${p.mode}${p.reference ? ` · ${p.reference}` : ''}${p.chequeStatus && p.chequeStatus !== 'CLEARED' ? ` · cheque ${p.chequeStatus.toLowerCase()}` : ''}`,
-      mode: p.mode, account: p.accountId ? accName.get(p.accountId) ?? null : null, status: p.chequeStatus,
-      moneyIn: isIn && counted ? p.amount : 0, moneyOut: !isIn && counted ? p.amount : 0, amount: p.amount,
-    })
+    const party = (p.customerId && custName.get(p.customerId)) || (p.supplierId && suppName.get(p.supplierId)) || '—'
+    const account = p.accountId ? accName.get(p.accountId) ?? null : null
+    // A cleared post-dated cheque moves money on its clearing date (as accountBalances / cashFlow):
+    // the payment row settles the party with no money; a "Cheque Cleared" row carries the money
+    const clearedLater = p.chequeStatus === 'CLEARED' && !!p.clearedDate
+    const counted = p.chequeStatus === null || (p.chequeStatus === 'CLEARED' && !p.clearedDate)
+    if (inPeriod(p.date)) {
+      push({
+        id: `pay-${p.id}`, date: p.date, type: isIn ? 'PAYMENT_IN' : 'PAYMENT_OUT', number: p.number, partyId, party,
+        description: `${isIn ? 'Received' : 'Paid'} by ${p.mode}${p.reference ? ` · ${p.reference}` : ''}${p.chequeStatus && p.chequeStatus !== 'CLEARED' ? ` · cheque ${p.chequeStatus.toLowerCase()}` : ''}${clearedLater ? ` · cheque cleared ${istDay(p.clearedDate!)}` : ''}`,
+        mode: p.mode, account, status: p.chequeStatus,
+        moneyIn: isIn && counted ? p.amount : 0, moneyOut: !isIn && counted ? p.amount : 0, amount: p.amount,
+      })
+    }
+    if (clearedLater && inPeriod(p.clearedDate!)) {
+      push({
+        id: `chq-${p.id}`, date: p.clearedDate!, type: 'CHEQUE_CLEARED', number: p.number, partyId, party,
+        description: `Cheque${p.chequeNo ? ` ${p.chequeNo}` : ''} ${isIn ? 'received' : 'issued'} on ${istDay(p.date)} cleared`,
+        mode: p.mode, account, status: 'CLEARED',
+        moneyIn: isIn ? p.amount : 0, moneyOut: isIn ? 0 : p.amount, amount: p.amount,
+      })
+    }
   }
   for (const e of exps) push({ id: `exp-${e.id}`, date: e.date, type: 'EXPENSE', number: e.number, partyId: null, party: e.paidTo || labelOf(e.category), description: `${e.expenseType === 'DIRECT' ? 'Direct' : 'Indirect'} · ${labelOf(e.category)} · ${e.description}`, mode: e.paymentMode, account: e.accountId ? accName.get(e.accountId) ?? null : null, status: null, moneyIn: 0, moneyOut: e.amount, amount: e.amount })
   for (const r of srs) push({ id: `sr-${r.id}`, date: r.date, type: 'CREDIT_NOTE', number: r.number, partyId: r.customerId, party: custName.get(r.customerId) || '—', description: 'Sales return / credit note', mode: null, account: null, status: r.status, moneyIn: 0, moneyOut: 0, amount: r.status === 'CANCELLED' ? 0 : r.grandTotal })

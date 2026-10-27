@@ -45,6 +45,24 @@ export const STATUS_TONE: Record<string, Tone> = {
 }
 
 export const PAYMENT_MODES = ['CASH', 'BANK', 'UPI', 'CHEQUE', 'NEFT', 'RTGS'] as const
+
+/** Cash & Bank account type a payment mode must use: CASH → a cash account; every other mode → a bank account. */
+export const accountTypeForMode = (mode: string | null | undefined): 'CASH' | 'BANK' => ((mode || 'CASH') === 'CASH' ? 'CASH' : 'BANK')
+
+export interface ModeAccount { id: string; name: string; type: string; active?: boolean; isDefault?: boolean; createdAt?: string | Date }
+
+/**
+ * Account choices for a payment mode (forms): only active accounts of the mode's type, and the account the server
+ * will use when none is chosen (default first, then the oldest — same order as postingAccount), or null when the
+ * company has none (the server then refuses: no fallback from bank to cash).
+ */
+export function accountsForMode<A extends ModeAccount>(accounts: A[], mode: string | null | undefined) {
+  const type = accountTypeForMode(mode)
+  const matching = accounts.filter((a) => a.active !== false && a.type === type)
+  const time = (a: A) => (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+  const fallback = [...matching].sort((a, b) => Number(!!b.isDefault) - Number(!!a.isDefault) || time(a) - time(b))[0] ?? null
+  return { type, matching, fallback }
+}
 export const EXPENSE_CATEGORIES = ['UTILITIES', 'FREIGHT', 'RENT', 'SALARY', 'MAINTENANCE', 'TOOLING', 'OTHER'] as const
 export const STOCK_TYPES = ['OPENING', 'GRN_IN', 'ISSUE_OUT', 'PRODUCTION_IN', 'DISPATCH_OUT', 'TRANSFER_IN', 'TRANSFER_OUT', 'ADJUST_IN', 'ADJUST_OUT', 'RETURN_IN', 'QC_REJECT', 'SALES_RETURN', 'SALES_RETURN_IN', 'SALES_RETURN_REVERSAL', 'PURCHASE_IN', 'PURCHASE_RETURN', 'PURCHASE_RETURN_OUT', 'PURCHASE_RETURN_REVERSAL', 'BACKFLUSH_OUT'] as const
 
@@ -69,7 +87,7 @@ export interface ApiResponse<T> {
   success: boolean
   data?: T
   message?: string
-  error?: { code: string; message: string }
+  error?: { code: string; message: string; details?: unknown }
 }
 
 // ============ RBAC: role → visible module keys (client-side gating) ============
@@ -124,6 +142,16 @@ export function canAccessModule(role: string | null | undefined, moduleKey: stri
   const allowed = ROLE_MODULE_KEYS[role]
   if (!allowed) return role === 'TENANT_ADMIN' // unknown roles default to minimal
   return allowed === '*' || allowed.includes(moduleKey)
+}
+
+/**
+ * Sensitive financial reports (Phase 5, option A): the general `reports` permission is not enough — the role also
+ * needs one of the money modules it already has (sales invoices, purchase invoices or Cash & Bank). Production,
+ * plant and quality managers keep the operational reports (stock valuation, item detail, sales / purchase analysis).
+ */
+export const FINANCIAL_REPORTS = ['profit-loss', 'balance-sheet', 'trial-balance', 'cash-flow', 'daybook', 'transactions', 'profitability'] as const
+export function canSeeFinancialReports(role: string | null | undefined): boolean {
+  return canAccessModule(role, 'reports') && ['sales-invoices', 'purchase-invoices', 'cash-bank'].some((k) => canAccessModule(role, k))
 }
 
 /** GST state / UT codes (first two digits of a GSTIN). */

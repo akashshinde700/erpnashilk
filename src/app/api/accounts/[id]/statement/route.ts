@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, ok, r2 } from '@/lib/erp-helpers'
-import { accountBalances, defaultAccounts } from '@/lib/accounts'
+import { ApiError, companyRequired, handleError, ok, r2, requireRead } from '@/lib/erp-helpers'
+import { POSTED_EXPENSE, accountBalances, fallbackAccounts, fallbackId, moneyDate, moneyPaymentWhere } from '@/lib/accounts'
 import { CATEGORY_LABEL, TXN_TYPE_LABEL, parseDate } from '../../_shared'
 
 type Params = { params: Promise<{ id: string }> }
@@ -18,14 +18,13 @@ interface StatementRow {
   clearedDate: Date | null
 }
 
-const NON_MONEY_MODES = ['CREDIT_NOTE', 'DEBIT_NOTE']
-
 // GET /api/accounts/[id]/statement?companyId=&from=YYYY-MM-DD&to=YYYY-MM-DD
 // → { account, from, to, opening, closing, totalIn, totalOut, rows } (chronological, running balance)
-// Same rules as accountBalances(): no credit/debit notes, post-dated cheques only once CLEARED,
-// cancelled expenses excluded, legacy rows without an account fall back to the default cash/bank account.
+// Same rules as accountBalances(): no credit/debit notes, post-dated cheques only once CLEARED (on their clearing
+// date), only POSTED expenses, legacy rows without an account fall back to the default cash/bank account.
 export async function GET(req: Request, { params }: Params) {
   try {
+    requireRead(req, 'cash-bank') // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
@@ -36,9 +35,9 @@ export async function GET(req: Request, { params }: Params) {
     const account = await db.moneyAccount.findFirst({ where: { id, companyId } })
     if (!account) throw new ApiError('Account not found', 404)
 
-    const { cash, bank } = await defaultAccounts(db, companyId)
-    const fallback = (mode?: string | null) => ((mode || 'CASH') === 'CASH' ? cash.id : (bank?.id ?? cash.id))
-    const takesLegacy = id === cash.id || id === bank?.id
+    const fb = await fallbackAccounts(db, companyId)
+    const fallback = (mode?: string | null) => fallbackId(fb, mode)
+    const takesLegacy = id === fb.cash?.id || id === fb.bank?.id
     const ownerOr = takesLegacy ? [{ accountId: id }, { accountId: null }] : [{ accountId: id }]
 
     const date: { gte?: Date; lte?: Date } = {}
@@ -48,14 +47,11 @@ export async function GET(req: Request, { params }: Params) {
 
     const [payments, expenses, txns] = await Promise.all([
       db.payment.findMany({
-        where: {
-          companyId, mode: { notIn: NON_MONEY_MODES }, ...dateWhere,
-          AND: [{ OR: ownerOr }, { OR: [{ chequeStatus: null }, { chequeStatus: 'CLEARED' }] }],
-        },
+        where: { AND: [moneyPaymentWhere(companyId, from || to ? date : undefined), { OR: ownerOr }] },
         orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
       }),
       db.expense.findMany({
-        where: { companyId, status: { not: 'CANCELLED' }, ...dateWhere, OR: ownerOr },
+        where: { companyId, status: POSTED_EXPENSE, ...dateWhere, OR: ownerOr },
         orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
       }),
       db.accountTxn.findMany({
@@ -99,7 +95,7 @@ export async function GET(req: Request, { params }: Params) {
       const isIn = p.type === 'RECEIPT'
       const pid = p.customerId || p.supplierId
       drafts.push({
-        id: p.id, kind: 'payment', date: p.date, createdAt: p.createdAt,
+        id: p.id, kind: 'payment', date: moneyDate(p), createdAt: p.createdAt,
         type: `${isIn ? 'Payment In' : 'Payment Out'} (${p.mode}${p.chequeNo ? ` #${p.chequeNo}` : ''})`,
         ref: p.number, party: (pid && partyName.get(pid)) || p.reference || '',
         in: isIn ? p.amount : 0, out: isIn ? 0 : p.amount, clearedDate: p.clearedDate,

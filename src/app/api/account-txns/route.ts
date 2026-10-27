@@ -1,5 +1,8 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, requireWrite } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, requireWrite, requireRead } from '@/lib/erp-helpers'
+import { businessDate } from '@/lib/business-date'
+import { CASH_TX, assertBalanceUnchanged, assertCashNotNegative, dayWindow, negativeCashOverride, refuseDuplicate, sameIstDay } from '@/lib/cash-guard'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 import { CATEGORY_LABEL, CbTx, MODULE_KEY, activeAccount, money, optStr, parseDate } from '../accounts/_shared'
 
 const IN_CATEGORIES = ['CAPITAL', 'OTHER_INCOME', 'OTHER']
@@ -9,6 +12,7 @@ const OUT_CATEGORIES = ['DRAWINGS', 'OTHER_EXPENSE', 'OTHER']
 // → { items: (AccountTxn & { fromAccountName, toAccountName, loanName })[], total } (date desc)
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'cash-bank') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const types = (searchParams.get('type') || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
@@ -54,6 +58,7 @@ export async function GET(req: Request) {
 //   + date?, reference?, notes?
 // Loan receipts / EMIs are created through /api/loans.
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, MODULE_KEY)
     const body = await req.json().catch(() => ({}) as Record<string, unknown>)
@@ -64,7 +69,13 @@ export async function POST(req: Request) {
       throw new ApiError('type must be ADJUST_IN, ADJUST_OUT or CONTRA (loans are recorded under Loans)', 400)
     }
     const amount = money(body?.amount, 'amount')
-    const date = parseDate(body?.date, 'date') ?? new Date()
+    const date = businessDate(body?.date)
+    const override = negativeCashOverride(req, body as { allowNegativeCash?: unknown })
+    idem = await claimIdempotency(req, companyId, 'POST /api/account-txns', body)
+    if (idem.replay) return idem.replay
+    // Adjust Cash sends the balance the user reviewed; the entry is refused if it has changed since
+    const expected = body?.expectedBalance === undefined || body?.expectedBalance === null ? null : Number(body.expectedBalance)
+    if (expected !== null && (!Number.isFinite(expected) || type === 'CONTRA')) throw new ApiError('expectedBalance must be a number (adjustments only)', 400)
     let category: string | null = null
     if (type === 'ADJUST_IN') {
       category = String(body?.category || 'OTHER').toUpperCase()
@@ -76,9 +87,18 @@ export async function POST(req: Request) {
 
     const txn = await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
-      const fromAcc = type === 'ADJUST_OUT' || type === 'CONTRA' ? await activeAccount(tx, companyId, body?.fromAccountId, 'From account') : null
-      const toAcc = type === 'ADJUST_IN' || type === 'CONTRA' ? await activeAccount(tx, companyId, body?.toAccountId, 'To account') : null
+      const fromAcc = type === 'ADJUST_OUT' || type === 'CONTRA' ? await activeAccount(tx, companyId, body?.fromAccountId, 'From account', date) : null
+      const toAcc = type === 'ADJUST_IN' || type === 'CONTRA' ? await activeAccount(tx, companyId, body?.toAccountId, 'To account', date) : null
       if (fromAcc && toAcc && fromAcc.id === toAcc.id) throw new ApiError('From and To accounts must be different', 400)
+      // Phase 5: same type, accounts and amount on the same IST day → confirm first (a cash count is protected by
+      // its expected balance instead)
+      if (body?.confirmDuplicate !== true && expected === null) {
+        const same = await txRaw.accountTxn.findMany({
+          where: { companyId, type, fromAccountId: fromAcc?.id ?? null, toAccountId: toAcc?.id ?? null, amount: { gte: amount - 0.005, lte: amount + 0.005 }, date: dayWindow(date) },
+          select: { number: true, date: true }, orderBy: { number: 'asc' }, take: 20,
+        })
+        refuseDuplicate(same.filter((x) => sameIstDay(x.date, date)).map((x) => x.number), body?.confirmDuplicate, 'type, accounts and amount')
+      }
 
       const number = await nextDocNumber(tx, companyId, 'ATX', date)
       const created = await tx.accountTxn.create({
@@ -95,10 +115,18 @@ export async function POST(req: Request) {
         ? `Transfer ₹${amount.toFixed(2)} ${fromAcc!.name} → ${toAcc!.name}`
         : `${type === 'ADJUST_IN' ? 'Added' : 'Reduced'} ₹${amount.toFixed(2)} ${type === 'ADJUST_IN' ? 'to' : 'from'} ${(toAcc || fromAcc)!.name} (${CATEGORY_LABEL[category || 'OTHER'] || category})`
       await logAudit(tx, { companyId, userName: body?.userName, action: 'CREATE', entity: 'AccountTxn', entityId: created.id, details: `${number} • ${what}` })
+      if (expected !== null) {
+        await assertBalanceUnchanged(txRaw, companyId, (toAcc || fromAcc)!.id, date, expected, type === 'ADJUST_IN' ? amount : -amount)
+      }
+      if (fromAcc) {
+        await assertCashNotNegative(txRaw, { companyId, accounts: [{ accountId: fromAcc.id }], from: date, override, what: `${number}`, entity: 'AccountTxn', entityId: created.id, userName: body?.userName as string | undefined })
+      }
+      await idem!.done(txRaw, created, type === 'CONTRA' ? 'Transfer recorded' : 'Entry recorded')
       return created
-    })
+    }, CASH_TX)
     return ok(txn, type === 'CONTRA' ? 'Transfer recorded' : 'Entry recorded')
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

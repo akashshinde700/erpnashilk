@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, r2, requireRead } from '@/lib/erp-helpers'
 import { fyRange, gstTotals, headsTotal, type TaxHeads } from '@/lib/accounting'
 
 // GET /api/reports/gstr9?companyId=&fy=YYYY   (FY = 1 Apr YYYY → 31 Mar YYYY+1; default current FY)
@@ -18,6 +18,7 @@ const HEADS: (keyof TaxHeads)[] = ['igst', 'cgst', 'sgst', 'cess']
 
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'gst-report') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const period = fyRange(searchParams.get('fy'))

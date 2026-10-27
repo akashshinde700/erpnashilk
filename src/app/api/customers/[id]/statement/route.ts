@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, ApiError, r2, requireRead } from '@/lib/erp-helpers'
+import { ADVANCE, ADVANCE_ADJ, SALES_RETURN, salesReturnCredits } from '@/lib/party-credits'
 
 // GET /api/customers/[id]/statement?companyId=&from=&to=
 // Read-only statement of account (no requireWrite — mirrors the read-only GET convention
@@ -8,6 +9,7 @@ import { ok, handleError, companyRequired, ApiError, r2 } from '@/lib/erp-helper
 // to = today — same convention as /api/reports/sales-by-customer.
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireRead(req, ['receivables', 'customers']) // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
@@ -40,27 +42,33 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     })
 
     // Payment has no Prisma relations — plain customerId string (mirrors /api/payments GET).
-    // Voiding a payment DELETES the row (and reverses the invoice paidAmount), and invoices
-    // cannot be cancelled while paidAmount > 0, so every stored Payment row is a valid credit.
-    const payments = await db.payment.findMany({
-      where: { companyId, customerId: id },
+    // Voiding a payment DELETES the row (and reverses the invoice paidAmount). Rows on the statement:
+    //  - receipts (incl. advances and the part of a credit note applied to its invoice) → credit; a bounced cheque
+    //    gave no credit and is left out
+    //  - refunds paid to the customer (invoiceType SALES_RETURN) → debit
+    //  - applications of an advance / of a return credit to an invoice move nothing between us and the customer
+    //    (the credit was given when the advance came in / the note was posted) → left out
+    //  - the part of a credit note NOT applied to its own invoice → credit (CREDIT_NOTE row below)
+    const payments = (await db.payment.findMany({
+      where: { companyId, customerId: id, OR: [{ chequeStatus: null }, { chequeStatus: { not: 'BOUNCED' } }] },
       orderBy: { date: 'asc' },
-      select: { id: true, number: true, date: true, amount: true, mode: true, reference: true, invoiceId: true, invoiceType: true },
+      select: { id: true, number: true, date: true, amount: true, mode: true, reference: true, invoiceId: true, invoiceType: true, allocatedFromId: true },
+    })).filter((p) => p.mode !== ADVANCE_ADJ && !p.allocatedFromId)
+    const returns = await db.salesReturn.findMany({
+      where: { companyId, customerId: id, status: 'POSTED' },
+      orderBy: { date: 'asc' },
+      select: { id: true, number: true, date: true, grandTotal: true, invoiceId: true, status: true },
     })
+    const noteCredit = await salesReturnCredits(db, companyId, returns)
+    const returnById = new Map(returns.map((r) => [r.id, r.number]))
 
     const numberByInvoiceId = new Map(invoices.map((i) => [i.id, i.number]))
 
-    const openingDebits = r2(invoices.filter((i) => i.date < fd).reduce((s, i) => s + (i.grandTotal || 0), 0))
-    const openingCredits = r2(payments.filter((p) => p.date < fd).reduce((s, p) => s + (p.amount || 0), 0))
-    // Master opening balance (carried forward from before using the ERP) + activity before `from`
-    const openingBalance = r2((customer.openingBalance || 0) + openingDebits - openingCredits)
-
-    type Entry = { date: Date; type: 'INVOICE' | 'PAYMENT'; ref: string; particulars: string; debit: number; credit: number }
-    const entries: Entry[] = []
+    type Entry = { date: Date; type: 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'REFUND'; ref: string; particulars: string; debit: number; credit: number }
+    const all: Entry[] = []
 
     for (const inv of invoices) {
-      if (inv.date < fd || inv.date > td) continue
-      entries.push({
+      all.push({
         date: inv.date,
         type: 'INVOICE',
         ref: inv.number,
@@ -70,17 +78,37 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       })
     }
     for (const p of payments) {
-      if (p.date < fd || p.date > td) continue
+      if (p.invoiceType === SALES_RETURN) {
+        all.push({
+          date: p.date, type: 'REFUND', ref: p.number,
+          particulars: `Refund ${p.number} by ${p.mode}${p.invoiceId && returnById.get(p.invoiceId) ? ` on credit note ${returnById.get(p.invoiceId)}` : ''}`,
+          debit: r2(p.amount || 0), credit: 0,
+        })
+        continue
+      }
       const against = p.invoiceId ? numberByInvoiceId.get(p.invoiceId) : undefined
-      entries.push({
+      all.push({
         date: p.date,
         type: 'PAYMENT',
         ref: p.number,
-        particulars: `Receipt ${p.number} by ${p.mode}${p.reference ? ` · Ref: ${p.reference}` : ''}${against ? ` towards ${against}` : ''}`,
+        particulars: p.invoiceType === ADVANCE
+          ? `Advance ${p.number} by ${p.mode}${p.reference ? ` · Ref: ${p.reference}` : ''}`
+          : `${p.mode === 'CREDIT_NOTE' ? 'Credit note' : 'Receipt'} ${p.number}${p.mode === 'CREDIT_NOTE' ? '' : ` by ${p.mode}`}${p.reference ? ` · Ref: ${p.reference}` : ''}${against ? ` towards ${against}` : ''}`,
         debit: 0,
         credit: r2(p.amount || 0),
       })
     }
+    for (const r of returns) {
+      const c = noteCredit.get(r.id)
+      const excess = c ? r2(c.total - c.appliedToInvoice) : 0
+      if (excess <= 0.005) continue
+      all.push({ date: r.date, type: 'CREDIT_NOTE', ref: r.number, particulars: `Credit note ${r.number} — credit to the customer (not adjusted on its invoice)`, debit: 0, credit: excess })
+    }
+
+    // Master opening balance (carried forward from before using the ERP) + activity before `from`
+    const before = all.filter((e) => e.date < fd)
+    const openingBalance = r2((customer.openingBalance || 0) + before.reduce((s, e) => s + e.debit - e.credit, 0))
+    const entries = all.filter((e) => e.date >= fd && e.date <= td)
 
     // Chronological merge; on the same date invoices are listed before receipts so the
     // running balance always shows the day's billing before the day's collections.

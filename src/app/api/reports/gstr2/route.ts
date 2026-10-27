@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, r2, requireRead } from '@/lib/erp-helpers'
 import { parsePeriod } from '@/lib/accounting'
 
 // GET /api/reports/gstr2?companyId=&from=&to=   (UI passes a month)
@@ -8,6 +8,7 @@ import { parsePeriod } from '@/lib/accounting'
 // notes of the period, and a supplier-GSTIN-wise summary.
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'gst-report') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { fromStr, toStr, from, to } = parsePeriod(searchParams)

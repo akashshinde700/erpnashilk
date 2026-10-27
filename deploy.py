@@ -23,9 +23,21 @@ Run:
   python deploy.py --stage      # upload + type check + lint + build in staging only
                                 #   (no DB push, live site untouched)
 
-Credentials come from deploy_config.json (gitignored) next to this script.
+Credentials come from deploy_config.manuflow.json (gitignored) next to this
+script, or the file named by DEPLOY_CONFIG. It must exist -- there is no
+fallback to deploy_config.json, which belongs to another project. Keys:
+  site_password     the `menu` SSH password (required)
+  host_key_sha256   the server's SSH host key fingerprint, as
+                    `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints it
+                    (required; checked before the password is sent)
+
+Before touching anything the script checks that the remote site really is
+ManuFlow and that <APP>/.env carries every required key. A full deploy dumps
+the database to ~/backups/predeploy/ and stops if the dump fails.
 """
 
+import base64
+import hashlib
 import json
 import os
 import sys
@@ -34,7 +46,7 @@ import time
 import paramiko
 
 LOCAL_ROOT = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(LOCAL_ROOT, "deploy_config.json")
+CONFIG_PATH = os.environ.get("DEPLOY_CONFIG") or os.path.join(LOCAL_ROOT, "deploy_config.manuflow.json")
 
 ARGS = sys.argv[1:]
 CHECK_ONLY = "--check" in ARGS
@@ -46,15 +58,18 @@ DB_PUSH = "--no-db-push" not in ARGS and not STAGE_ONLY
 CFG = {
     "host": "200.141.9.196",
     "site_user": "menu",
-    "site_password": "",  # deploy_config.json only -- never commit a password
+    "site_password": "",  # config file only -- never commit a password
     "site_domain": "www.menu.aetherdevsolutions.online",
     "app_port": 3008,
     "pm2_name": "manuflow",
     "keep_releases": 3,
+    "host_key_sha256": "",
 }
-if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
-        CFG.update(json.load(_f))
+if not os.path.isfile(CONFIG_PATH):
+    print(f"[ERROR] {CONFIG_PATH} not found.", flush=True)
+    sys.exit(1)
+with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
+    CFG.update(json.load(_f))
 
 HOST = CFG["host"]
 SITE_USER = CFG["site_user"]
@@ -63,17 +78,25 @@ SITE_DOMAIN = CFG["site_domain"]
 APP_PORT = int(CFG["app_port"])
 PM2_NAME = CFG["pm2_name"]
 KEEP_RELEASES = int(CFG["keep_releases"])
+HOST_KEY_SHA256 = CFG["host_key_sha256"].strip().removeprefix("SHA256:").rstrip("=")
 
 SITE_HOME = f"/home/{SITE_USER}"
 APP = f"{SITE_HOME}/htdocs/{SITE_DOMAIN}"
 STANDALONE = f"{APP}/.next/standalone"
 STAGING = f"{SITE_HOME}/tmp/deploy-staging"
 RELEASES = f"{SITE_HOME}/backups/releases"
+DB_BACKUPS = f"{SITE_HOME}/backups/predeploy"
 
 NVM_INIT = f'export NVM_DIR="{SITE_HOME}/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
 
 # Written by the app at runtime, relative to .next/standalone.
 RUNTIME_DIRS = []  # ManuFlow keeps all state in MySQL
+
+# Copied into the standalone dir on every deploy, so a key missing here is a key
+# missing in production. Checked by name only; values are never read back.
+REQUIRED_ENV = ["DATABASE_URL", "SESSION_SECRET"]
+# Banner line of prisma/schema.prisma -- proves the remote dir is this app.
+APP_MARKER = "ManuFlow ERP"
 
 # Source that gets uploaded. Everything else (node_modules, .next, .env,
 # deploy files, docs) stays local.
@@ -118,12 +141,92 @@ def run(ssh, command, timeout=600, check=False, quiet=False):
     return out, err, code
 
 
+def fingerprint(key):
+    return base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+
+
+class PinnedHostKey(paramiko.MissingHostKeyPolicy):
+    # paramiko consults this before authenticating, so a server with the wrong
+    # key never receives the password.
+    def missing_host_key(self, client, hostname, key):
+        fp = fingerprint(key)
+        if fp != HOST_KEY_SHA256:
+            raise paramiko.SSHException(f"host key mismatch for {hostname}: server presented SHA256:{fp}")
+
+
 def connect():
     c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    c.set_missing_host_key_policy(PinnedHostKey())
     c.connect(HOST, username=SITE_USER, password=SITE_PASSWORD, timeout=30,
               look_for_keys=False, allow_agent=False)
     return c
+
+
+def verify_target(ssh):
+    """Refuse to touch a site that isn't ManuFlow, or whose .env would break login."""
+    out, _, code = run(ssh, f"head -5 {APP}/prisma/schema.prisma 2>/dev/null", quiet=True)
+    if code != 0:
+        # No schema: only acceptable for a fresh CloudPanel site (first deploy).
+        out, _, _ = run(ssh, f"ls -A {APP} 2>/dev/null | grep -vxE '\\.well-known|\\.env|\\.gitignore' || true",
+                        quiet=True)
+        code = 0 if out.strip() else 1
+    if code == 0 and APP_MARKER not in out:
+        raise RuntimeError(f"{APP} is not a {APP_MARKER} site -- check site_user/site_domain in {CONFIG_PATH}")
+    out, _, _ = run(ssh, "pm2 jlist 2>/dev/null", quiet=True)
+    try:
+        procs = {x["name"]: x["pm2_env"].get("pm_cwd") for x in json.loads(out or "[]")}
+    except (ValueError, KeyError, TypeError):
+        procs = {}
+    if PM2_NAME in procs and procs[PM2_NAME] != STANDALONE:
+        raise RuntimeError(f"PM2 process {PM2_NAME} runs from {procs[PM2_NAME]}, not {STANDALONE}")
+    missing = [k for k in REQUIRED_ENV
+               if run(ssh, f"grep -qE '^{k}=.+' {APP}/.env", quiet=True)[2] != 0]
+    if missing:
+        raise RuntimeError(f"{APP}/.env is missing {', '.join(missing)} -- add it on the server first")
+    p(f"  target verified: {SITE_USER}@{HOST} {APP} (pm2 {PM2_NAME})")
+
+
+# Runs on the server as the site user: reads DATABASE_URL from the given .env,
+# writes the credentials to a 0600 defaults-file (never argv, never stdout) and
+# dumps to <dest>.tmp, renaming only after mysqldump and gzip both succeed.
+DUMP_PY = r'''
+import os, subprocess, sys, tempfile, urllib.parse as u
+env, dest = sys.argv[1], sys.argv[2]
+url = next(l.split("=", 1)[1].strip().strip('"').strip("'") for l in open(env) if l.startswith("DATABASE_URL="))
+p = u.urlparse(url)
+fd, cnf = tempfile.mkstemp(); os.chmod(cnf, 0o600)
+os.write(fd, ("[client]\nuser=%s\npassword=%s\nhost=%s\nport=%s\n" % (
+    u.unquote(p.username or ""), u.unquote(p.password or ""), p.hostname, p.port or 3306)).encode()); os.close(fd)
+try:
+    with open(dest + ".tmp", "wb") as out:
+        os.chmod(dest + ".tmp", 0o600)
+        d = subprocess.Popen(["mysqldump", "--defaults-extra-file=" + cnf, "--single-transaction", "--quick",
+                              "--routines", "--triggers", "--no-tablespaces", p.path.lstrip("/")],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        g = subprocess.run(["gzip", "-c"], stdin=d.stdout, stdout=out)
+        d.stdout.close(); err = d.stderr.read().decode(errors="replace"); d.wait()
+    if d.returncode or g.returncode:
+        os.remove(dest + ".tmp"); sys.exit("mysqldump failed: " + err[-400:])
+    os.rename(dest + ".tmp", dest)
+finally:
+    os.remove(cnf)
+'''
+
+
+def backup_db(ssh, env_file, stamp):
+    dest = f"{DB_BACKUPS}/{stamp}.sql.gz"
+    run(ssh, f"mkdir -p {DB_BACKUPS} && chmod 700 {DB_BACKUPS}", check=True)
+    _, stdout, stderr = ssh.exec_command(f"python3 - {env_file} {dest}", timeout=900)
+    stdout.channel.sendall(DUMP_PY.encode()); stdout.channel.shutdown_write()
+    out, err = stdout.read().decode("utf-8", "replace"), stderr.read().decode("utf-8", "replace")
+    if stdout.channel.recv_exit_status() != 0:
+        raise RuntimeError(f"database backup failed -- deploy stopped: {(out + err).strip()[-400:]}")
+    # A real dump ends with mysqldump's completion line; a truncated one doesn't.
+    out, _, code = run(ssh, f"stat -c %s {dest} && zcat {dest} | tail -1 | grep -q 'Dump completed'", quiet=True)
+    if code != 0:
+        raise RuntimeError(f"database backup {dest} is incomplete -- deploy stopped")
+    p(f"  database backup: {dest} ({int(out.split()[0]) / 1024:.0f} KB gz, verified complete)")
+    return dest
 
 
 def sftp_mkdirs(sftp, remote_dir):
@@ -193,15 +296,23 @@ def health(ssh):
     time.sleep(8)
     local = http_status(ssh, f"http://127.0.0.1:{APP_PORT}/")
     public = http_status(ssh, f"https://{SITE_DOMAIN}/", insecure=True)
+    # A dummy session cookie makes the middleware HMAC it: 401 means SESSION_SECRET
+    # is loaded, 500 means login is broken even though / still renders.
+    out, _, _ = run(ssh, f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 25 "
+                         f"-H 'Cookie: erp_session=health.check' http://127.0.0.1:{APP_PORT}/api/auth/me || true",
+                    quiet=True)
+    session = out.strip() or "no response"
     p(f"[local]  GET 127.0.0.1:{APP_PORT}/ -> {local}")
+    p(f"[local]  GET /api/auth/me (dummy session) -> {session}  (expect 401)")
     p(f"[public] GET https://{SITE_DOMAIN}/ -> {public}")
-    return local in ("200", "307", "308")
+    return local in ("200", "307", "308") and session == "401"
 
 
 # -- modes ----------------------------------------------------
 def check(ssh):
     banner(f"Live status: {SITE_DOMAIN}")
-    run(ssh, "uptime; df -h / | tail -1; node -v")
+    verify_target(ssh)
+    run(ssh, f"uptime; df -h {SITE_HOME} | tail -1; node -v")
     run(ssh, "pm2 list 2>&1 | cat")
     run(ssh, f"cat {STANDALONE}/.next/BUILD_ID 2>/dev/null; echo; ls -la --time-style=long-iso {STANDALONE}/server.js")
     run(ssh, f"cd {STANDALONE} && du -sh {' '.join(RUNTIME_DIRS)} 2>/dev/null")
@@ -212,6 +323,7 @@ def check(ssh):
 
 def rollback(ssh):
     banner("Rollback to previous release")
+    verify_target(ssh)
     out, _, _ = run(ssh, f"ls -1t {RELEASES} 2>/dev/null | grep -v rolledback | head -1", quiet=True)
     prev = out.strip()
     if not prev:
@@ -223,7 +335,8 @@ def rollback(ssh):
     copy_runtime(ssh, STANDALONE, f"{prev_dir}/standalone")
     run(ssh, f"mv {APP}/.next {RELEASES}/next-{stamp}-rolledback && mv {prev_dir} {APP}/.next", check=True)
     run(ssh, f"pm2 restart {PM2_NAME} 2>&1 | cat", check=True)
-    health(ssh)
+    if not health(ssh):
+        raise RuntimeError(f"rolled-back release {prev} is not healthy either -- check pm2 logs {PM2_NAME}")
 
 
 def deploy(ssh):
@@ -232,6 +345,8 @@ def deploy(ssh):
     banner("[1] Preflight")
     run(ssh, "node -v; npm -v; command -v pm2 >/dev/null || npm install -g pm2 2>&1 | tail -3", check=True)
     run(ssh, f"test -f {APP}/.env", check=True)
+    verify_target(ssh)
+    run(ssh, f"df -h {SITE_HOME} | tail -1")
     _, _, code = run(ssh, f"test -f {STANDALONE}/server.js && pm2 describe {PM2_NAME} >/dev/null")
     first = code != 0
     if first:
@@ -249,6 +364,16 @@ def deploy(ssh):
     if n < 50:
         raise RuntimeError(f"only {n} files uploaded -- aborting")
     run(ssh, f"cp {APP}/.env {STAGING}/.env && chmod 600 {STAGING}/.env", check=True)
+    # The repo is locked with bun, so there's no local package-lock.json; reuse the
+    # live one so npm installs the versions already running instead of re-resolving ^ranges.
+    run(ssh, f"[ -f {STAGING}/package-lock.json ] || [ ! -f {APP}/package-lock.json ] || "
+             f"cp {APP}/package-lock.json {STAGING}/package-lock.json", check=True)
+
+    if not STAGE_ONLY:
+        banner("[2b] Database backup")
+        # Before db push and the swap: a release rollback restores code only, so
+        # this dump is what puts data back if a schema change goes wrong.
+        backup_db(ssh, f"{APP}/.env", stamp)
 
     banner("[3] npm install + prisma")
     run(ssh, f"cd {STAGING} && npm install --no-audit --no-fund 2>&1 | tail -15", timeout=1800, check=True)
@@ -312,12 +437,18 @@ def deploy(ssh):
     banner("[SUCCESS]")
     p(f"  URL      : https://{SITE_DOMAIN}")
     p(f"  Previous : {RELEASES}/next-{stamp}  (python deploy.py --rollback)")
+    p(f"  DB dump  : {DB_BACKUPS}/{stamp}.sql.gz")
 
 
 def main():
     if not SITE_PASSWORD:
-        p("[ERROR] site_password is empty. Put it in deploy_config.json next to this script.")
+        p(f"[ERROR] site_password is empty in {CONFIG_PATH}.")
         sys.exit(1)
+    if not HOST_KEY_SHA256:
+        p(f"[ERROR] host_key_sha256 is not set in {CONFIG_PATH}. Confirm it from the Hostinger browser\n"
+          f"        terminal: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub")
+        sys.exit(1)
+    p(f"[CONFIG] {CONFIG_PATH}")
     if not CHECK_ONLY and not os.path.isfile(os.path.join(LOCAL_ROOT, "public", "logo.svg")):
         p("[ERROR] public/ is missing locally -- deploying would ship a site with no logo.")
         sys.exit(1)

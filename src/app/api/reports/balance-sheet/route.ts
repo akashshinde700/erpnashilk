@@ -1,10 +1,11 @@
-import { ok, handleError, companyRequired } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, requireFinancialReports } from '@/lib/erp-helpers'
 import { balanceSheetFrom, parseAsOf, positionAsOf } from '@/lib/accounting'
 
 // GET /api/reports/balance-sheet?companyId=&asOf=YYYY-MM-DD (default today)
 // Assets = Liabilities + Equity; "Opening balance difference" is the explicit balancing figure.
 export async function GET(req: Request) {
   try {
+    requireFinancialReports(req) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { asOfStr, asOf } = parseAsOf(searchParams)

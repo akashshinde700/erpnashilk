@@ -14,7 +14,7 @@ import {
 } from '@/components/erp/kit'
 import { apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { ItemPicker, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } from '@/components/erp/item-picker'
-import { PAYMENT_MODES, fmtDate, fmtMoney } from '@/lib/erp-constants'
+import { PAYMENT_MODES, accountsForMode, fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
 import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, toBaseQty, unitOptions } from '@/lib/units'
 
@@ -87,7 +87,7 @@ function LineSerialPick({ companyId, itemId, warehouseId, qty, value, onChange }
   )
 }
 interface WarehouseRow { id: string; code?: string | null; name?: string | null; type?: string | null }
-interface AccountRow { id: string; name: string; type: string; isDefault?: boolean; active?: boolean }
+interface AccountRow { id: string; name: string; type: string; isDefault?: boolean; active?: boolean; createdAt?: string }
 interface LastRate { rate: number; discountPct: number; date: string; ref: string }
 interface BillAdj { billDiscount: number; freight: number; freightGst: number; packing: number; packingGst: number; roundOff: boolean }
 interface ChallanDetail {
@@ -246,6 +246,8 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
   const [packingGstRate, setPackingGstRate] = React.useState(18)
   const [receivedAmount, setReceivedAmount] = React.useState(0)
   const [receivedMode, setReceivedMode] = React.useState('CASH')
+  const [receivedChequeNo, setReceivedChequeNo] = React.useState('')
+  const [receivedChequeDate, setReceivedChequeDate] = React.useState('')
   const [receivedAccountId, setReceivedAccountId] = React.useState('') // '' = default account for the mode
   const [billingName, setBillingName] = React.useState('')
   const [driverPhone, setDriverPhone] = React.useState('')
@@ -270,7 +272,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     setVehicleNo(''); setTransporter('')
     setLines([emptyLine()])
     setIsCashSale(false); setBillDiscount(0); setFreightCharge(0); setFreightGstRate(18); setPackingCharge(0); setPackingGstRate(18)
-    setReceivedAmount(0); setReceivedMode('CASH'); setReceivedAccountId(''); setLastHints({})
+    setReceivedAmount(0); setReceivedMode('CASH'); setReceivedAccountId(''); setReceivedChequeNo(''); setReceivedChequeDate(''); setLastHints({})
     setBillingName(''); setDriverPhone(''); setDeductStock(true); setStockWarehouseId('')
     setEditing(null)
   }
@@ -450,6 +452,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
         receivedAmount: receivedAmount > 0 ? receivedAmount : isCashSale ? undefined : 0,
         receivedMode,
         receivedAccountId: effectiveAccountId || undefined,
+        ...(receivedMode === 'CHEQUE' ? { receivedChequeNo: receivedChequeNo.trim() || undefined, receivedChequeDate: receivedChequeDate || undefined } : {}),
         billingName: billingName.trim() || undefined, driverPhone: driverPhone.trim() || undefined,
         // Direct sale only — with an SO / challan the challan dispatch already moved the stock
         deductStock: directSale ? deductStock : undefined,
@@ -887,11 +890,10 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
   const whRows = warehouses.data?.items ?? []
   const effectiveWarehouseId = stockWarehouseId || (whRows.find((w) => w.type === 'FG') ?? whRows[0])?.id || ''
   const whOpts = whRows.map((w) => ({ value: w.id, label: w.name ? `${w.code || ''} ${w.name}`.trim() : w.code || w.id }))
-  // "Into account": Cash for CASH mode, otherwise the default bank (else cash)
-  const pickDefault = (type: string) => accounts.filter((a) => a.type === type).sort((a, b) => Number(!!b.isDefault) - Number(!!a.isDefault))[0]
-  const defaultAccount = receivedMode === 'CASH' ? pickDefault('CASH') : (pickDefault('BANK') ?? pickDefault('CASH'))
-  const effectiveAccountId = accounts.length ? (receivedAccountId || defaultAccount?.id || '') : ''
-  const accountOpts = accounts.map((a) => ({ value: a.id, label: `${a.name}${a.type === 'CASH' ? ' (Cash)' : ''}` }))
+  // "Into account": a cash account for CASH, a bank account for every other mode (no fallback to cash — CB-R5)
+  const forMode = accountsForMode(accounts, receivedMode)
+  const effectiveAccountId = accounts.length ? (receivedAccountId || forMode.fallback?.id || '') : ''
+  const accountOpts = forMode.matching.map((a) => ({ value: a.id, label: a.name }))
 
   const columns: Column<InvoiceRow>[] = [
     { key: 'number', header: 'Invoice #', render: (r) => <span className="font-medium">{r.number}</span> },
@@ -1164,9 +1166,23 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
                 <NumberInput value={receivedAmount} min={0} onChange={setReceivedAmount} placeholder={isCashSale ? 'Full amount' : '0'} /></label>
               <label className="grid gap-0.5"><span className="text-[11px] text-muted-foreground">Mode</span>
                 <SelectInput value={receivedMode} onChange={(m) => { setReceivedMode(m); setReceivedAccountId('') }} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} /></label>
+              {receivedMode === 'CHEQUE' && (
+                <>
+                  <label className="grid gap-0.5"><span className="text-[11px] text-muted-foreground">Cheque no.</span>
+                    <TextInput value={receivedChequeNo} onChange={(e) => setReceivedChequeNo(e.target.value)} /></label>
+                  <label className="grid gap-0.5"><span className="text-[11px] text-muted-foreground">Cheque date</span>
+                    <DateInput value={receivedChequeDate} onChange={setReceivedChequeDate} /></label>
+                  {receivedChequeDate > today() && (
+                    <p className="col-span-2 text-[11px] text-amber-700 dark:text-amber-400">Post-dated cheque — the invoice is settled now; the money counts in the account once the cheque is cleared.</p>
+                  )}
+                </>
+              )}
               {accounts.length > 0 && (
                 <label className="col-span-2 grid gap-0.5"><span className="text-[11px] text-muted-foreground">Into account</span>
-                  <SelectInput value={effectiveAccountId} onChange={setReceivedAccountId} options={accountOpts} /></label>
+                  <SelectInput value={effectiveAccountId} onChange={setReceivedAccountId} options={accountOpts} placeholder={`No ${forMode.type === 'BANK' ? 'bank' : 'cash'} account`} /></label>
+              )}
+              {accounts.length > 0 && !forMode.matching.length && (
+                <p className="col-span-2 text-[11px] text-red-600">No {forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to record {receivedMode} receipts.</p>
               )}
               <p className="col-span-2 text-[11px] text-muted-foreground">
                 {isCashSale && receivedAmount <= 0

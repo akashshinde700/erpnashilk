@@ -4,16 +4,16 @@ import { POST as parse } from '@/app/api/import-center/parse/route'
 import { POST as preview } from '@/app/api/import-center/preview/route'
 import { IMPORT_DATA_TYPES, findDataType, suggestMapping } from '@/lib/import/fields'
 import { parseImportFile } from '@/lib/import/parse-file'
-import { DATA_TYPE_MR, friendlyError, problemRowsCsv, reportCell, templateCsv } from '@/lib/import/wizard-helpers'
+import { DATA_TYPE_UI, friendlyError, problemRowsCsv, reportCell, templateCsv } from '@/lib/import/wizard-helpers'
 import type { RunRow } from '@/lib/import/run'
 import { apiRequest, call, uploadRequest } from './helpers/api'
 import { resetDb } from './helpers/db'
 import { seedTenant } from './helpers/seed'
 
 describe('wizard helpers', () => {
-  test('every data type has a Marathi label; unavailable ones offer no template', () => {
+  test('every data type has a UI label; unavailable ones offer no template', () => {
     for (const d of IMPORT_DATA_TYPES) {
-      expect(DATA_TYPE_MR[d.key]?.name).toBeTruthy()
+      expect(DATA_TYPE_UI[d.key]?.name).toBeTruthy()
       if (!d.available) expect(templateCsv(d.key)).toBeNull()
     }
     expect(findDataType('credit-notes')?.available).toBe(false)
@@ -44,11 +44,11 @@ describe('wizard helpers', () => {
     expect(reportCell('@cmd')).toBe("'@cmd")
   })
 
-  test('friendly errors in Marathi for generic failures; server validation text kept', () => {
-    expect(friendlyError(new TypeError('Failed to fetch'))).toContain('सर्व्हरशी संपर्क तुटला')
-    expect(friendlyError(new Error('Your role is not allowed to modify import-center'))).toContain('परवानगी नाही')
-    expect(friendlyError(new Error('The file is larger than 2 MB'))).toContain('फाइल खूप मोठी')
-    expect(friendlyError(new Error('Something went wrong on the server — please try again'))).toContain('सर्व्हरवर अडचण')
+  test('friendly English errors for generic failures; server validation text kept', () => {
+    expect(friendlyError(new TypeError('Failed to fetch'))).toContain('Could not reach the server')
+    expect(friendlyError(new Error('Your role is not allowed to modify import-center'))).toContain('You do not have permission')
+    expect(friendlyError(new Error('The file is larger than 2 MB'))).toContain('The file is too large')
+    expect(friendlyError(new Error('Something went wrong on the server — please try again'))).toContain('Something went wrong on the server')
     expect(friendlyError(new Error('Map the required fields: GST rate %'))).toBe('Map the required fields: GST rate %')
   })
 })

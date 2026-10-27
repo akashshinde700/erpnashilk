@@ -1,8 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import {
-  ok, handleError, companyRequired, nextDocNumber, computeBillTotals, logAudit, ApiError, r2, requireWrite, postStock,
-} from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, nextDocNumber, computeBillTotals, logAudit, ApiError, r2, requireWrite, postStock, requireRead } from '@/lib/erp-helpers'
 import { attachReturnInfo, billStatus } from './shared'
 import { batchNote, consumeBatches, parseSerials, returnSerialsToSupplier } from '@/lib/batches'
 
@@ -20,6 +18,7 @@ function toDate(v: unknown): Date | null {
 // ?invoiceId= (returns of one bill) &status= &q= (return no / reason)
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'purchase-returns') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const where: Prisma.PurchaseReturnWhereInput = { companyId }

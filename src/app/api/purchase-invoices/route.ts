@@ -1,10 +1,13 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import {
-  ok, handleError, companyRequired, nextDocNumber, computeBillTotals, isInterStateParty, logAudit, ApiError, requireWrite,
+  ok, handleError, companyRequired, nextDocNumber, computeBillTotals, isInterStateParty, logAudit, ApiError, requireWrite, requireRead,
 } from '@/lib/erp-helpers'
 import { PAYMENT_MODES } from '@/lib/erp-constants'
-import { accountForMode } from '@/lib/accounts'
+import { assertOnOrAfterOpening, chequeDetails, ensureCashFor, postingAccount } from '@/lib/accounts'
+import { businessDate } from '@/lib/business-date'
+import { CASH_TX, assertCashNotNegative, negativeCashOverride } from '@/lib/cash-guard'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 import { joinSerials, parseSerials } from '@/lib/batches'
 import { billTaxLines, gstPct, num, receiveBillStock, receiveWarehouse, toDate, trackingFlags, type PinvLineInput } from './_bill'
 
@@ -13,10 +16,10 @@ import { billTaxLines, gstPct, num, receiveBillStock, receiveWarehouse, toDate, 
 type HelperTx = Prisma.TransactionClient & Parameters<typeof nextDocNumber>[0] & Parameters<typeof logAudit>[0]
 
 // Line items carry only itemId (no Item relation in schema) — attach {code,name,uom} for the UI.
-async function attachItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
+async function attachItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[], client: Pick<typeof db, 'item'> = db) {
   const ids = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const items = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
+    ? await client.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
     : []
   const map = new Map(items.map((i) => [i.id, i]))
   return docs.map((d) => ({ ...d, items: d.items.map((i) => ({ ...i, item: map.get(i.itemId) || null })) }))
@@ -25,6 +28,7 @@ async function attachItemInfo<T extends { items: { itemId: string }[] }>(company
 // ============================== GET /api/purchase-invoices ==============================
 export async function GET(req: Request) {
   try {
+    requireRead(req, ['purchase-invoices', 'payables', 'gst-report']) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const status = searchParams.get('status') || ''
@@ -56,11 +60,13 @@ export async function GET(req: Request) {
 
 // ============================== POST /api/purchase-invoices ==============================
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'purchase-invoices')
     const body = await req.json()
     const companyId = await companyRequired(req, body.companyId)
-    const date = toDate(body.date) || new Date()
+    // Business day in India (UTC midnight of the IST day) — same rule as its payment and the reports
+    const date = businessDate(body.date, 'date')
     // Bill-level discount and taxable charges (GST on freight / packing at their own rates)
     const billDiscount = num(body.billDiscount, 'Bill discount')
     const freightCharge = num(body.freightCharge, 'Freight')
@@ -75,6 +81,10 @@ export async function POST(req: Request) {
       throw new ApiError(`Payment mode must be one of ${PAYMENT_MODES.join(', ')}`, 400)
     }
 
+    const override = negativeCashOverride(req, body)
+    idem = await claimIdempotency(req, companyId, 'POST /api/purchase-invoices', body)
+    if (idem.replay) return idem.replay
+    if (paidNow > 0) await ensureCashFor(companyId, payMode, body.accountId ? String(body.accountId) : null)
     const pinv = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
       // Resolve PO first (its items seed the invoice lines when no explicit lines are sent)
@@ -194,12 +204,17 @@ export async function POST(req: Request) {
       // Paid with the bill: one Payment row for the amount, bill paidAmount + status updated with it
       let bill = created
       if (paidNow > 0) {
-        const payNumber = await nextDocNumber(tx, companyId, 'PYMT', date)
-        const payAccountId = await accountForMode(tx, companyId, payMode, body.accountId ? String(body.accountId) : null)
+        // Paid on the bill's business day (IST) from a chosen (existing, active) or default account
+        const payDate = businessDate(date)
+        const payAccount = await postingAccount(tx, companyId, payMode, body.accountId ? String(body.accountId) : null)
+        assertOnOrAfterOpening(payAccount, payDate, 'The amount paid')
+        const payAccountId = payAccount.id
+        const payNumber = await nextDocNumber(tx, companyId, 'PYMT', payDate)
         await tx.payment.create({
           data: {
             companyId, number: payNumber, type: 'PAYMENT', partyType: 'SUPPLIER', supplierId: supplier.id,
-            invoiceType: 'PURCHASE', invoiceId: created.id, amount: paidNow, mode: payMode, date, accountId: payAccountId,
+            invoiceType: 'PURCHASE', invoiceId: created.id, amount: paidNow, mode: payMode, date: payDate, accountId: payAccountId,
+            ...chequeDetails(payMode, body.chequeNo, body.chequeDate),
             reference: body.paymentReference ? String(body.paymentReference) : null,
             notes: `Paid with bill ${number}`,
           },
@@ -228,11 +243,18 @@ export async function POST(req: Request) {
         entityId: created.id,
         details: `Created ${number} for ${supplier.name}${po ? ` (PO ${po.number})` : ''}${grn ? ` (GRN ${grn.number})` : ''} — grand total ${totals.grandTotal}${paidNow > 0 ? `, paid ₹${paidNow.toFixed(2)} (${payMode})` : ''}`,
       })
-      return bill
-    })
-    const [row] = await attachItemInfo(companyId, [pinv])
-    return ok(row, 'Purchase invoice created')
+      // Phase 5: the amount paid with the bill must not take cash below zero (last step: locks the cash account)
+      if (paidNow > 0 && bill.accountId) {
+        await assertCashNotNegative(tx, { companyId, accounts: [{ accountId: bill.accountId }], from: businessDate(date), override, what: `The amount paid with ${number}`, entity: 'PurchaseInvoice', entityId: created.id, userName: body.userName })
+      }
+      // The response is built inside the transaction so an Idempotency-Key replay returns exactly it
+      const [row] = await attachItemInfo(companyId, [bill], tx) // through tx: no second pool connection
+      await idem!.done(tx, row, 'Purchase invoice created')
+      return row
+    }, paidNow > 0 ? CASH_TX : undefined)
+    return ok(pinv, 'Purchase invoice created')
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

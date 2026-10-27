@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { ApiError, logAudit, nextDocNumber } from '@/lib/erp-helpers'
+import { endOfDayStr } from '@/lib/accounting'
+import { assertOnOrAfterOpening } from '@/lib/accounts'
 
 // Shared helpers for the Cash & Bank APIs (accounts, account-txns, loans).
 
@@ -8,12 +10,17 @@ export type CbTx = Prisma.TransactionClient & Parameters<typeof nextDocNumber>[0
 
 export const MODULE_KEY = 'cash-bank'
 
-/** 'YYYY-MM-DD' → UTC midnight (end of day with endOfDay); full ISO strings parsed as-is. null for empty. */
+/**
+ * Filter bound (from / to of a list or statement): 'YYYY-MM-DD' → UTC midnight, or with endOfDay the same end of
+ * day the reports use (endOfDayStr); full ISO strings parsed as-is. null for empty.
+ * Dates that are stored (entry dates, opening dates) go through businessDate() instead.
+ */
 export function parseDate(v: unknown, field: string, endOfDay = false): Date | null {
   if (v === undefined || v === null || v === '') return null
   const s = String(v).trim()
   if (!s) return null
-  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z` : s)
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s)
+  const d = dateOnly && endOfDay ? endOfDayStr(s, field) : new Date(dateOnly ? `${s}T00:00:00.000Z` : s)
   if (Number.isNaN(d.getTime())) throw new ApiError(`${field} must be a valid date`, 400)
   return d
 }
@@ -26,12 +33,13 @@ export function money(v: unknown, field: string, { allowZero = false } = {}): nu
   return Math.round(n * 100) / 100
 }
 
-/** Loads an active account of the tenant or throws. */
-export async function activeAccount(tx: Prisma.TransactionClient, companyId: string, id: unknown, label: string) {
+/** Loads an active account of the tenant or throws; with `onDate`, also refuses a date before its opening date. */
+export async function activeAccount(tx: Prisma.TransactionClient, companyId: string, id: unknown, label: string, onDate?: Date) {
   if (!id) throw new ApiError(`${label} is required`, 400)
   const a = await tx.moneyAccount.findFirst({ where: { id: String(id), companyId } })
   if (!a) throw new ApiError(`${label} not found`, 404)
   if (!a.active) throw new ApiError(`${label} (${a.name}) is inactive`, 400)
+  if (onDate) assertOnOrAfterOpening(a, onDate)
   return a
 }
 

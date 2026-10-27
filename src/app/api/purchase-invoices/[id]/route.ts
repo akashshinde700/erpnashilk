@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
-import { ok, handleError, companyRequired, logAudit, ApiError, r2, requireWrite, computeBillTotals, isInterStateParty } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, logAudit, ApiError, r2, requireWrite, computeBillTotals, isInterStateParty, requireRead } from '@/lib/erp-helpers'
 import { joinSerials, parseSerials } from '@/lib/batches'
+import { businessDate } from '@/lib/business-date'
 import {
   billTaxLines, gstPct, liveReceipts, num, receiveBillStock, receiveWarehouse, reverseBillStock, toDate, trackingFlags, type PinvLineInput,
 } from '../_bill'
@@ -36,6 +37,7 @@ async function findInvoice(id: string, companyId: string) {
 // ============================== GET /api/purchase-invoices/[id] ==============================
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireRead(req, ['purchase-invoices', 'payables', 'gst-report']) // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const pinv = await findInvoice(id, companyId)
@@ -107,7 +109,8 @@ async function editInvoice(body: any, companyId: string, pinv: Awaited<ReturnTyp
 
   // Omitted fields keep the bill's current values
   const keep = <T,>(v: unknown, current: T, parse: (x: unknown) => T): T => (v === undefined ? current : parse(v))
-  const date = toDate(body.date) || pinv.date
+  // Business day in India (UTC midnight of the IST day)
+  const date = body.date ? businessDate(body.date, 'date') : pinv.date
   const billDiscount = keep(body.billDiscount, pinv.billDiscount, (v) => num(v, 'Bill discount'))
   const freightCharge = keep(body.freightCharge, pinv.freightCharge, (v) => num(v, 'Freight'))
   const freightGstRate = keep(body.freightGstRate, pinv.freightGstRate, (v) => gstPct(v, 'Freight GST'))

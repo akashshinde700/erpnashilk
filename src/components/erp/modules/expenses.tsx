@@ -6,9 +6,9 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
-  NumberInput, PageHeader, SelectInput, StatCard, StatusBadge, TextInput,
+  NumberInput, PageHeader, SelectInput, StatCard, StatusBadge, TextInput, useCreatePreset,
 } from '@/components/erp/kit'
-import { EXPENSE_CATEGORIES, PAYMENT_MODES, fmtMoney } from '@/lib/erp-constants'
+import { EXPENSE_CATEGORIES, PAYMENT_MODES, accountsForMode, fmtMoney, type ModeAccount } from '@/lib/erp-constants'
 import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
 
 interface ExpenseRow {
@@ -31,7 +31,7 @@ interface ExpenseRow {
   expenseType?: string | null
 }
 
-interface AccountOpt { id: string; name: string; type: string; active: boolean }
+type AccountOpt = ModeAccount
 
 interface ExpenseForm {
   date: string
@@ -102,15 +102,29 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
   const { data, loading, refetch } = useList<{ items?: ExpenseRow[]; total?: number }>(`/api/expenses?companyId=${companyId}`)
   const rows = data?.items ?? []
   const accounts = useList<{ items: AccountOpt[] }>(`/api/accounts?companyId=${companyId}`)
-  const accountOpts = React.useMemo(() => [
-    { value: '', label: 'Default for mode' },
-    ...(accounts.data?.items ?? []).filter((a) => a.active).map((a) => ({ value: a.id, label: `${a.name}${a.type === 'CASH' ? ' (cash)' : ''}` })),
-  ], [accounts.data])
-
   const [open, setOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [form, setForm] = React.useState<ExpenseForm>(freshForm)
+  // The account an edited expense already has (kept even if it no longer matches the mode — saved before the rule)
+  const [keptAccountId, setKeptAccountId] = React.useState('')
+
+  // Accounts of the payment mode's type only (cash ↔ bank); '' = the default account the server will use
+  const forMode = React.useMemo(() => accountsForMode(accounts.data?.items ?? [], form.paymentMode), [accounts.data, form.paymentMode])
+  const accountOpts = React.useMemo(() => {
+    const all = accounts.data?.items ?? []
+    const kept = keptAccountId && !forMode.matching.some((a) => a.id === keptAccountId) ? all.find((a) => a.id === keptAccountId) : undefined
+    return [
+      { value: '', label: forMode.fallback ? `Default — ${forMode.fallback.name}` : 'Default for mode' },
+      ...forMode.matching.map((a) => ({ value: a.id, label: a.name })),
+      ...(kept ? [{ value: kept.id, label: `${kept.name} (current)` }] : []),
+    ]
+  }, [accounts.data, forMode, keptAccountId])
+  const accountHint = form.accountId
+    ? `Paid from ${(accounts.data?.items ?? []).find((a) => a.id === form.accountId)?.name ?? 'the chosen account'}`
+    : forMode.fallback
+      ? `Will be paid from ${forMode.fallback.name}`
+      : `No ${forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to record ${form.paymentMode} payments`
 
   const monthKey = todayStr().slice(0, 7)
   // cancelled expenses don't count towards spend totals
@@ -121,9 +135,13 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
 
   function openCreate() {
     setEditingId(null)
+    setKeptAccountId('')
     setForm(freshForm())
     setOpen(true)
   }
+
+  // Opened from another screen (Cash & Bank → Money Out → Expense): a fresh form
+  useCreatePreset('expenses', () => openCreate())
 
   function openEdit(row: ExpenseRow) {
     setEditingId(row.id)
@@ -143,6 +161,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
       accountId: row.accountId || '',
       expenseType: row.expenseType || 'INDIRECT',
     })
+    setKeptAccountId(row.accountId || '')
     setOpen(true)
   }
 
@@ -327,10 +346,15 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
             <NumberInput value={form.gstAmount} onChange={(n) => setForm((f) => ({ ...f, gstAmount: n }))} min={0} step="0.01" />
           </Field>
           <Field label="Payment Mode">
-            <SelectInput value={form.paymentMode} onChange={(v) => setForm((f) => ({ ...f, paymentMode: v }))} options={MODE_OPTIONS} />
+            <SelectInput
+              value={form.paymentMode} options={MODE_OPTIONS}
+              // a new mode clears an account of the other kind (cash ↔ bank)
+              onChange={(v) => setForm((f) => ({ ...f, paymentMode: v, accountId: accountsForMode(accounts.data?.items ?? [], v).matching.some((a) => a.id === f.accountId) ? f.accountId : '' }))}
+            />
           </Field>
           <Field label="Paid from account">
             <SelectInput value={form.accountId} onChange={(v) => setForm((f) => ({ ...f, accountId: v }))} options={accountOpts} />
+            <p className={`mt-1 text-[11px] ${form.accountId || forMode.fallback ? 'text-muted-foreground' : 'text-red-600'}`}>{accountHint}</p>
           </Field>
           <Field label="Paid To">
             <TextInput

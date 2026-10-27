@@ -30,6 +30,7 @@ import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp
 import ShortcutsDialog from '@/components/erp/shortcuts-help'
 import ChangePasswordDialog from '@/components/erp/change-password-dialog'
 import PinDialog from '@/components/erp/pin-dialog'
+import MoneyConfirmDialog from '@/components/erp/money-confirm-dialog'
 import { CreateFirmDialog, SWITCH_COMPANY_EVENT } from '@/components/erp/modules/company-setup'
 
 interface CompanyRow {
@@ -1007,6 +1008,9 @@ export default function ErpApp() {
 
       {/* Security PIN prompt — registers itself with api() via setPinPrompt */}
       <PinDialog />
+
+      {/* Possible duplicate / negative cash confirmations — registers itself with api() via setMoneyPrompt */}
+      <MoneyConfirmDialog />
 
       {/* Create new firm (tenant admin) — switches to it once created */}
       {canCreateFirm && (

@@ -1,10 +1,11 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, ApiError, r2, requireRead } from '@/lib/erp-helpers'
 
 // GET /api/reports/purchase-by-supplier?companyId=&from=&to=
 // from/to are YYYY-MM-DD; defaults: from = FY start (1 Apr of current FY), to = today.
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'reports') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
 

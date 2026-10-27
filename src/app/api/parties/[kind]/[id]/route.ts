@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ApiError, companyRequired, handleError, ok, r2, sessionUser } from '@/lib/erp-helpers'
 import { canAccessModule } from '@/lib/erp-constants'
+import { ADVANCE_ADJ, PURCHASE_RETURN, SALES_RETURN, partyCreditsAsOf } from '@/lib/party-credits'
 
 type Ctx = { params: Promise<{ kind: string; id: string }> }
 
@@ -29,7 +30,7 @@ async function customerSide(companyId: string, customerId: string) {
       select: { id: true, number: true, date: true, status: true, vehicleNo: true, salesOrder: { select: { number: true } } },
     }),
     db.salesInvoice.findMany({ where: { companyId, customerId }, orderBy: { date: 'desc' }, take: 200, select: { id: true, number: true, date: true, dueDate: true, status: true, grandTotal: true, paidAmount: true, salesOrderId: true } }),
-    db.payment.findMany({ where: { companyId, customerId }, orderBy: { date: 'desc' }, take: 200, select: { id: true, number: true, date: true, amount: true, mode: true, reference: true, invoiceId: true } }),
+    db.payment.findMany({ where: { companyId, customerId }, orderBy: { date: 'desc' }, take: 200, select: { id: true, number: true, date: true, amount: true, mode: true, reference: true, invoiceId: true, invoiceType: true, allocatedFromId: true, chequeStatus: true } }),
   ])
   if (!customer) return null
 
@@ -54,7 +55,12 @@ async function customerSide(companyId: string, customerId: string) {
     return { ...i, outstanding, overdueDays: overdueDays(i.dueDate, outstanding, now), salesOrder: i.salesOrderId ? soNumber.get(i.salesOrderId) ?? null : null }
   })
   const billed = r2(live.reduce((s, i) => s + i.grandTotal, 0))
-  const received = r2(payments.reduce((s, p) => s + p.amount, 0))
+  // Money received (and credit notes on their own invoice) — not bounced cheques, not advance / credit applications
+  // (no money; the advance / note already counted), not refunds paid out (shown separately)
+  const counts = (p: (typeof payments)[number]) => p.chequeStatus !== 'BOUNCED' && p.mode !== ADVANCE_ADJ && !p.allocatedFromId
+  const received = r2(payments.filter((p) => counts(p) && p.invoiceType !== SALES_RETURN).reduce((s, p) => s + p.amount, 0))
+  const refunded = r2(payments.filter((p) => counts(p) && p.invoiceType === SALES_RETURN).reduce((s, p) => s + p.amount, 0))
+  const credit = await partyCreditsAsOf(companyId, undefined, { customerId })
   const invoiceOutstanding = r2(invRows.reduce((s, i) => s + i.outstanding, 0))
   const opening = r2(customer.openingBalance || 0)
 
@@ -65,6 +71,11 @@ async function customerSide(companyId: string, customerId: string) {
       received,
       openingBalance: opening,
       outstanding: r2(opening + invoiceOutstanding),
+      refunded,
+      // owed to the customer: advances not yet applied, return credit not yet applied / refunded
+      advanceBalance: credit.customerAdvances,
+      creditBalance: credit.customerCredits,
+      netBalance: r2(opening + invoiceOutstanding - credit.customerAdvances - credit.customerCredits),
       overdue: r2(invRows.filter((i) => i.overdueDays > 0).reduce((s, i) => s + i.outstanding, 0)),
       overdueCount: invRows.filter((i) => i.overdueDays > 0).length,
       openOrders: orders.filter((o) => OPEN_SO.includes(o.status)).length,
@@ -97,7 +108,7 @@ async function supplierSide(companyId: string, supplierId: string) {
     db.purchaseOrder.findMany({ where: { companyId, supplierId }, orderBy: { orderDate: 'desc' }, take: 100, select: { id: true, number: true, orderDate: true, expectedDate: true, status: true, grandTotal: true } }),
     db.grn.findMany({ where: { companyId, po: { supplierId } }, orderBy: { date: 'desc' }, take: 100, select: { id: true, number: true, date: true, status: true, po: { select: { number: true } } } }),
     db.purchaseInvoice.findMany({ where: { companyId, supplierId }, orderBy: { date: 'desc' }, take: 200, select: { id: true, number: true, supplierInvNo: true, date: true, status: true, grandTotal: true, paidAmount: true } }),
-    db.payment.findMany({ where: { companyId, supplierId }, orderBy: { date: 'desc' }, take: 200, select: { id: true, number: true, date: true, amount: true, mode: true, reference: true, invoiceId: true } }),
+    db.payment.findMany({ where: { companyId, supplierId }, orderBy: { date: 'desc' }, take: 200, select: { id: true, number: true, date: true, amount: true, mode: true, reference: true, invoiceId: true, invoiceType: true, allocatedFromId: true, chequeStatus: true } }),
   ])
   if (!supplier) return null
   const invNumber = new Map(invoices.map((i) => [i.id, i.number]))
@@ -113,9 +124,13 @@ async function supplierSide(companyId: string, supplierId: string) {
     party: supplier,
     summary: {
       billed: r2(live.reduce((s, i) => s + i.grandTotal, 0)),
-      paid: r2(payments.reduce((s, p) => s + p.amount, 0)),
+      // paid to the supplier (and debit notes on their own bill) — not bounced cheques, not refunds received back
+      paid: r2(payments.filter((p) => p.chequeStatus !== 'BOUNCED' && p.invoiceType !== PURCHASE_RETURN).reduce((s, p) => s + p.amount, 0)),
+      refundReceived: r2(payments.filter((p) => p.chequeStatus !== 'BOUNCED' && p.invoiceType === PURCHASE_RETURN).reduce((s, p) => s + p.amount, 0)),
       openingBalance: opening,
       outstanding: r2(opening + invRows.reduce((s, i) => s + i.outstanding, 0)),
+      // owed by the supplier: purchase-return excess not yet refunded
+      refundDue: (await partyCreditsAsOf(companyId, undefined, { supplierId })).supplierRefunds,
       overdue: r2(invRows.filter((i) => i.overdueDays > 0).reduce((s, i) => s + i.outstanding, 0)),
       overdueCount: invRows.filter((i) => i.overdueDays > 0).length,
       openOrders: orders.filter((o) => OPEN_PO.includes(o.status)).length,

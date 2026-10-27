@@ -1,22 +1,32 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite } from '@/lib/erp-helpers'
+import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite, requireRead } from '@/lib/erp-helpers'
 import { accountBalances } from '@/lib/accounts'
-import { CbTx, MODULE_KEY, optStr, parseDate } from './_shared'
+import { canAccessModule } from '@/lib/erp-constants'
+import { istDay, optBusinessDate } from '@/lib/business-date'
+import { CbTx, MODULE_KEY, optStr } from './_shared'
 
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/
 
 // GET /api/accounts?companyId=&active=1 → { items: (MoneyAccount & { balance, inflow, outflow })[], total }
+// Phase 5 read permission: the full list (balances, opening figures, bank details) needs Cash & Bank. Roles that record
+// money elsewhere (payments, expenses, invoices / bills "received / paid now", return refunds) get the account picker
+// only: id, name, type, active, isDefault — no balances.
+const PICKER_MODULES = ['payments', 'expenses', 'sales-invoices', 'purchase-invoices', 'sales-returns', 'purchase-returns']
 export async function GET(req: Request) {
   try {
+    const actor = requireRead(req, ['cash-bank', ...PICKER_MODULES]) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const onlyActive = searchParams.get('active') === '1'
-    // accountBalances creates the default "Cash in Hand" account on first use
-    const balances = await accountBalances(companyId)
     const accounts = await db.moneyAccount.findMany({
       where: { companyId, ...(onlyActive ? { active: true } : {}) },
       orderBy: [{ type: 'asc' }, { isDefault: 'desc' }, { name: 'asc' }],
     })
+    if (!canAccessModule(actor.role, 'cash-bank')) {
+      const items = accounts.map((a) => ({ id: a.id, name: a.name, type: a.type, active: a.active, isDefault: a.isDefault, createdAt: a.createdAt }))
+      return ok({ items, total: items.length })
+    }
+    const balances = await accountBalances(companyId)
     const map = new Map(balances.map((b) => [b.id, b]))
     const items = accounts.map((a) => {
       const b = map.get(a.id)
@@ -44,7 +54,8 @@ export async function POST(req: Request) {
     if (ifsc && !IFSC_RE.test(ifsc)) throw new ApiError('IFSC must be 11 characters, e.g. SBIN0001234', 400)
     const openingBalance = Number(body?.openingBalance ?? 0)
     if (!Number.isFinite(openingBalance)) throw new ApiError('openingBalance must be a number', 400)
-    const openingDate = parseDate(body?.openingDate, 'openingDate')
+    const openingDate = optBusinessDate(body?.openingDate, 'Opening date')
+    if (Math.abs(openingBalance) >= 0.005 && !openingDate) throw new ApiError('Opening date is required when there is an opening balance', 400)
     const isDefault = body?.isDefault === true
 
     const account = await db.$transaction(async (txRaw) => {
@@ -69,7 +80,7 @@ export async function POST(req: Request) {
       })
       await logAudit(tx, {
         companyId, userName: body?.userName, action: 'CREATE', entity: 'MoneyAccount', entityId: created.id,
-        details: `${type === 'BANK' ? 'Bank' : 'Cash'} account "${name}" added (opening ₹${created.openingBalance.toFixed(2)})`,
+        details: `${type === 'BANK' ? 'Bank' : 'Cash'} account "${name}" added (opening ₹${created.openingBalance.toFixed(2)}${openingDate ? ` as of ${istDay(openingDate)}` : ''})`,
       })
       return created
     })
