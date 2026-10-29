@@ -1,13 +1,15 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, nextDocNumber, computeBillTotals, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, nextDocNumber, computeBillTotals, postStock, logAudit, ApiError, r2, requireWrite, requireRead } from '@/lib/erp-helpers'
 import { withReturnInfo, challanBatchFor } from './shared'
 import { batchNote, parseAllocation, parseSerials, receiveBatch, returnSerials, trackingOf } from '@/lib/batches'
+import { liveSaleRows, originalUnitCost, saleStockMode } from '@/lib/sale-cost'
 
 const optStr = (v: unknown) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim())
 
 // GET /api/sales-returns?companyId=&invoiceId=&customerId=&status=&q=
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'sales-returns') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const sp = new URL(req.url).searchParams
     const where: any = { companyId }
@@ -32,6 +34,9 @@ export async function GET(req: Request) {
 // (kept simple on purpose — issue a manual adjustment if they must be reversed too).
 // The credit is applied to the invoice (CREDIT_NOTE receipt) up to its outstanding; any excess is a refund
 // due to the customer (reported in the response + audit log, no payment row).
+// Stock (AC-B1): goods come back at the ORIGINAL inventory cost of the sale — the cost stored on the sale's outward
+// stock rows (rebuilt from the ledger for older rows; 409 "needs review" when that is not reliable) — into the
+// chosen warehouse, even if the sale left from another one. An invoice that moved no stock gets a credit note only.
 export async function POST(req: Request) {
   try {
     requireWrite(req, 'sales-returns')
@@ -106,6 +111,21 @@ export async function POST(req: Request) {
       })
       const totals = computeBillTotals(lines, invoice.isInterState, { roundOff: company.roundOffTotals ?? true })
 
+      // Original cost per returned item, decided before anything is written (a review stop leaves no trace)
+      const masters = await tx.item.findMany({ where: { companyId, id: { in: lines.map((l) => l.itemId) } }, select: { id: true, type: true, code: true, name: true } })
+      const master = new Map(masters.map((m) => [m.id, m]))
+      const goodsIds = Array.from(new Set(lines.map((l) => l.itemId))).filter((id) => master.get(id)?.type !== 'SERVICE')
+      const invInfo = { id: invoice.id, number: invoice.number, challanId: invoice.challanId, salesOrderId: invoice.salesOrderId, deductStock: invoice.deductStock }
+      const stockMode = goodsIds.length ? await saleStockMode(tx, companyId, invInfo, goodsIds) : 'NONE'
+      const unitCost = new Map<string, number>()
+      if (stockMode !== 'NONE') {
+        for (const itemId of goodsIds) {
+          const m = master.get(itemId)
+          const live = await liveSaleRows(tx, companyId, invInfo, stockMode, itemId)
+          unitCost.set(itemId, await originalUnitCost(tx, companyId, live.rows, `${m ? `${m.code} ${m.name}` : 'an item'} on invoice ${invoice.number}`))
+        }
+      }
+
       const number = await nextDocNumber(t, companyId, 'SRET', date)
       const ret = await tx.salesReturn.create({
         data: {
@@ -138,9 +158,11 @@ export async function POST(req: Request) {
         },
       })
 
-      // Goods come back into stock at the (net) invoice rate
+      // Goods come back into stock at the original cost of the sale (none when the invoice moved no stock)
       for (let i = 0; i < lines.length; i++) {
         const l = lines[i]
+        const cost = unitCost.get(l.itemId)
+        if (cost === undefined) continue
         // Batch-tracked: back into the original line's batch when it was a single batch, else a RET-<no> batch.
         // The batch used is remembered in the ledger note so a cancel can take it out again.
         const src = invItemById.get(l.invoiceItemId)!
@@ -153,8 +175,8 @@ export async function POST(req: Request) {
         }
         await postStock(t, {
           companyId, itemId: l.itemId, warehouseId, type: 'SALES_RETURN_IN', qtyIn: l.qty,
-          rate: l.qty > 0 ? r2(totals.computed[i].taxable / l.qty) : l.rate, date,
-          refType: 'SALES_RETURN', refId: ret.id, refNumber: number, notes: `Return against ${invoice.number}${batchNote(allocs)}`,
+          rate: cost, date,
+          refType: 'SALES_RETURN', refId: ret.id, refNumber: number, notes: `Return against ${invoice.number} at original cost ₹${cost.toFixed(2)}${batchNote(allocs)}`,
         })
         for (const a of allocs) await receiveBatch(tx, { companyId, itemId: l.itemId, warehouseId, batchNo: a.batchNo, qty: a.qty })
         await returnSerials(tx, {
@@ -190,9 +212,9 @@ export async function POST(req: Request) {
 
       await logAudit(t, {
         companyId, userName: body.userName, action: 'CREATE', entity: 'SalesReturn', entityId: ret.id,
-        details: `Credit note ${number} against ${invoice.number} • ₹${totals.grandTotal}${credit > 0.005 ? ` • ₹${credit} adjusted on invoice` : ''}${refundDue > 0.005 ? ` • ₹${refundDue} refund due to customer` : ''}`,
+        details: `Credit note ${number} against ${invoice.number} • ₹${totals.grandTotal}${credit > 0.005 ? ` • ₹${credit} adjusted on invoice` : ''}${refundDue > 0.005 ? ` • ₹${refundDue} refund due to customer` : ''}${stockMode === 'NONE' ? ' • credit note only (the invoice moved no stock)' : ' • goods back in stock at original cost'}`,
       })
-      return { ...ret, creditApplied: credit, refundDue, invoiceStatus }
+      return { ...ret, creditApplied: credit, refundDue, invoiceStatus, stockReturned: stockMode !== 'NONE' && unitCost.size > 0 }
     })
 
     const msg = result.refundDue > 0.005

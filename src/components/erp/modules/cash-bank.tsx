@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import {
-  ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Banknote, FileText, HandCoins, Landmark, Pencil, Plus, Trash2, Wallet,
+  ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Banknote, Calculator, FileText, HandCoins, Landmark, Pencil, Plus, Receipt, Trash2, Users, Wallet,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -12,9 +12,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money, NumberInput, PageHeader,
-  SelectInput, StatCard, StatusBadge, TextInput,
+  SelectInput, StatCard, StatusBadge, TextInput, openCreate,
 } from '@/components/erp/kit'
-import { apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
+import { ApiRequestError, apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtDate, fmtMoney } from '@/lib/erp-constants'
 
 // ---------- Types ----------
@@ -44,6 +44,17 @@ interface Loan {
   termMonths?: number | null; emiAmount?: number | null; receivedAccountId?: string | null; receivedAccountName?: string | null
   status: string; notes?: string | null
   principalPaid: number; interestPaid: number; outstanding: number; emiCount: number; lastEmiDate?: string | null
+}
+
+interface LedgerItem {
+  id: string; date: string | null; type: string; typeLabel: string; number: string; party: string; description: string
+  accountId: string; accountName: string; moneyIn: number; moneyOut: number; balance: number
+}
+interface History {
+  items: LedgerItem[]; totals: { count: number; moneyIn: number; moneyOut: number }
+  opening: number; closing: number; filtered: boolean
+  pendingCheques: { count: number; toReceive: number; toPay: number }
+  parties: { id: string; name: string }[]; types: { value: string; label: string }[]
 }
 
 interface StatementRow {
@@ -114,6 +125,18 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
   const txns = useList<{ items: Txn[] }>(`/api/account-txns?companyId=${companyId}`)
   const loans = useList<{ items: Loan[]; outstanding: number }>(`/api/loans?companyId=${companyId}`)
 
+  // ----- Transactions (unified history) -----
+  const [hAccount, setHAccount] = React.useState('')
+  const [hType, setHType] = React.useState('')
+  const [hParty, setHParty] = React.useState('')
+  const [hFrom, setHFrom] = React.useState(fyStart)
+  const [hTo, setHTo] = React.useState(today)
+  const historyQs = new URLSearchParams({
+    companyId, ...(hAccount ? { accountId: hAccount } : {}), ...(hType ? { type: hType } : {}), ...(hParty ? { partyId: hParty } : {}),
+    ...(hFrom ? { from: hFrom } : {}), ...(hTo ? { to: hTo } : {}),
+  }).toString()
+  const history = useList<History>(`/api/cash-bank/transactions?${historyQs}`)
+
   const allAccounts = accounts.data?.items ?? []
   const activeAccounts = allAccounts.filter((a) => a.active)
   const cashAccounts = activeAccounts.filter((a) => a.type === 'CASH')
@@ -130,7 +153,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
   const accountOpts = (list: Account[]) => list.map((a) => ({ value: a.id, label: `${a.name} (${fmtMoney(a.balance)})` }))
 
   function refreshAll() {
-    void accounts.refetch(); void txns.refetch(); void loans.refetch()
+    void accounts.refetch(); void txns.refetch(); void loans.refetch(); void history.refetch()
   }
 
   // ----- Account dialog -----
@@ -143,6 +166,11 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
   function newAccount(type: 'BANK' | 'CASH') {
     setAccEditing(null); setAccForm(freshAccount(type)); setAccOpen(true)
   }
+  // No cash account yet (it is no longer created just by opening this page): set it up explicitly
+  function setupCash() {
+    setAccEditing(null); setAccForm({ ...freshAccount('CASH'), name: 'Cash in Hand', isDefault: true }); setAccOpen(true)
+  }
+  const hasCash = allAccounts.some((a) => a.type === 'CASH')
   function editAccount(a: Account) {
     setAccEditing(a)
     setAccForm({
@@ -156,6 +184,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
     const f = accForm
     if (!f.name.trim()) { toast.error('Account name is required'); return }
     if (f.ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(f.ifsc.trim().toUpperCase())) { toast.error('IFSC must look like SBIN0001234'); return }
+    if (Math.abs(f.openingBalance || 0) >= 0.005 && !f.openingDate) { toast.error('Opening date is required when there is an opening balance'); return }
     setAccSaving(true)
     try {
       const payload = {
@@ -240,6 +269,81 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
       toast.success(adjOpen === 'ADJUST_IN' ? 'Money added' : 'Money reduced')
       setAdjOpen(null); refreshAll()
     } catch (e) { toast.error(errMsg(e, 'Failed to save')) } finally { setAdjSaving(false) }
+  }
+
+  // ----- Money In / Money Out choosers: route to the existing flows -----
+  const [chooser, setChooser] = React.useState<null | 'IN' | 'OUT'>(null)
+  function choose(action: () => void) { setChooser(null); action() }
+  const goTo = (module: string) => window.dispatchEvent(new CustomEvent('erp:goto', { detail: module }))
+
+  // ----- Adjust cash to the amount physically counted -----
+  // Excess → Add money (Other income), shortage → Reduce money (Other expense): the existing entries, which reach
+  // the cash balance, P&L and balance sheet. A zero difference saves nothing.
+  const [cntOpen, setCntOpen] = React.useState(false)
+  const [cntAccount, setCntAccount] = React.useState('')
+  const [cntDate, setCntDate] = React.useState(today)
+  const [cntCounted, setCntCounted] = React.useState(0)
+  const [cntBalance, setCntBalance] = React.useState<number | null>(null)
+  const [cntReviewed, setCntReviewed] = React.useState<number | null>(null) // difference the user is confirming
+  const [cntSaving, setCntSaving] = React.useState(false)
+  const cntDiff = cntBalance === null ? null : r2(cntCounted - cntBalance)
+  // Nothing chosen yet → the default cash account (also once the account list finishes loading)
+  const cntAccountId = cntAccount || defaultCash?.id || ''
+
+  const balanceOn = React.useCallback(async (accountId: string, date: string) => {
+    const qs = new URLSearchParams({ companyId, ...(date ? { to: date } : {}) })
+    return (await apiGet<Statement>(`/api/accounts/${accountId}/statement?${qs.toString()}`)).closing
+  }, [companyId])
+
+  React.useEffect(() => {
+    if (!cntOpen || !cntAccountId) return
+    let alive = true
+    balanceOn(cntAccountId, cntDate)
+      .then((b) => { if (alive) { setCntBalance(b); setCntReviewed(null) } })
+      .catch((e) => { if (alive) toast.error(errMsg(e, 'Could not load the cash balance')) })
+    return () => { alive = false }
+  }, [cntOpen, cntAccountId, cntDate, balanceOn])
+
+  function openCount() {
+    setCntAccount(''); setCntDate(today()); setCntCounted(0); setCntBalance(null); setCntReviewed(null); setCntOpen(true)
+  }
+  async function saveCount() {
+    if (!cntAccountId) { toast.error('Select a cash account'); return }
+    if (!Number.isFinite(cntCounted) || cntCounted < 0) { toast.error('Enter the cash you counted (0 or more)'); return }
+    if (cntDiff === null) { toast.error('The cash balance is still loading'); return }
+    // Step 1: review the difference
+    if (cntReviewed === null) {
+      if (Math.abs(cntDiff) < 0.005) { toast.success('Counted cash matches the books — nothing to adjust'); setCntOpen(false); return }
+      setCntReviewed(cntDiff); return
+    }
+    setCntSaving(true)
+    try {
+      // Step 2: re-check the balance right before saving; if it moved, show the new difference first
+      const fresh = await balanceOn(cntAccountId, cntDate)
+      const diff = r2(cntCounted - fresh)
+      if (fresh !== cntBalance || diff !== cntReviewed) {
+        setCntBalance(fresh); setCntReviewed(Math.abs(diff) < 0.005 ? null : diff)
+        toast.error('The cash balance changed meanwhile — please review the new difference')
+        return
+      }
+      const counted = fmtMoney(cntCounted)
+      const books = fmtMoney(fresh)
+      // expectedBalance: the server refuses the entry (409 BALANCE_CHANGED) if the books moved since this review
+      await apiPost('/api/account-txns', diff > 0
+        ? { companyId, type: 'ADJUST_IN', toAccountId: cntAccountId, amount: diff, category: 'OTHER_INCOME', date: cntDate, expectedBalance: fresh, notes: `Cash count: counted ${counted}, books ${books} — excess` }
+        : { companyId, type: 'ADJUST_OUT', fromAccountId: cntAccountId, amount: -diff, category: 'OTHER_EXPENSE', date: cntDate, expectedBalance: fresh, notes: `Cash count: counted ${counted}, books ${books} — shortage` })
+      toast.success(diff > 0 ? `Cash excess of ${fmtMoney(diff)} recorded as other income` : `Cash shortage of ${fmtMoney(-diff)} recorded as other expense`)
+      setCntOpen(false); refreshAll()
+    } catch (e) {
+      if (e instanceof ApiRequestError && e.code === 'BALANCE_CHANGED') {
+        const now = (e.details as { balance?: number } | undefined)?.balance
+        if (typeof now === 'number') {
+          const d = r2(cntCounted - now)
+          setCntBalance(now); setCntReviewed(Math.abs(d) < 0.005 ? null : d)
+        }
+        toast.error('The cash balance changed meanwhile — please review the new difference')
+      } else toast.error(errMsg(e, 'Failed to adjust cash'))
+    } finally { setCntSaving(false) }
   }
 
   // ----- Contra transfer -----
@@ -454,6 +558,31 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
     },
   ]
 
+  const hist = history.data
+  const IN_TYPES = ['OPENING', 'PAYMENT_IN', 'ADJUST_IN', 'LOAN_IN']
+  const historyColumns: Column<LedgerItem>[] = [
+    { key: 'date', header: 'Date', sortValue: (r) => r.date || '', render: (r) => (r.date ? <DateCell value={r.date} /> : <span className="text-muted-foreground">—</span>) },
+    {
+      key: 'typeLabel', header: 'Type',
+      render: (r) => <Pill tone={r.type === 'TRANSFER' ? 'blue' : IN_TYPES.includes(r.type) || r.moneyIn ? 'green' : 'amber'}>{r.typeLabel}</Pill>,
+    },
+    { key: 'number', header: 'No.', hideOnMobile: true, render: (r) => <span className="font-mono text-xs whitespace-nowrap">{r.number || '—'}</span> },
+    {
+      key: 'party', header: 'Details',
+      render: (r) => (
+        <div className="min-w-0">
+          <p className="truncate max-w-60 text-sm">{r.party || r.typeLabel}</p>
+          <p className="truncate max-w-60 text-[11px] text-muted-foreground">{r.description}</p>
+        </div>
+      ),
+    },
+    ...(hAccount ? [] : [{ key: 'accountName', header: 'Account', hideOnMobile: true, render: (r: LedgerItem) => <span className="text-sm">{r.accountName}</span> }]),
+    { key: 'moneyIn', header: 'Money in', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyIn ? <Money value={r.moneyIn} className="text-emerald-700 dark:text-emerald-400" /> : <span className="text-muted-foreground">—</span>) },
+    { key: 'moneyOut', header: 'Money out', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyOut ? <Money value={r.moneyOut} className="text-red-600 dark:text-red-400" /> : <span className="text-muted-foreground">—</span>) },
+    // Balance after the row is per account — shown when one account is selected
+    ...(hAccount ? [{ key: 'balance', header: 'Balance', className: 'text-right', render: (r: LedgerItem) => <Money value={r.balance} className={`font-medium ${r.balance < 0 ? 'text-red-600' : ''}`} /> }] : []),
+  ]
+
   // ---------- Render ----------
 
   return (
@@ -463,8 +592,11 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
         description="Cash in hand, bank accounts, contra transfers, loans and bank reconciliation"
         actions={
           <>
+            <Button size="sm" onClick={() => setChooser('IN')}><ArrowDownLeft className="h-4 w-4 mr-1.5" />Money In</Button>
+            <Button size="sm" onClick={() => setChooser('OUT')}><ArrowUpRight className="h-4 w-4 mr-1.5" />Money Out</Button>
             <Button size="sm" variant="outline" onClick={openTransfer}><ArrowLeftRight className="h-4 w-4 mr-1.5" />Transfer</Button>
-            <Button size="sm" onClick={() => newAccount('BANK')}><Plus className="h-4 w-4 mr-1.5" />Bank account</Button>
+            <Button size="sm" variant="outline" onClick={openCount}><Calculator className="h-4 w-4 mr-1.5" />Adjust Cash</Button>
+            <Button size="sm" variant="outline" onClick={() => newAccount('BANK')}><Plus className="h-4 w-4 mr-1.5" />Bank Account</Button>
           </>
         }
       />
@@ -479,6 +611,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
         <div className="-mx-1 overflow-x-auto px-1">
           <TabsList className="w-max">
             <TabsTrigger value="accounts">Accounts</TabsTrigger>
+            <TabsTrigger value="transactions">Transactions</TabsTrigger>
             <TabsTrigger value="cash">Cash in Hand</TabsTrigger>
             <TabsTrigger value="contra">Contra</TabsTrigger>
             <TabsTrigger value="loans">Loans</TabsTrigger>
@@ -491,6 +624,15 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
             <p className="text-sm text-muted-foreground">Loading accounts…</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {!accounts.loading && !hasCash && (
+                <button
+                  type="button" onClick={setupCash}
+                  className="flex min-h-[140px] flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-emerald-400 text-sm text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                >
+                  <Banknote className="h-5 w-5" />Set up Cash in Hand
+                  <span className="text-xs text-muted-foreground">Add your opening cash and its date</span>
+                </button>
+              )}
               {allAccounts.map((a) => (
                 <Card key={a.id} className={`py-4 ${a.active ? '' : 'opacity-60'}`}>
                   <CardContent className="px-4">
@@ -536,6 +678,50 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
           </div>
         </TabsContent>
 
+        {/* ----- Transactions: every money movement of every account ----- */}
+        <TabsContent value="transactions" className="mt-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <Field label="Account">
+              <SelectInput value={hAccount} onChange={setHAccount} options={[{ value: '', label: 'All accounts' }, ...allAccounts.map((a) => ({ value: a.id, label: a.name }))]} />
+            </Field>
+            <Field label="Type">
+              <SelectInput value={hType} onChange={setHType} options={[{ value: '', label: 'All types' }, ...(hist?.types ?? [])]} />
+            </Field>
+            <Field label="Party">
+              <SelectInput value={hParty} onChange={setHParty} options={[{ value: '', label: 'All parties' }, ...(hist?.parties ?? []).map((p) => ({ value: p.id, label: p.name }))]} />
+            </Field>
+            <Field label="From"><DateInput value={hFrom} onChange={setHFrom} /></Field>
+            <Field label="To"><DateInput value={hTo} onChange={setHTo} /></Field>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard title={hFrom ? `Balance before ${fmtDate(hFrom)}` : 'Opening balance'} value={fmtMoney(hist?.opening ?? 0)} icon={<Wallet className="h-4 w-4" />} toneClass="bg-muted text-muted-foreground" />
+            <StatCard title="Money in" value={fmtMoney(hist?.totals.moneyIn ?? 0)} icon={<ArrowDownLeft className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-600" />
+            <StatCard title="Money out" value={fmtMoney(hist?.totals.moneyOut ?? 0)} icon={<ArrowUpRight className="h-4 w-4" />} toneClass="bg-red-100 text-red-600" />
+            <StatCard title={hTo ? `Balance on ${fmtDate(hTo)}` : 'Balance now'} value={fmtMoney(hist?.closing ?? 0)} icon={<Landmark className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-600" />
+          </div>
+          {hist?.filtered && (
+            <p className="mt-2 text-xs text-muted-foreground">Money in / out are for the rows shown; the balances are for the whole {hAccount ? 'account' : 'cash & bank'}.</p>
+          )}
+          {!!hist?.pendingCheques.count && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+              {hist.pendingCheques.count} cheque{hist.pendingCheques.count === 1 ? '' : 's'} not cleared yet
+              {hist.pendingCheques.toReceive ? ` · ${fmtMoney(hist.pendingCheques.toReceive)} to receive` : ''}
+              {hist.pendingCheques.toPay ? ` · ${fmtMoney(hist.pendingCheques.toPay)} to pay` : ''} — not counted in the balance until cleared.
+            </p>
+          )}
+          <div className="mt-3">
+            <DataTable
+              columns={historyColumns} rows={hist?.items ?? []} loading={history.loading} pageSize={20}
+              searchPlaceholder="Search number, party, details…" emptyText="No money movements for these filters"
+              csvExport={{
+                filename: 'cash-bank-transactions',
+                headers: ['Date', 'Type', 'Number', 'Party', 'Details', 'Account', 'Money in', 'Money out', 'Balance'],
+                pick: (r) => [r.date ? String(r.date).slice(0, 10) : '', r.typeLabel, r.number, r.party, r.description, r.accountName, r.moneyIn, r.moneyOut, r.balance],
+              }}
+            />
+          </div>
+        </TabsContent>
+
         {/* ----- Cash in hand ----- */}
         <TabsContent value="cash" className="mt-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -565,6 +751,70 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
         </TabsContent>
       </Tabs>
 
+      {/* ----- Money In / Money Out: pick what kind of money it is ----- */}
+      <Dialog open={!!chooser} onOpenChange={(o) => { if (!o) setChooser(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{chooser === 'IN' ? 'Money In' : 'Money Out'}</DialogTitle>
+            <DialogDescription>{chooser === 'IN' ? 'Where is the money coming from?' : 'What is the money for?'}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {(chooser === 'IN' ? [
+              { key: 'customer', icon: <Users className="h-5 w-5" />, title: 'From a customer', text: 'Payment against a sales invoice', run: () => openCreate('payments', { type: 'RECEIPT' }) },
+              { key: 'advance', icon: <Users className="h-5 w-5" />, title: 'Advance from a customer', text: 'Before an invoice — applied to invoices later', run: () => openCreate('payments', { type: 'RECEIPT', advance: 1 }) },
+              { key: 'supplierRefund', icon: <Receipt className="h-5 w-5" />, title: 'Refund from a supplier', text: 'Against a purchase return (debit note)', run: () => goTo('purchase-returns') },
+              { key: 'add', icon: <Wallet className="h-5 w-5" />, title: 'Capital or other income', text: 'Owner money, interest received and similar', run: () => openAdjust('ADJUST_IN') },
+            ] : [
+              { key: 'supplier', icon: <Users className="h-5 w-5" />, title: 'To a supplier', text: 'Payment against a purchase bill', run: () => openCreate('payments', { type: 'PAYMENT' }) },
+              { key: 'expense', icon: <Receipt className="h-5 w-5" />, title: 'Expense', text: 'Rent, electricity, salary, freight…', run: () => openCreate('expenses') },
+              { key: 'customerRefund', icon: <Users className="h-5 w-5" />, title: 'Refund to a customer', text: 'Against a sales return (credit note)', run: () => goTo('sales-returns') },
+              { key: 'reduce', icon: <Wallet className="h-5 w-5" />, title: 'Drawings or other', text: 'Owner withdrawal and similar', run: () => openAdjust('ADJUST_OUT') },
+            ]).map((o) => (
+              <button
+                key={o.key} type="button" onClick={() => choose(o.run)}
+                className="flex items-center gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className={`shrink-0 rounded-lg p-2 ${chooser === 'IN' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950' : 'bg-amber-100 text-amber-700 dark:bg-amber-950'}`}>{o.icon}</span>
+                <span className="min-w-0">
+                  <span className="block font-medium">{o.title}</span>
+                  <span className="block text-xs text-muted-foreground">{o.text}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ----- Adjust cash to the counted amount ----- */}
+      <FormDialog
+        open={cntOpen} onOpenChange={setCntOpen} loading={cntSaving} onSubmit={saveCount}
+        title="Adjust Cash" description="Count the cash in hand and bring the books in line with it"
+        submitLabel={cntReviewed === null ? 'Review' : 'Confirm adjustment'}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Cash account" required className="sm:col-span-2">
+            <SelectInput value={cntAccountId} onChange={(v) => { setCntAccount(v); setCntBalance(null); setCntReviewed(null) }} options={cashAccounts.map((a) => ({ value: a.id, label: a.name }))} placeholder={cashAccounts.length ? 'Select…' : 'No cash account — set up Cash in Hand first'} />
+          </Field>
+          <Field label="As on date" required><DateInput value={cntDate} onChange={(v) => { setCntDate(v); setCntBalance(null); setCntReviewed(null) }} /></Field>
+          <Field label="Cash in the books">
+            <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm tabular-nums">{cntBalance === null ? (cntAccountId ? 'Loading…' : '—') : fmtMoney(cntBalance)}</div>
+          </Field>
+          <Field label="Cash you counted (₹)" required className="sm:col-span-2">
+            <NumberInput value={cntCounted} onChange={(n) => { setCntCounted(n); setCntReviewed(null) }} min={0} step="0.01" />
+          </Field>
+          {cntDiff !== null && (
+            <div className={`sm:col-span-2 rounded-md border p-3 text-sm ${Math.abs(cntDiff) < 0.005 ? '' : cntDiff > 0 ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30' : 'border-amber-300 bg-amber-50 dark:bg-amber-950/30'}`}>
+              {Math.abs(cntDiff) < 0.005
+                ? 'Counted cash matches the books — nothing will be saved.'
+                : cntDiff > 0
+                  ? <>Excess of <b>{fmtMoney(cntDiff)}</b> — will be added to cash as <b>Other income</b>.</>
+                  : <>Shortage of <b>{fmtMoney(-cntDiff)}</b> — will be taken out of cash as <b>Other expense</b>.</>}
+              {cntReviewed !== null && <p className="mt-1 text-xs text-muted-foreground">Press “Confirm adjustment” to save it.</p>}
+            </div>
+          )}
+        </div>
+      </FormDialog>
+
       {/* ----- Account dialog ----- */}
       <FormDialog
         open={accOpen} onOpenChange={setAccOpen} loading={accSaving} onSubmit={saveAccount}
@@ -586,7 +836,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
             </>
           )}
           <Field label="Opening balance (₹)"><NumberInput value={accForm.openingBalance} onChange={(n) => setAcc('openingBalance', n)} step="0.01" /></Field>
-          <Field label="As of date"><DateInput value={accForm.openingDate} onChange={(v) => setAcc('openingDate', v)} /></Field>
+          <Field label="As of date" required={Math.abs(accForm.openingBalance || 0) >= 0.005}><DateInput value={accForm.openingDate} onChange={(v) => setAcc('openingDate', v)} /></Field>
           <div className="grid gap-2 sm:col-span-2">
             {accForm.type === 'BANK' && (
               <label className="flex items-center gap-2 text-sm">

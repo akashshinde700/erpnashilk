@@ -12,6 +12,7 @@ import {
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtMoney, fmtNum } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
+import { RefundDialog } from '@/components/erp/refund-dialog'
 
 interface CompanyBlock {
   name?: string | null; gstin?: string | null; addressLine?: string | null; city?: string | null; state?: string | null
@@ -29,6 +30,8 @@ interface RetRow {
   supplier?: { name?: string | null; gstin?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null } | null
   warehouse?: { code?: string | null; name?: string | null } | null
   items: RetItem[]
+  // refund on the note (Phase 4): applied to its bill, received from the supplier, still due
+  refund?: { total: number; appliedToBill: number; refunded: number; remaining: number } | null
 }
 interface BillRow {
   id: string; number: string; status: string; grandTotal: number; paidAmount: number; isInterState?: boolean
@@ -256,6 +259,10 @@ export default function PurchaseReturnsModule({ companyId }: { companyId: string
     printHtml(`Debit Note ${row.number}`, html)
   }
 
+  // ----- Refund still due from the supplier on a note -----
+  const [refundRow, setRefundRow] = React.useState<RetRow | null>(null)
+  const due = (r: RetRow) => (r.status === 'POSTED' ? r.refund?.remaining ?? 0 : 0)
+
   const columns: Column<RetRow>[] = [
     { key: 'number', header: 'Debit Note #', render: (r) => <span className="font-medium">{r.number}</span> },
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
@@ -264,9 +271,14 @@ export default function PurchaseReturnsModule({ companyId }: { companyId: string
     { key: 'amount', header: 'Amount', sortValue: (r) => r.grandTotal || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
+      key: 'refundDue', header: 'Refund due', hideOnMobile: true, sortValue: (r) => due(r),
+      render: (r) => (due(r) > 0.005 ? <Money value={due(r)} className="font-medium text-amber-700 dark:text-amber-400" /> : <span className="text-muted-foreground">—</span>),
+    },
+    {
       key: 'actions', header: 'Actions',
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {due(r) > 0.005 && <Button variant="outline" size="sm" className="h-7" onClick={() => setRefundRow(r)}>Record refund</Button>}
           <Button variant="outline" size="sm" className="h-7" onClick={() => printReturn(r)} title="Print debit note">
             <Printer className="h-3.5 w-3.5 mr-0.5" />Print
           </Button>
@@ -369,6 +381,19 @@ export default function PurchaseReturnsModule({ companyId }: { companyId: string
           </div>
         )}
       </FormDialog>
+
+      {refundRow && (
+        <RefundDialog
+          key={refundRow.id} companyId={companyId} open onClose={() => setRefundRow(null)}
+          title="Refund from supplier" accountLabel="Received into account"
+          description={`${refundRow.number} · ${refundRow.supplier?.name || ''} — money the supplier pays back`}
+          maxAmount={due(refundRow)}
+          onSave={async (v) => {
+            await apiPost('/api/payments', { companyId, type: 'RECEIPT', invoiceType: 'PURCHASE_RETURN', invoiceId: refundRow.id, supplierId: refundRow.supplierId, ...v })
+            toast.success('Refund recorded'); void list.refetch()
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { ok, handleError, companyRequired } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, requireFinancialReports } from '@/lib/erp-helpers'
 import { cashFlow, parsePeriod } from '@/lib/accounting'
 
 // GET /api/reports/cash-flow?companyId=&from=&to=
@@ -6,6 +6,7 @@ import { cashFlow, parsePeriod } from '@/lib/accounting'
 // (accountBalances at `to`). `difference` is non-zero only if the two don't reconcile.
 export async function GET(req: Request) {
   try {
+    requireFinancialReports(req) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { fromStr, toStr, from, to } = parsePeriod(searchParams)

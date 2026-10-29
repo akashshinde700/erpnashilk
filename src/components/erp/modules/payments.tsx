@@ -9,8 +9,8 @@ import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, TextInput, useCreatePreset
 } from '@/components/erp/kit'
-import { apiDelete, apiPatch, apiPost, useList } from '@/lib/use-api'
-import { PAYMENT_MODES } from '@/lib/erp-constants'
+import { apiDelete, apiPatch, apiPost, currentRole, useList } from '@/lib/use-api'
+import { PAYMENT_MODES, accountsForMode, canAccessModule, type ModeAccount } from '@/lib/erp-constants'
 
 interface PaymentRow {
   id: string; number: string; date: string; type: string; partyType: string
@@ -21,8 +21,11 @@ interface PaymentRow {
   invoice?: { number?: string | null } | null
   accountId?: string | null; accountName?: string | null
   chequeNo?: string | null; chequeDate?: string | null; chequeStatus?: string | null; clearedDate?: string | null
+  customerId?: string | null
+  // Phase 4: ADVANCE | ADVANCE_APPLIED | CREDIT_APPLIED | REFUND (null = invoice payment / note)
+  kind?: string | null; sourceNumber?: string | null; applied?: number; remaining?: number
 }
-interface AccountOpt { id: string; name: string; type: string; active: boolean }
+type AccountOpt = ModeAccount
 interface PartyRow { id: string; name?: string | null; code?: string | null }
 interface DocInvoiceRow {
   id: string; number: string; status: string; grandTotal: number; paidAmount: number
@@ -32,7 +35,9 @@ interface DocInvoiceRow {
 const today = () => new Date().toISOString().slice(0, 10)
 const r2 = (n: number) => Math.round(n * 100) / 100
 // Adjustments posted by sales / purchase returns — voided only by cancelling the note
-const NOTE_MODES: Record<string, string> = { CREDIT_NOTE: 'Credit Note', DEBIT_NOTE: 'Debit Note' }
+const NOTE_MODES: Record<string, string> = { CREDIT_NOTE: 'Credit Note', DEBIT_NOTE: 'Debit Note', ADVANCE_ADJ: 'Advance applied' }
+// Invoice select value for "Advance (no invoice yet)" — Payment In only
+const ADVANCE_OPTION = '__ADVANCE__'
 const CHEQUE_TONE: Record<string, string> = {
   PENDING: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
   DEPOSITED: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
@@ -55,8 +60,12 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
   const accounts = useList<{ items: AccountOpt[] }>(`/api/accounts?companyId=${companyId}`)
   const customers = useList<{ items: PartyRow[] }>(`/api/customers?companyId=${companyId}`)
   const suppliers = useList<{ items: PartyRow[] }>(`/api/suppliers?companyId=${companyId}`)
-  const salesInvoices = useList<{ items: DocInvoiceRow[] }>(`/api/sales-invoices?companyId=${companyId}`)
-  const purchaseInvoices = useList<{ items: DocInvoiceRow[] }>(`/api/purchase-invoices?companyId=${companyId}`)
+  // Phase 5: each side's invoices only for roles that may read them (the server refuses the other side with 403)
+  const role = React.useMemo(() => currentRole(), [])
+  const salesSide = !role || canAccessModule(role, 'sales-invoices') || canAccessModule(role, 'receivables')
+  const purchaseSide = !role || canAccessModule(role, 'purchase-invoices') || canAccessModule(role, 'payables')
+  const salesInvoices = useList<{ items: DocInvoiceRow[] }>(salesSide ? `/api/sales-invoices?companyId=${companyId}` : null)
+  const purchaseInvoices = useList<{ items: DocInvoiceRow[] }>(purchaseSide ? `/api/purchase-invoices?companyId=${companyId}` : null)
 
   const [open, setOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
@@ -75,10 +84,12 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
   const [actionDate, setActionDate] = React.useState(today)
   const [acting, setActing] = React.useState(false)
 
+  // Accounts of the mode's type only (cash ↔ bank); '' = the default account the server will use
+  const forMode = React.useMemo(() => accountsForMode(accounts.data?.items ?? [], mode), [accounts.data, mode])
   const accountOpts = React.useMemo(() => [
-    { value: '', label: 'Default for mode' },
-    ...(accounts.data?.items ?? []).filter((a) => a.active).map((a) => ({ value: a.id, label: `${a.name}${a.type === 'CASH' ? ' (cash)' : ''}` })),
-  ], [accounts.data])
+    { value: '', label: forMode.fallback ? `Default — ${forMode.fallback.name}` : 'Default for mode' },
+    ...forMode.matching.map((a) => ({ value: a.id, label: a.name })),
+  ], [forMode])
 
   const rows = list.data?.items ?? []
 
@@ -101,7 +112,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
   }, [type, partyId, salesInvoices.data, purchaseInvoices.data])
 
   function resetForm() {
-    setType('RECEIPT'); setPartyId(''); setInvoiceId(''); setAmount(0); setMode('NEFT'); setDate(today()); setReference(''); setNotes('')
+    setType(salesSide ? 'RECEIPT' : 'PAYMENT'); setPartyId(''); setInvoiceId(''); setAmount(0); setMode('NEFT'); setDate(today()); setReference(''); setNotes('')
     setAccountId(''); setChequeNo(''); setChequeDate('')
   }
 
@@ -111,6 +122,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
     if (d.type === 'RECEIPT' || d.type === 'PAYMENT') setType(String(d.type))
     if (d.partyId) setPartyId(String(d.partyId))
     if (d.invoiceId) { setInvoiceId(String(d.invoiceId)); setAmount(Number(d.amount) || 0) }
+    if (d.advance && d.type === 'RECEIPT') setInvoiceId(ADVANCE_OPTION)
     setOpen(true)
   })
 
@@ -125,23 +137,32 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
     setAmount(found ? found.outstanding : 0)
   }
 
+  // A payment settles an invoice / bill; Payment In may instead be a customer advance (applied to invoices later)
+  const selectedInvoice = invoiceOpts.find((o) => o.value === invoiceId)
+  const isAdvance = type === 'RECEIPT' && invoiceId === ADVANCE_OPTION
+
   async function submit() {
     if (!partyId) { toast.error('Select a party'); return }
+    if (!invoiceId) { toast.error(type === 'RECEIPT' ? 'Select the sales invoice this payment is for, or "Advance"' : 'Select the purchase bill this payment is for'); return }
+    if (isAdvance && mode === 'CHEQUE' && chequeDate > today()) { toast.error('A post-dated cheque cannot be taken as an advance — record it when the cheque date arrives'); return }
     if (amount <= 0) { toast.error('Enter a valid amount'); return }
+    if (selectedInvoice && amount > selectedInvoice.outstanding + 0.01) { toast.error(`Amount is more than the outstanding ₹${selectedInvoice.outstanding.toLocaleString('en-IN')}`); return }
+    // only once the account list has loaded — before that the server decides (it applies the same rule)
+    if (accounts.data && !accountId && !forMode.fallback) { toast.error(`Add a ${forMode.type === 'BANK' ? 'bank' : 'cash'} account in Cash & Bank first`); return }
     setSaving(true)
     try {
       await apiPost('/api/payments', {
         companyId, type, partyType: type === 'RECEIPT' ? 'CUSTOMER' : 'SUPPLIER',
         customerId: type === 'RECEIPT' ? partyId : undefined,
         supplierId: type === 'PAYMENT' ? partyId : undefined,
-        invoiceType: invoiceId ? (type === 'RECEIPT' ? 'SALES' : 'PURCHASE') : undefined,
-        invoiceId: invoiceId || undefined,
+        invoiceType: isAdvance ? 'ADVANCE' : invoiceId ? (type === 'RECEIPT' ? 'SALES' : 'PURCHASE') : undefined,
+        invoiceId: isAdvance ? undefined : invoiceId || undefined,
         amount, mode, date, reference: reference || undefined, notes: notes || undefined,
         accountId: accountId || undefined,
         ...(mode === 'CHEQUE' ? { chequeNo: chequeNo || undefined, chequeDate: chequeDate || undefined } : {}),
         userName: type === 'RECEIPT' ? 'Sales User' : 'Purchase User',
       })
-      toast.success(mode === 'CHEQUE' && chequeDate > today() ? 'Post-dated cheque recorded — counts in the bank once cleared' : 'Payment recorded')
+      toast.success(isAdvance ? 'Advance recorded — apply it to invoices from the payment list' : mode === 'CHEQUE' && chequeDate > today() ? 'Post-dated cheque recorded — counts in the bank once cleared' : 'Payment recorded')
       setOpen(false); resetForm(); void list.refetch()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to record payment') } finally { setSaving(false) }
   }
@@ -154,6 +175,34 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
       toast.success(chequeAction.action === 'deposit' ? 'Cheque deposited' : chequeAction.action === 'clear' ? 'Cheque cleared' : 'Cheque bounced — invoice balance restored')
       setChequeAction(null); void list.refetch()
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to update cheque') } finally { setActing(false) }
+  }
+
+  // ----- Apply an advance to an open invoice of the same customer (no money moves) -----
+  const [applyRow, setApplyRow] = React.useState<PaymentRow | null>(null)
+  const [applyInvoice, setApplyInvoice] = React.useState('')
+  const [applyAmount, setApplyAmount] = React.useState(0)
+  const [applyDate, setApplyDate] = React.useState(today)
+  const [applying, setApplying] = React.useState(false)
+  const applyOpts = React.useMemo(() => (salesInvoices.data?.items ?? [])
+    .filter((inv) => applyRow && inv.customerId === applyRow.customerId && inv.status !== 'PAID' && inv.status !== 'CANCELLED')
+    .map((inv) => ({ value: inv.id, label: `${inv.number} — outstanding ₹${r2(inv.grandTotal - inv.paidAmount).toLocaleString('en-IN')}`, outstanding: r2(inv.grandTotal - inv.paidAmount) })), [salesInvoices.data, applyRow])
+  function openApply(r: PaymentRow) {
+    setApplyRow(r); setApplyInvoice(''); setApplyAmount(r.remaining ?? 0); setApplyDate(today())
+  }
+  function pickApplyInvoice(id: string) {
+    setApplyInvoice(id)
+    const o = applyOpts.find((x) => x.value === id)
+    if (o && applyRow) setApplyAmount(r2(Math.min(applyRow.remaining ?? 0, o.outstanding)))
+  }
+  async function submitApply() {
+    if (!applyRow) return
+    if (!applyInvoice) { toast.error('Choose the invoice to apply the advance to'); return }
+    if (!(applyAmount > 0)) { toast.error('Enter an amount'); return }
+    setApplying(true)
+    try {
+      await apiPatch(`/api/payments/${applyRow.id}`, { companyId, action: 'apply', invoiceId: applyInvoice, amount: applyAmount, date: applyDate })
+      toast.success('Advance applied'); setApplyRow(null); void list.refetch(); void salesInvoices.refetch()
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to apply the advance') } finally { setApplying(false) }
   }
 
   async function remove(row: PaymentRow) {
@@ -175,7 +224,14 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
       ),
     },
     { key: 'party', header: 'Party', render: (r) => r.customer?.name || r.supplier?.name || '—' },
-    { key: 'invoice', header: 'Invoice', hideOnMobile: true, render: (r) => r.invoiceNumber || r.invoice?.number || '—' },
+    {
+      key: 'invoice', header: 'Invoice', hideOnMobile: true,
+      render: (r) => r.kind === 'ADVANCE'
+        ? <span className="whitespace-nowrap">Advance · <span className={r.remaining ? 'font-medium' : 'text-muted-foreground'}>₹{(r.remaining ?? 0).toLocaleString('en-IN')} left</span></span>
+        : r.kind === 'REFUND' ? `Refund on ${r.invoiceNumber || '—'}`
+          : r.kind === 'ADVANCE_APPLIED' || r.kind === 'CREDIT_APPLIED' ? `${r.invoiceNumber || '—'} (from ${r.sourceNumber || '—'})`
+            : r.invoiceNumber || r.invoice?.number || '—',
+    },
     { key: 'amount', header: 'Amount', render: (r) => <Money value={r.amount} className="font-medium" /> },
     {
       key: 'mode', header: 'Mode', hideOnMobile: true,
@@ -213,7 +269,16 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {NOTE_MODES[r.mode] ? (
+          {r.kind === 'ADVANCE' && (r.remaining ?? 0) > 0.005 && r.chequeStatus !== 'BOUNCED' && (
+            <Button variant="outline" size="sm" className="h-7" onClick={() => openApply(r)}>Apply</Button>
+          )}
+          {r.kind === 'ADVANCE_APPLIED' || r.kind === 'CREDIT_APPLIED' ? (
+            <ConfirmAction
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600">Remove</Button>}
+              title="Remove application?" message={`Remove ${r.number}? ₹${r.amount} goes back to ${r.sourceNumber || 'its source'} and the invoice becomes outstanding again. No money moves.`}
+              tone="destructive" onConfirm={() => remove(r)}
+            />
+          ) : NOTE_MODES[r.mode] ? (
             <span className="text-[11px] text-muted-foreground" title="Cancel the credit/debit note to reverse this">{NOTE_MODES[r.mode]}</span>
           ) : (
             <ConfirmAction
@@ -254,8 +319,8 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
                 ]}
               />
             </div>
-            <Button onClick={() => startCreate('RECEIPT')}><Plus className="h-4 w-4 mr-1.5" />Payment In</Button>
-            <Button variant="outline" onClick={() => startCreate('PAYMENT')}><Plus className="h-4 w-4 mr-1.5" />Payment Out</Button>
+            {salesSide && <Button onClick={() => startCreate('RECEIPT')}><Plus className="h-4 w-4 mr-1.5" />Payment In</Button>}
+            {purchaseSide && <Button variant={salesSide ? 'outline' : 'default'} onClick={() => startCreate('PAYMENT')}><Plus className="h-4 w-4 mr-1.5" />Payment Out</Button>}
           </div>
         }
       />
@@ -275,21 +340,37 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
           </Field>
           <Field label="Party" required>
             <SelectInput
-              value={partyId} onChange={(v) => { setPartyId(v); setInvoiceId('') }}
+              value={partyId} onChange={(v) => { setPartyId(v); setInvoiceId((cur) => (cur === ADVANCE_OPTION ? cur : '')) /* an advance fits any customer; an invoice belongs to the old one */ }}
               options={partyOpts} placeholder={type === 'RECEIPT' ? 'Select customer…' : 'Select supplier…'}
             />
           </Field>
-          <Field label="Against Invoice (optional)" className="sm:col-span-2">
+          <Field label={type === 'RECEIPT' ? 'Sales invoice or advance' : 'Purchase bill'} required className="sm:col-span-2">
             <SelectInput
               value={invoiceId} onChange={pickInvoice}
-              options={[{ value: '', label: '— Advance / on account —' }, ...invoiceOpts]}
-              placeholder={invoiceOpts.length ? 'Select open invoice…' : 'No open invoices for this party'}
+              options={type === 'RECEIPT' ? [{ value: ADVANCE_OPTION, label: 'Advance (no invoice yet)' }, ...invoiceOpts] : invoiceOpts}
+              placeholder={!partyId ? 'Select the party first' : invoiceOpts.length ? 'Select an open invoice…' : 'No open invoices for this party'}
             />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {isAdvance
+                ? 'Advance: kept as money owed to the customer (not sales) until you apply it to their invoices.'
+                : selectedInvoice
+                  ? `Outstanding on this ${type === 'RECEIPT' ? 'invoice' : 'bill'}: ₹${selectedInvoice.outstanding.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                  : type === 'RECEIPT'
+                    ? 'Choose an open sales invoice, or "Advance" for money received before an invoice.'
+                    : 'A payment out must be linked to an open purchase bill.'}
+            </p>
           </Field>
           <Field label="Amount" required><NumberInput value={amount} onChange={setAmount} min={0} /></Field>
-          <Field label="Mode"><SelectInput value={mode} onChange={setMode} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} /></Field>
+          <Field label="Mode"><SelectInput value={mode} onChange={(m) => { setMode(m); setAccountId('') }} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} /></Field>
           <Field label={type === 'RECEIPT' ? 'Into account' : 'From account'}>
             <SelectInput value={accountId} onChange={setAccountId} options={accountOpts} />
+            <p className={`mt-1 text-[11px] ${forMode.fallback || accountId ? 'text-muted-foreground' : 'text-red-600'}`}>
+              {accountId
+                ? `Recorded in ${forMode.matching.find((a) => a.id === accountId)?.name ?? 'the chosen account'}`
+                : forMode.fallback
+                  ? `Will be recorded in ${forMode.fallback.name}`
+                  : `No ${forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to record ${mode} payments`}
+            </p>
           </Field>
           {mode === 'CHEQUE' && (
             <>
@@ -303,6 +384,20 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
           <Field label="Date" required><DateInput value={date} onChange={setDate} /></Field>
           <Field label="Reference"><TextInput value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque no." /></Field>
           <Field label="Notes" className="sm:col-span-2"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Remarks…" /></Field>
+        </div>
+      </FormDialog>
+
+      <FormDialog
+        open={!!applyRow} onOpenChange={(o) => { if (!o) setApplyRow(null) }} loading={applying} onSubmit={submitApply}
+        title="Apply advance" submitLabel="Apply"
+        description={applyRow ? `${applyRow.number} · ${applyRow.customer?.name || ''} · ₹${(applyRow.remaining ?? 0).toLocaleString('en-IN')} left — no money moves` : ''}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Invoice" required className="sm:col-span-2">
+            <SelectInput value={applyInvoice} onChange={pickApplyInvoice} options={applyOpts} placeholder={applyOpts.length ? 'Select an open invoice…' : 'No open invoices for this customer'} />
+          </Field>
+          <Field label="Amount (₹)" required><NumberInput value={applyAmount} onChange={setApplyAmount} min={0} step="0.01" /></Field>
+          <Field label="Date" required><DateInput value={applyDate} onChange={setApplyDate} /></Field>
         </div>
       </FormDialog>
 

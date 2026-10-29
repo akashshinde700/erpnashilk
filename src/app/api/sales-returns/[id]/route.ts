@@ -1,12 +1,16 @@
 import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
-import { ok, handleError, companyRequired, postStock, logAudit, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, postStock, logAudit, ApiError, r2, requireWrite, claimStatus, requireRead } from '@/lib/erp-helpers'
 import { withReturnInfo } from '../shared'
 import { consumeBatches, parseBatchNote, unreturnSerials } from '@/lib/batches'
+import { applyCustomerCredit } from '@/lib/credit-apply'
+import { SALES_RETURN } from '@/lib/party-credits'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 
 // GET /api/sales-returns/[id]?companyId= — full detail for the credit note print
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireRead(req, 'sales-returns') // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const ret = await db.salesReturn.findFirst({ where: { id, companyId }, include: { items: true } })
@@ -36,18 +40,34 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
 }
 
-// PATCH /api/sales-returns/[id]  { action: 'cancel' }
-// POSTED → CANCELLED: the returned goods go back out of stock (409 if they were already used) and the
-// CREDIT_NOTE receipt(s) for this note are removed from the invoice, restoring its balance.
+// PATCH /api/sales-returns/[id]  { action: 'cancel' } | { action: 'apply', invoiceId, amount, date? }
+// cancel: POSTED → CANCELLED: the returned goods go back out of stock (409 if they were already used) and the
+//   CREDIT_NOTE receipt(s) for this note are removed from the invoice, restoring its balance. Refused while the
+//   credit is refunded or applied to another invoice (void those first).
+// apply: put the credit left on this note against another open invoice of the customer (no money moves).
+//   Refunds of the credit are Payment rows (POST /api/payments, invoiceType 'SALES_RETURN').
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'sales-returns')
     const { id } = await params
     const body = await req.json().catch(() => ({}) as any)
     const companyId = await companyRequired(req, body.companyId)
+    if (body.action === 'apply') {
+      idem = await claimIdempotency(req, companyId, `PATCH /api/sales-returns/${id} apply`, body)
+      if (idem.replay) return idem.replay
+      const row = await db.$transaction(async (tx) => {
+        const r = await applyCustomerCredit(tx, {
+          companyId, source: 'RETURN', sourceId: id, invoiceId: body.invoiceId, amount: body.amount, date: body.date, userName: body.userName,
+        })
+        await idem!.done(tx, r, `Credit applied to ${r.invoiceNumber}`)
+        return r
+      })
+      return ok(row, `Credit applied to ${row.invoiceNumber}`)
+    }
     await requireSecurityPin(req, companyId)
 
-    if (body.action !== 'cancel') throw new ApiError("Nothing to update — use action='cancel'", 400)
+    if (body.action !== 'cancel') throw new ApiError("Nothing to update — use action='cancel' or 'apply'", 400)
     const current = await db.salesReturn.findFirst({ where: { id, companyId }, include: { items: true } })
     if (!current) throw new ApiError('Sales return not found', 404)
     if (current.status !== 'POSTED') throw new ApiError(`Sales return is ${current.status}`, 400)
@@ -55,17 +75,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const updated = await db.$transaction(async (tx) => {
       const t = tx as any
       await claimStatus(t.salesReturn, id, ['POSTED'], 'CANCELLED')
+      // The status flip locked the note: refunds and applications elsewhere must be removed first
+      const [refunds, appliedElsewhere] = await Promise.all([
+        tx.payment.count({ where: { companyId, invoiceType: SALES_RETURN, invoiceId: id, OR: [{ chequeStatus: null }, { chequeStatus: { not: 'BOUNCED' } }] } }),
+        tx.payment.count({ where: { companyId, mode: 'CREDIT_NOTE', allocatedFromId: id } }),
+      ])
+      if (refunds || appliedElsewhere) {
+        throw new ApiError(`${current.number} has ${refunds ? `${refunds} refund${refunds === 1 ? '' : 's'}` : ''}${refunds && appliedElsewhere ? ' and ' : ''}${appliedElsewhere ? `${appliedElsewhere} application${appliedElsewhere === 1 ? '' : 's'} to other invoices` : ''} — void ${refunds + appliedElsewhere === 1 ? 'it' : 'them'} first`, 400)
+      }
 
-      // Reverse the stock receipt at the rate it came in
+      // Reverse exactly the stock this return received, at the cost it came in at. A credit-note-only return
+      // (the invoice moved no stock) and service lines received nothing, so nothing goes out.
       const ledger = await tx.stockLedger.findMany({
         where: { companyId, refType: 'SALES_RETURN', refId: id, type: 'SALES_RETURN_IN' },
-        select: { itemId: true, rate: true, notes: true },
+        select: { itemId: true, qtyIn: true, rate: true, notes: true },
       })
-      const rateOf = new Map(ledger.map((l) => [l.itemId, l.rate]))
-      for (const l of current.items) {
+      const received = new Map<string, { qty: number; value: number }>()
+      for (const l of ledger) {
+        const r = received.get(l.itemId) ?? { qty: 0, value: 0 }
+        received.set(l.itemId, { qty: r2(r.qty + l.qtyIn), value: r.value + l.qtyIn * l.rate })
+      }
+      for (const [itemId, r] of Array.from(received)) {
+        if (r.qty <= 0) continue
         await postStock(t, {
-          companyId, itemId: l.itemId, warehouseId: current.warehouseId, type: 'SALES_RETURN_REVERSAL', qtyOut: l.qty,
-          rate: rateOf.get(l.itemId) ?? l.rate, date: new Date(),
+          companyId, itemId, warehouseId: current.warehouseId, type: 'SALES_RETURN_REVERSAL', qtyOut: r.qty,
+          rate: r2(r.value / r.qty), date: new Date(),
           refType: 'SALES_RETURN', refId: id, refNumber: current.number, notes: `Cancelled credit note ${current.number}`,
         })
       }
@@ -88,7 +122,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
       // Remove the credit applied to the invoice
       const credits = await tx.payment.findMany({
-        where: { companyId, invoiceId: current.invoiceId, invoiceType: 'SALES', mode: 'CREDIT_NOTE', reference: current.number },
+        where: { companyId, invoiceId: current.invoiceId, invoiceType: 'SALES', mode: 'CREDIT_NOTE', reference: current.number, allocatedFromId: null },
         select: { id: true, amount: true },
       })
       const creditTotal = r2(credits.reduce((s, p) => s + p.amount, 0))
@@ -117,6 +151,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     })
     return ok(updated, `Credit note ${current.number} cancelled`)
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

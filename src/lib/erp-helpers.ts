@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { headers } from 'next/headers'
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { canAccessModule } from '@/lib/erp-constants'
+import { canAccessModule, canSeeFinancialReports } from '@/lib/erp-constants'
 import { passwordVersion } from '@/lib/session'
 import { accessProblem, effectiveLimits, type LimitKind } from '@/lib/subscription'
 
@@ -12,8 +12,8 @@ export function ok<T>(data: T, message = '') {
   return NextResponse.json({ success: true, data, message })
 }
 
-export function fail(message: string, status = 400, code = 'ERR') {
-  return NextResponse.json({ success: false, error: { code, message } }, { status })
+export function fail(message: string, status = 400, code = 'ERR', details?: unknown) {
+  return NextResponse.json({ success: false, error: { code, message, ...(details === undefined ? {} : { details }) } }, { status })
 }
 
 // ============ Company (tenant) resolution ============
@@ -159,9 +159,14 @@ export function companyRequired(req: Request, bodyCompanyId?: string): Promise<s
 
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status = 400) {
+  /** Machine-readable code for the client (e.g. NEGATIVE_CASH, POSSIBLE_DUPLICATE); 'ERR' when not set. */
+  code: string
+  details?: unknown
+  constructor(message: string, status = 400, code = 'ERR', details?: unknown) {
     super(message)
     this.status = status
+    this.code = code
+    this.details = details
   }
 }
 
@@ -204,8 +209,28 @@ export function requireWrite(req: Request, moduleKey: string): RequestActor {
   return actor
 }
 
+/**
+ * Enforce role-based READ access to financial data (Phase 5): the role must have at least one of `moduleKeys`
+ * (existing module permissions — nothing new is granted). Throws 401 / 403.
+ */
+export function requireRead(req: Request, moduleKeys: string | string[]): RequestActor {
+  const actor = getActor(req)
+  if (!actor) throw new ApiError('Unauthorized — sign in to continue', 401)
+  const keys = Array.isArray(moduleKeys) ? moduleKeys : [moduleKeys]
+  if (!keys.some((k) => canAccessModule(actor.role, k))) throw new ApiError('Your role cannot view this information', 403)
+  return actor
+}
+
+/** Sensitive financial reports (P&L, balance sheet, trial balance, cash flow, daybook, transactions, profitability). */
+export function requireFinancialReports(req: Request): RequestActor {
+  const actor = getActor(req)
+  if (!actor) throw new ApiError('Unauthorized — sign in to continue', 401)
+  if (!canSeeFinancialReports(actor.role)) throw new ApiError('Your role cannot view financial reports', 403)
+  return actor
+}
+
 export function handleError(e: unknown) {
-  if (e instanceof ApiError) return fail(e.message, e.status)
+  if (e instanceof ApiError) return fail(e.message, e.status, e.code, e.details)
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
     if (e.code === 'P2002') return fail('Duplicate record: code/number already exists', 409)
     if (e.code === 'P2025') return fail('Record not found', 404)
@@ -254,9 +279,9 @@ export const DOC_PREFIX: Record<string, string> = {
 }
 
 /** Prefix for a document type: the company's override (Settings → Document Numbering) or the default. */
-async function docPrefix(companyId: string, docType: string): Promise<string> {
+async function docPrefix(client: { company: { findUnique: (a: never) => Promise<{ docPrefixes: string | null } | null> } }, companyId: string, docType: string): Promise<string> {
   try {
-    const c = await db.company.findUnique({ where: { id: companyId }, select: { docPrefixes: true } })
+    const c = await client.company.findUnique({ where: { id: companyId }, select: { docPrefixes: true } } as never)
     const map = c?.docPrefixes ? (JSON.parse(c.docPrefixes) as Record<string, string>) : {}
     const p = typeof map[docType] === 'string' ? map[docType].trim() : ''
     if (p) return p
@@ -269,18 +294,27 @@ async function docPrefix(companyId: string, docType: string): Promise<string> {
  * Must be called inside the same transaction/interactive tx as record creation.
  */
 export async function nextDocNumber(tx: {
+  company: { findUnique: (a: never) => Promise<{ docPrefixes: string | null } | null> }
   numberSeq: {
     findUnique: (a: never) => Promise<{ nextNumber: number } | null>
     updateMany: (a: never) => Promise<{ count: number }>
+    create: (a: never) => Promise<unknown>
   }
+  $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>
 }, companyId: string, docType: string, date: Date = new Date()): Promise<string> {
   const fy = financialYearOf(date)
-  const prefix = await docPrefix(companyId, docType)
+  // Everything goes through the caller's transaction (CB-R1): reading through the global client from inside a
+  // transaction needs a second pool connection, so a burst of documents the size of the pool used to time out.
+  const prefix = await docPrefix(tx, companyId, docType)
   const where = { companyId_docType_financialYear: { companyId, docType, financialYear: fy } }
-  // First number of a (company, docType, FY): create the counter row outside the transaction
-  // (INSERT IGNORE, auto-committed) so concurrent first documents never race on the insert.
+  // First number of a (company, docType, FY): created inside the transaction. Concurrent first documents of the
+  // company queue on its Company row (FOR UPDATE), then re-check with a locking (current) read — so exactly one
+  // creates the counter and nobody races on the unique key (a plain concurrent INSERT IGNORE deadlocks in InnoDB).
+  // A rolled-back transaction leaves no counter row behind.
   if (!(await tx.numberSeq.findUnique({ where } as never))) {
-    await db.numberSeq.createMany({ data: [{ companyId, docType, prefix, financialYear: fy, nextNumber: 1 }], skipDuplicates: true })
+    await tx.$queryRaw`SELECT id FROM Company WHERE id = ${companyId} FOR UPDATE`
+    const existing = await tx.$queryRaw`SELECT id FROM NumberSeq WHERE companyId = ${companyId} AND docType = ${docType} AND financialYear = ${fy} FOR UPDATE` as unknown[]
+    if (!existing.length) await tx.numberSeq.create({ data: { companyId, docType, prefix, financialYear: fy, nextNumber: 1 } } as never)
   }
   // Increment under the row lock (a plain UPDATE reads the latest committed row, unlike the
   // transaction's snapshot), then read our own write back: each transaction gets a distinct number.
@@ -452,7 +486,10 @@ export async function postStock(tx: MinimalTx, input: StockPostInput): Promise<n
   await tx.stockLedger.create({
     data: {
       companyId: input.companyId, date, itemId: input.itemId, warehouseId: input.warehouseId,
-      type: input.type, qtyIn, qtyOut, rate, refType: input.refType, refId: input.refId,
+      type: input.type, qtyIn, qtyOut, rate,
+      // Cost of the goods leaving = the average before this movement (outward rows don't change the average)
+      costRate: qtyOut > 0 ? prevRate : null,
+      refType: input.refType, refId: input.refId,
       refNumber: input.refNumber, notes: input.notes,
     },
   })

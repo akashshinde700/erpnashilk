@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite } from '@/lib/erp-helpers'
-import { CbTx, MODULE_KEY, parseDate } from '../../_shared'
+import { istDay, optBusinessDate } from '@/lib/business-date'
+import { CbTx, MODULE_KEY } from '../../_shared'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -19,7 +20,7 @@ export async function PATCH(req: Request, { params }: Params) {
     if (!['payment', 'expense', 'txn'].includes(kind)) throw new ApiError("kind must be 'payment', 'expense' or 'txn'", 400)
     const entryId = String(body?.id || '')
     if (!entryId) throw new ApiError('id is required', 400)
-    const clearedDate = parseDate(body?.clearedDate, 'clearedDate')
+    const clearedDate = optBusinessDate(body?.clearedDate, 'Cleared date')
 
     const result = await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
@@ -28,6 +29,14 @@ export async function PATCH(req: Request, { params }: Params) {
         const p = await tx.payment.findFirst({ where: { id: entryId, companyId } })
         if (!p) throw new ApiError('Payment not found', 404)
         if (p.accountId && p.accountId !== accountId) throw new ApiError('This payment belongs to another account', 400)
+        // A post-dated cheque's clearing date is when its money reaches the account — managed by the cheque actions
+        if (p.chequeStatus && p.chequeStatus !== 'CLEARED') throw new ApiError(`This cheque is ${p.chequeStatus.toLowerCase()} — use the cheque actions (clear / bounce)`, 400)
+        if (p.chequeStatus === 'CLEARED') {
+          if (!clearedDate) throw new ApiError('A cleared cheque keeps its clearing date', 400)
+          if (istDay(clearedDate) < istDay(p.date) || (p.chequeDate && istDay(clearedDate) < istDay(p.chequeDate))) {
+            throw new ApiError('The clearing date cannot be before the payment or cheque date', 400)
+          }
+        }
         await tx.payment.update({ where: { id: p.id }, data: { clearedDate } })
         number = p.number
       } else if (kind === 'expense') {

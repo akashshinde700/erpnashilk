@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
 import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite } from '@/lib/erp-helpers'
 import { CbTx, MODULE_KEY } from '../../accounts/_shared'
+import { CASH_TX, assertCashNotNegative, negativeCashOverride } from '@/lib/cash-guard'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -19,6 +20,7 @@ export async function DELETE(req: Request, { params }: Params) {
     if (existing.loanId || existing.type === 'LOAN_IN' || existing.type === 'LOAN_EMI') {
       throw new ApiError('Loan entries are managed from the Loans tab', 400)
     }
+    const override = negativeCashOverride(req, body as { allowNegativeCash?: unknown })
 
     await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
@@ -28,7 +30,11 @@ export async function DELETE(req: Request, { params }: Params) {
         companyId, userName: body?.userName, action: 'DELETE', entity: 'AccountTxn', entityId: id,
         details: `${existing.number} (${existing.type}) of ₹${existing.amount.toFixed(2)} deleted`,
       })
-    })
+      // Phase 5: deleting money added to an account (adjustment in / transfer in) takes it back out
+      if (existing.toAccountId) {
+        await assertCashNotNegative(txRaw, { companyId, accounts: [{ accountId: existing.toAccountId }], from: existing.date, override, what: `Deleting ${existing.number}`, entity: 'AccountTxn', entityId: id, userName: body?.userName as string | undefined })
+      }
+    }, CASH_TX)
     return ok({ id }, 'Entry deleted')
   } catch (e) {
     return handleError(e)

@@ -1,7 +1,10 @@
 import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
-import { ApiError, companyRequired, handleError, logAudit, ok, r2, requireWrite } from '@/lib/erp-helpers'
-import { CbTx, MODULE_KEY, activeAccount, money, optStr, parseDate } from '../../accounts/_shared'
+import { ApiError, companyRequired, handleError, logAudit, ok, r2, requireWrite, requireRead } from '@/lib/erp-helpers'
+import { assertOnOrAfterOpening } from '@/lib/accounts'
+import { businessDate } from '@/lib/business-date'
+import { CASH_TX, assertCashNotNegative, negativeCashOverride } from '@/lib/cash-guard'
+import { CbTx, MODULE_KEY, activeAccount, money, optStr } from '../../accounts/_shared'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -13,6 +16,7 @@ async function principalPaid(tx: CbTx, companyId: string, loanId: string) {
 // GET /api/loans/[id]?companyId= → loan + its entries (LOAN_IN / LOAN_EMI)
 export async function GET(req: Request, { params }: Params) {
   try {
+    requireRead(req, 'cash-bank') // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const loan = await db.loan.findFirst({ where: { id, companyId } })
@@ -39,6 +43,7 @@ export async function PATCH(req: Request, { params }: Params) {
     const loan = await db.loan.findFirst({ where: { id, companyId } })
     if (!loan) throw new ApiError('Loan not found', 404)
     const action = String(body?.action || '').toLowerCase()
+    const override = negativeCashOverride(req, body as { allowNegativeCash?: unknown })
 
     const updated = await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
@@ -77,7 +82,7 @@ export async function PATCH(req: Request, { params }: Params) {
 
       const principal = 'principal' in body ? money(body.principal, 'principal') : loan.principal
       const processingFee = 'processingFee' in body ? money(body.processingFee, 'processingFee', { allowZero: true }) : loan.processingFee
-      const startDate = 'startDate' in body ? (parseDate(body.startDate, 'startDate') ?? loan.startDate) : loan.startDate
+      const startDate = 'startDate' in body && body.startDate ? businessDate(body.startDate, 'Start date') : loan.startDate
       const receivedAccountId = 'receivedAccountId' in body && body.receivedAccountId
         ? (await activeAccount(tx, companyId, body.receivedAccountId, 'Received in account')).id
         : loan.receivedAccountId
@@ -87,6 +92,9 @@ export async function PATCH(req: Request, { params }: Params) {
         if (processingFee >= principal) throw new ApiError('Processing fee must be less than the loan amount', 400)
         const paid = await principalPaid(tx, companyId, loan.id)
         if (principal + 0.01 < paid) throw new ApiError(`Principal cannot be less than the principal already repaid (₹${paid.toFixed(2)})`, 400)
+        // The loan receipt moves with the start date / account: it must not land before the account's opening date
+        const acc = receivedAccountId ? await tx.moneyAccount.findFirst({ where: { id: receivedAccountId, companyId } }) : null
+        if (acc) assertOnOrAfterOpening(acc, startDate, 'The loan receipt')
         Object.assign(data, { principal, processingFee, startDate, receivedAccountId })
         await tx.accountTxn.updateMany({
           where: { companyId, loanId: loan.id, type: 'LOAN_IN' },
@@ -96,8 +104,13 @@ export async function PATCH(req: Request, { params }: Params) {
       }
       const u = await tx.loan.update({ where: { id: loan.id }, data })
       await logAudit(tx, { companyId, userName: body?.userName, action: 'UPDATE', entity: 'Loan', entityId: id, details: `Loan "${u.name}" updated` })
+      // Phase 5: less loan money, money arriving later or in another account takes it out of the old account
+      const lessIn = r2(principal - processingFee) < r2(loan.principal - loan.processingFee) - 0.005
+      if (moneyChanged && (lessIn || startDate > loan.startDate || receivedAccountId !== loan.receivedAccountId)) {
+        await assertCashNotNegative(txRaw, { companyId, accounts: [{ accountId: loan.receivedAccountId }], from: loan.startDate, override, what: `Changing loan "${loan.name}"`, entity: 'Loan', entityId: id, userName: body?.userName as string | undefined })
+      }
       return u
-    })
+    }, CASH_TX)
     return ok(updated, action === 'close' ? 'Loan closed' : action === 'reopen' ? 'Loan reopened' : 'Loan updated')
   } catch (e) {
     return handleError(e)
@@ -115,6 +128,7 @@ export async function DELETE(req: Request, { params }: Params) {
 
     const loan = await db.loan.findFirst({ where: { id, companyId } })
     if (!loan) throw new ApiError('Loan not found', 404)
+    const override = negativeCashOverride(req, body as { allowNegativeCash?: unknown })
     await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
       const entries = await tx.accountTxn.deleteMany({ where: { companyId, loanId: loan.id } })
@@ -123,7 +137,9 @@ export async function DELETE(req: Request, { params }: Params) {
         companyId, userName: body?.userName, action: 'DELETE', entity: 'Loan', entityId: id,
         details: `Loan "${loan.name}" deleted with ${entries.count} entr${entries.count === 1 ? 'y' : 'ies'}`,
       })
-    })
+      // Phase 5: the loan money that came in goes away with the loan
+      await assertCashNotNegative(txRaw, { companyId, accounts: [{ accountId: loan.receivedAccountId }], from: loan.startDate, override, what: `Deleting loan "${loan.name}"`, entity: 'Loan', entityId: id, userName: body?.userName as string | undefined })
+    }, CASH_TX)
     return ok({ id }, 'Loan deleted')
   } catch (e) {
     return handleError(e)

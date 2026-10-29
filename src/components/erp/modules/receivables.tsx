@@ -34,7 +34,7 @@ interface CompanyProfile {
   bankUpiId?: string | null
 }
 
-interface StatementRow { date: string; type: 'INVOICE' | 'PAYMENT'; ref: string; particulars: string; debit: number; credit: number; balance: number }
+interface StatementRow { date: string; type: 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'REFUND'; ref: string; particulars: string; debit: number; credit: number; balance: number }
 interface StatementData {
   customer: { id: string; name: string; code: string; gstin?: string | null; phone?: string | null }
   period: { from: string; to: string }

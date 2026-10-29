@@ -1,10 +1,11 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, r2, requireRead } from '@/lib/erp-helpers'
 
 // GET /api/reports/stock-valuation?companyId=&warehouseId?&type?
 // Valuation snapshot grouped per item across warehouses (StockBalance has no warehouse relation → JS attach).
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'reports') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const warehouseId = searchParams.get('warehouseId') || undefined

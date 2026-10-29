@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, getActor, r2 } from '@/lib/erp-helpers'
+import { canAccessModule } from '@/lib/erp-constants'
 import { accountBalances } from '@/lib/accounts'
 import { partyOutstanding } from '@/lib/accounting'
 
@@ -148,8 +149,11 @@ export async function GET(req: Request) {
       }),
     ])
 
-    // Money cards (Vyapar style): party outstanding incl. opening balances + cash / bank balances
-    const [party, accBalances] = await Promise.all([partyOutstanding(companyId), accountBalances(companyId)])
+    // Money cards (Vyapar style): party outstanding incl. opening balances + cash / bank balances — sent only to roles
+    // that may see them (Phase 5: the screen already hid them; the API no longer returns them either)
+    const role = getActor(req)?.role
+    const may = { receivables: canAccessModule(role, 'receivables'), payables: canAccessModule(role, 'payables'), cashBank: canAccessModule(role, 'cash-bank') }
+    const [party, accBalances] = await Promise.all([partyOutstanding(companyId), may.cashBank ? accountBalances(companyId) : Promise.resolve([])])
 
     // Low stock: total balance qty per item vs reorderLevel
     const qtyByItem = new Map<string, number>()
@@ -186,8 +190,8 @@ export async function GET(req: Request) {
       kpis: {
         salesThisMonth: r2(salesMonth._sum.grandTotal || 0),
         purchasesThisMonth: r2(purchaseMonth._sum.grandTotal || 0),
-        receivables: r2((salesAll._sum.grandTotal || 0) - (salesAll._sum.paidAmount || 0)),
-        payables: r2((purchaseAll._sum.grandTotal || 0) - (purchaseAll._sum.paidAmount || 0)),
+        receivables: may.receivables ? r2((salesAll._sum.grandTotal || 0) - (salesAll._sum.paidAmount || 0)) : undefined,
+        payables: may.payables ? r2((purchaseAll._sum.grandTotal || 0) - (purchaseAll._sum.paidAmount || 0)) : undefined,
         stockValue: r2(balances.reduce((s, b) => s + b.qty * b.avgRate, 0)),
         openSalesOrders: openSO,
         wipQty: r2(wipRows.reduce((s, w) => s + Math.max(0, w.plannedQty - w.producedQty), 0)),
@@ -196,10 +200,10 @@ export async function GET(req: Request) {
         pendingApprovals: prCount + poCount,
       },
       money: {
-        youWillReceive: party.receivable,
-        youWillPay: party.payable,
-        cashInHand: r2(accBalances.filter((a) => a.type === 'CASH').reduce((s, a) => s + a.balance, 0)),
-        bankBalance: r2(accBalances.filter((a) => a.type !== 'CASH').reduce((s, a) => s + a.balance, 0)),
+        youWillReceive: may.receivables ? party.receivable : undefined,
+        youWillPay: may.payables ? party.payable : undefined,
+        cashInHand: may.cashBank ? r2(accBalances.filter((a) => a.type === 'CASH').reduce((s, a) => s + a.balance, 0)) : undefined,
+        bankBalance: may.cashBank ? r2(accBalances.filter((a) => a.type !== 'CASH').reduce((s, a) => s + a.balance, 0)) : undefined,
       },
       charts: {
         salesTrend: trendByMonth(salesRows.map((i) => ({ date: i.date, value: i.grandTotal })), months),

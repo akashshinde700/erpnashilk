@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, ApiError, r2, requireRead } from '@/lib/erp-helpers'
 import { parsePeriod } from '@/lib/accounting'
 
 // GET /api/reports/item-detail?companyId=&itemId=&from=&to=&warehouseId?
@@ -8,6 +8,7 @@ import { parsePeriod } from '@/lib/accounting'
 // Opening qty = current balance − movements dated ≥ from; closing value uses the CURRENT average rate.
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'reports') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const itemId = (searchParams.get('itemId') || '').trim()

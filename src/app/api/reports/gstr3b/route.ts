@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, r2, requireRead } from '@/lib/erp-helpers'
 import { gstTotals, headsTotal, parsePeriod, type TaxHeads } from '@/lib/accounting'
 
 // GET /api/reports/gstr3b?companyId=&from=&to=   (UI passes a month)
@@ -10,6 +10,7 @@ import { gstTotals, headsTotal, parsePeriod, type TaxHeads } from '@/lib/account
 //   6.1 net payable per head = output − ITC (negative = credit carried forward; cross-head set-off not applied)
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'gst-report') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const { fromStr, toStr, from, to } = parsePeriod(searchParams)

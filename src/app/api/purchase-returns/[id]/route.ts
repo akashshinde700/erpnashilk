@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
-import { ok, handleError, companyRequired, claimStatus, logAudit, ApiError, r2, requireWrite, postStock } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, claimStatus, logAudit, ApiError, r2, requireWrite, postStock, requireRead } from '@/lib/erp-helpers'
 import { attachReturnInfo, billStatus } from '../shared'
 import { parseBatchNote, receiveBatch, unreturnSerialsFromSupplier } from '@/lib/batches'
+import { PURCHASE_RETURN } from '@/lib/party-credits'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -18,6 +19,7 @@ async function findReturn(id: string, companyId: string) {
 // ============================== GET /api/purchase-returns/[id] ==============================
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireRead(req, 'purchase-returns') // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const [row] = await attachReturnInfo(companyId, [await findReturn(id, companyId)])
@@ -42,6 +44,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const updated = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
       await claimStatus(tx.purchaseReturn, ret.id, ['POSTED'], 'CANCELLED')
+      // The status flip locked the note: refunds received against it must be voided first
+      const refunds = await tx.payment.count({ where: { companyId, invoiceType: PURCHASE_RETURN, invoiceId: ret.id, OR: [{ chequeStatus: null }, { chequeStatus: { not: 'BOUNCED' } }] } })
+      if (refunds) throw new ApiError(`${ret.number} has ${refunds} refund${refunds === 1 ? '' : 's'} received — void ${refunds === 1 ? 'it' : 'them'} first`, 400)
 
       // Goods come back into the warehouse they left from, at the same rate
       for (const it of ret.items) {

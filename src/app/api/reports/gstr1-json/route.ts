@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, ApiError, r2, requireRead } from '@/lib/erp-helpers'
 import { endOfDayStr, stateCodeOf } from '@/lib/accounting'
 
 // GET /api/reports/gstr1-json?companyId=&month=YYYY-MM
@@ -38,6 +38,7 @@ const itms = (m: Map<number, Bucket>) =>
 
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'gst-report') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const now = new Date()

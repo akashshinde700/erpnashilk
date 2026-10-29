@@ -836,7 +836,10 @@ export function SelectInput({ value, onChange, options, placeholder = 'Select…
   // Radix Select forbids empty string item values — map '' to a sentinel transparently
   const EMPTY = '__EMPTY__'
   const safeOptions = options.map((o) => (o.value === '' ? { ...o, value: EMPTY } : o))
-  const safeValue = value === '' ? EMPTY : (value || undefined)
+  // '' with no '' option = nothing chosen yet: Radix shows the placeholder for a controlled value of ''
+  // (mapping it to the sentinel instead would leave the trigger blank)
+  const hasEmptyOption = options.some((o) => o.value === '')
+  const safeValue = value === '' ? (hasEmptyOption ? EMPTY : '') : (value || undefined)
   return (
     <Select value={safeValue} onValueChange={(v) => onChange(v === EMPTY ? '' : v)} disabled={disabled}>
       <SelectTrigger className="h-9 w-full"><SelectValue placeholder={placeholder} /></SelectTrigger>

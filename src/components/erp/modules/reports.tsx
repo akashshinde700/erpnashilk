@@ -15,7 +15,7 @@ import {
 import { ItemPicker, type PickerItem } from '@/components/erp/item-picker'
 import { useList } from '@/lib/use-api'
 import { cn } from '@/lib/utils'
-import { canAccessModule, fmtDate, fmtMoney, fmtNum, ITEM_TYPES, ITEM_TYPE_LABEL } from '@/lib/erp-constants'
+import { canAccessModule, fmtDate, fmtMoney, fmtNum, ITEM_TYPES, ITEM_TYPE_LABEL, canSeeFinancialReports } from '@/lib/erp-constants'
 
 // ============================================================
 // helpers
@@ -327,20 +327,22 @@ interface ReportDef {
   range: RangeKind
   /** Card opens another module instead of a report view */
   goto?: string
+  /** Sensitive financial report (Phase 5): needs `reports` plus sales invoices, purchase invoices or Cash & Bank */
+  financial?: boolean
 }
 
 const SECTIONS = ['Financial', 'Transactions', 'Inventory', 'Party', 'GST']
 
 const REPORTS: ReportDef[] = [
-  { key: 'pl', section: 'Financial', title: 'Profit & Loss', description: 'Sales, cost of goods sold, expenses and net profit', icon: <TrendingUp className="h-5 w-5" />, range: 'period' },
-  { key: 'bs', section: 'Financial', title: 'Balance Sheet', description: 'Assets, liabilities and capital as of a date', icon: <Scale className="h-5 w-5" />, range: 'asOf' },
-  { key: 'cf', section: 'Financial', title: 'Cash Flow', description: 'Money in and out of cash & bank accounts', icon: <ArrowLeftRight className="h-5 w-5" />, range: 'period' },
-  { key: 'tb', section: 'Financial', title: 'Trial Balance', description: 'Ledger heads with debit / credit totals', icon: <ListChecks className="h-5 w-5" />, range: 'asOf' },
-  { key: 'daybook', section: 'Transactions', title: 'Daybook', description: 'Every document of the day in time order', icon: <CalendarDays className="h-5 w-5" />, range: 'period' },
-  { key: 'transactions', section: 'Transactions', title: 'All Transactions', description: 'Filter by type and party with totals', icon: <ListOrdered className="h-5 w-5" />, range: 'period' },
+  { key: 'pl', financial: true, section: 'Financial', title: 'Profit & Loss', description: 'Sales, cost of goods sold, expenses and net profit', icon: <TrendingUp className="h-5 w-5" />, range: 'period' },
+  { key: 'bs', financial: true, section: 'Financial', title: 'Balance Sheet', description: 'Assets, liabilities and capital as of a date', icon: <Scale className="h-5 w-5" />, range: 'asOf' },
+  { key: 'cf', financial: true, section: 'Financial', title: 'Cash Flow', description: 'Money in and out of cash & bank accounts', icon: <ArrowLeftRight className="h-5 w-5" />, range: 'period' },
+  { key: 'tb', financial: true, section: 'Financial', title: 'Trial Balance', description: 'Ledger heads with debit / credit totals', icon: <ListChecks className="h-5 w-5" />, range: 'asOf' },
+  { key: 'daybook', financial: true, section: 'Transactions', title: 'Daybook', description: 'Every document of the day in time order', icon: <CalendarDays className="h-5 w-5" />, range: 'period' },
+  { key: 'transactions', financial: true, section: 'Transactions', title: 'All Transactions', description: 'Filter by type and party with totals', icon: <ListOrdered className="h-5 w-5" />, range: 'period' },
   { key: 'sales', section: 'Transactions', title: 'Sales by Customer', description: 'Invoiced, received and outstanding per customer', icon: <Users className="h-5 w-5" />, range: 'period' },
   { key: 'purchase', section: 'Transactions', title: 'Purchase by Supplier', description: 'Billed, paid and outstanding per supplier', icon: <Truck className="h-5 w-5" />, range: 'period' },
-  { key: 'profit', section: 'Transactions', title: 'Item Profitability', description: 'Invoice-line margin vs standard cost', icon: <Calculator className="h-5 w-5" />, range: 'period' },
+  { key: 'profit', financial: true, section: 'Transactions', title: 'Item Profitability', description: 'Invoice-line margin vs standard cost', icon: <Calculator className="h-5 w-5" />, range: 'period' },
   { key: 'stock', section: 'Inventory', title: 'Stock Valuation', description: 'Quantity and value per item at average cost', icon: <Boxes className="h-5 w-5" />, range: 'none' },
   { key: 'item', section: 'Inventory', title: 'Item Detail', description: 'Opening, every movement and closing of one item', icon: <PackageSearch className="h-5 w-5" />, range: 'period' },
   { key: 'low', section: 'Inventory', title: 'Low Stock', description: 'Items at or below reorder level', icon: <AlertTriangle className="h-5 w-5" />, range: 'none' },
@@ -364,7 +366,7 @@ function Gallery({ onOpen }: { onOpen: (r: ReportDef) => void }) {
       <PageHeader title="Reports Center" description="Financial statements, transactions, inventory, party and GST reports" />
       <div className="space-y-6">
         {SECTIONS.map((section) => {
-          const cards = REPORTS.filter((r) => r.section === section && (!r.goto || !role || canAccessModule(role, r.goto)))
+          const cards = REPORTS.filter((r) => r.section === section && (!r.goto || !role || canAccessModule(role, r.goto)) && (!r.financial || !role || canSeeFinancialReports(role)))
           if (!cards.length) return null
           return (
             <div key={section}>
@@ -749,6 +751,7 @@ const TYPE_TONE: Record<string, string> = {
   PURCHASE: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
   PAYMENT_OUT: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
   EXPENSE: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+  CHEQUE_CLEARED: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
 }
 
 const TXN_HEADERS = ['Date', 'Type', 'Number', 'Party', 'Description', 'Mode', 'Account', 'Money In', 'Money Out', 'Amount']

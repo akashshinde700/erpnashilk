@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Package, Users, Truck, Building2, Wrench, Layers3, UserCog,
   ClipboardList, FileText, ShoppingCart, Boxes, Warehouse, ArrowLeftRight, SlidersHorizontal,
   Factory, ClipboardCheck, Award, ReceiptIndianRupee, Wallet, Landmark, Percent, Activity,
-  ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck, BarChart3, Bell, Undo2, Redo2,
+  ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck, BarChart3, Bell, Undo2, Redo2, FileUp,
 } from 'lucide-react'
 
 import DashboardModule from '@/components/erp/modules/dashboard'
@@ -49,6 +49,7 @@ import NotificationsModule from '@/components/erp/modules/notifications'
 import SettingsModule from '@/components/erp/modules/settings'
 import ReportsModule from '@/components/erp/modules/reports'
 import CompanySetupModule from '@/components/erp/modules/company-setup'
+import ImportCenterModule from '@/components/erp/modules/import-center'
 
 export interface ErpModuleDef {
   key: string
@@ -61,7 +62,7 @@ export interface ErpModuleDef {
   hidden?: boolean
 }
 
-export const MODULE_GROUPS = ['Dashboard', 'Masters', 'Sales', 'Purchase', 'Inventory', 'Manufacturing', 'Finance', 'Admin'] as const
+export const MODULE_GROUPS = ['Dashboard', 'Masters', 'Sales', 'Purchase', 'Inventory', 'Manufacturing', 'Finance', 'Utilities', 'Admin'] as const
 
 // Every screen. Modules hosted inside a tab group are `hidden` (not listed in the sidebar) but stay
 // routable by key — search results, shortcuts and quick actions open the group on that tab.
@@ -108,6 +109,8 @@ const SCREENS: ErpModuleDef[] = [
   { key: 'expenses', label: 'Expenses', icon: Wallet, group: 'Finance', component: ExpensesModule },
   { key: 'gst-report', label: 'GST Reports', icon: Percent, group: 'Finance', component: GstReportModule },
   { key: 'reports', label: 'Reports Center', icon: BarChart3, group: 'Finance', description: 'Sales, purchase, stock & profitability analytics', component: ReportsModule },
+  // Utilities
+  { key: 'import-center', label: 'Import Center', icon: FileUp, group: 'Utilities', description: 'Import customers & items from Tally, Vyapar or Excel / CSV', component: ImportCenterModule },
   // Admin
   { key: 'settings', label: 'Settings', icon: Settings, group: 'Admin', description: 'Company profile, numbering, notifications', component: SettingsModule },
   { key: 'company-setup', label: 'Company Setup', icon: Building2, group: 'Admin', description: 'Create & manage tenant companies', component: CompanySetupModule },

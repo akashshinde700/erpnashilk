@@ -11,7 +11,7 @@ import {
 } from '@/components/erp/kit'
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { ItemPicker, QuickItemDialog, type PickerItem } from '@/components/erp/item-picker'
-import { PAYMENT_MODES, fmtDate, fmtMoney } from '@/lib/erp-constants'
+import { PAYMENT_MODES, accountsForMode, fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { baseQtyHint, convertRate, lineToBase, toBaseQty, unitOptions } from '@/lib/units'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null; paymentTermsDays?: number | null; state?: string | null; stateCode?: string | null }
@@ -88,7 +88,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
   const pos = useList<{ items: { id: string; number: string; status: string }[] }>(`/api/purchase-orders?companyId=${companyId}`)
   const warehouses = useList<{ items: { id: string; code: string; name: string; type: string }[] }>(`/api/warehouses?companyId=${companyId}`)
   const settings = useList<CompanySettings>(`/api/settings?companyId=${companyId}`)
-  const accounts = useList<{ items: { id: string; name: string; type: string; active: boolean }[] }>(`/api/accounts?companyId=${companyId}`)
+  const accounts = useList<{ items: { id: string; name: string; type: string; active: boolean; isDefault?: boolean; createdAt?: string }[] }>(`/api/accounts?companyId=${companyId}`)
   // Direct bill (no PO / GRN): receive the goods into stock with the bill
   const [receiveStock, setReceiveStock] = React.useState(true)
   const [stockWh, setStockWh] = React.useState('')
@@ -117,6 +117,10 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
   // Paid to the supplier along with the bill
   const [paidNow, setPaidNow] = React.useState(0)
   const [paidMode, setPaidMode] = React.useState('CASH')
+  const [paidChequeNo, setPaidChequeNo] = React.useState('')
+  const [paidChequeDate, setPaidChequeDate] = React.useState('')
+  // "From account": accounts of the mode's type only (cash ↔ bank, no fallback to cash — CB-R5)
+  const paidFor = accountsForMode(accounts.data?.items ?? [], paidMode)
   const [paidAccountId, setPaidAccountId] = React.useState('') // '' = default account for the mode
 
   const [payFor, setPayFor] = React.useState<PiRow | null>(null)
@@ -146,7 +150,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
     setReceiveStock(true); setStockWh('')
     setSupplierInvDate(''); setDueDate(''); setDueTouched(false); setGrnId('')
     setBillDiscount(0); setFreightCharge(0); setFreightGstRate(18); setPackingCharge(0); setPackingGstRate(18)
-    setPaidNow(0); setPaidMode('CASH'); setPaidAccountId('')
+    setPaidNow(0); setPaidMode('CASH'); setPaidAccountId(''); setPaidChequeNo(''); setPaidChequeDate('')
     setEditing(null)
   }
 
@@ -292,7 +296,10 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
         supplierInvNo: supplierInvNo || undefined, supplierInvDate: supplierInvDate || undefined,
         dueDate: effectiveDue || undefined, notes: notes || undefined, items: payloadLines,
         billDiscount, freightCharge, freightGstRate, packingCharge, packingGstRate,
-        ...(paidNow > 0 ? { paidNow, paymentMode: paidMode, accountId: paidAccountId || undefined } : {}),
+        ...(paidNow > 0 ? {
+          paidNow, paymentMode: paidMode, accountId: paidAccountId || undefined,
+          ...(paidMode === 'CHEQUE' ? { chequeNo: paidChequeNo.trim() || undefined, chequeDate: paidChequeDate || undefined } : {}),
+        } : {}),
         ...(direct && receiveStock ? { receiveStock: true, warehouseId: stockWh || undefined } : {}),
       })
       toast.success(`${direct && receiveStock ? 'Purchase invoice created — items added to stock' : 'Purchase invoice created'}${paidNow > 0 ? ` (paid ${fmtMoney(paidNow)})` : ''}`)
@@ -520,15 +527,28 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
             {!editing && <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <Field label="Paid now (₹)"><NumberInput value={paidNow} min={0} onChange={setPaidNow} /></Field>
               <Field label="Mode">
-                <SelectInput value={paidMode} onChange={setPaidMode} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} />
+                <SelectInput value={paidMode} onChange={(m) => { setPaidMode(m); setPaidAccountId('') }} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} />
               </Field>
               <Field label="From account">
                 <SelectInput
                   value={paidAccountId} onChange={setPaidAccountId}
-                  options={[{ value: '', label: 'Default for mode' }, ...(accounts.data?.items ?? []).filter((a) => a.active).map((a) => ({ value: a.id, label: a.name }))]}
+                  options={[
+                    { value: '', label: paidFor.fallback ? `Default — ${paidFor.fallback.name}` : 'Default for mode' },
+                    ...paidFor.matching.map((a) => ({ value: a.id, label: a.name })),
+                  ]}
                 />
+                {paidNow > 0 && !paidAccountId && !paidFor.fallback && (
+                  <p className="mt-1 text-[11px] text-red-600">No {paidFor.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to pay by {paidMode}.</p>
+                )}
               </Field>
+              {paidMode === 'CHEQUE' && (
+                <>
+                  <Field label="Cheque no."><TextInput value={paidChequeNo} onChange={(e) => setPaidChequeNo(e.target.value)} /></Field>
+                  <Field label="Cheque date"><DateInput value={paidChequeDate} onChange={setPaidChequeDate} /></Field>
+                </>
+              )}
               <div className="col-span-2 sm:col-span-2 self-end pb-2 text-[11px] text-muted-foreground">
+                {paidMode === 'CHEQUE' && paidChequeDate > today() ? 'Post-dated cheque — leaves the account once it is cleared. ' : ''}
                 {paidNow > 0
                   ? `Records a payment of ${fmtMoney(paidNow)} — balance due ${fmtMoney(Math.max(0, r2(totals.grand - paidNow)))}`
                   : 'Leave 0 for a credit bill (pay later from the list).'}

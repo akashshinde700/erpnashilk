@@ -41,6 +41,9 @@ model Company {
   docPrefixes       String?  @db.Text        // JSON { INV: "SI", PINV: "PB", ... } overrides of default prefixes
   lockEnabled       Boolean  @default(false) // PIN needed to edit / cancel / delete saved documents
   lockPinHash       String?
+  // Go-live (cutover) date: the first day the books are kept in ManuFlow. Imported opening figures are
+  // dated just before it (src/lib/go-live.ts). Locked once opening stock has been imported against it.
+  goLiveDate        DateTime?
 
   // ---- Subscription (managed from /platform-admin) ----
   isPlatform    Boolean   @default(false) // the platform operator's own company (not a customer org)
@@ -757,6 +760,9 @@ model Payment {
   reference   String?
   notes       String? @db.Text
   accountId   String?   // Cash & Bank account
+  // Application rows (no money moves): the source of the credit applied to `invoiceId` — the customer advance
+  // payment (mode ADVANCE_ADJ) or the sales return whose credit is applied to another invoice (mode CREDIT_NOTE)
+  allocatedFromId String?
   chequeNo    String?
   chequeDate  DateTime?
   chequeStatus String?  // PENDING|DEPOSITED|CLEARED|BOUNCED (post-dated cheques)
@@ -770,6 +776,7 @@ model Payment {
   @@index([companyId, supplierId])
   @@index([invoiceId])
   @@index([companyId, date])
+  @@index([allocatedFromId])
 }
 
 model Expense {
@@ -915,6 +922,9 @@ model StockLedger {
   qtyIn        Float    @default(0)
   qtyOut       Float    @default(0)
   rate         Float    @default(0)
+  // Outward rows: the weighted-average inventory cost per unit at the moment the stock left (sales returns
+  // re-enter goods at this cost). `rate` on sale rows is the selling price. Null = row written before this field.
+  costRate     Float?
   refType      String?  // GRN|MATERIAL_ISSUE|WORK_ORDER|DELIVERY|TRANSFER|ADJUSTMENT|OPENING
   refId        String?
   refNumber    String?
@@ -980,6 +990,26 @@ model NumberSeq {
   nextNumber    Int    @default(1)
 
   @@unique([companyId, docType, financialYear])
+}
+
+// Cash & Bank Phase 5: one row per Idempotency-Key a client sent with a money-creating request. The row is
+// claimed (PENDING) before the business transaction and marked DONE inside it, together with the response that a
+// retry with the same key gets back. Failed requests remove their row; rows are purged after 7 days.
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  companyId   String
+  key         String   @db.VarChar(100)
+  userId      String
+  route       String   @db.VarChar(120)
+  requestHash String   @db.VarChar(64)
+  status      String   @default("PENDING") // PENDING | DONE
+  statusCode  Int?
+  response    String?  @db.LongText
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, key])
+  @@index([createdAt])
 }
 
 // ---------------- Returns (Phase 1) ----------------

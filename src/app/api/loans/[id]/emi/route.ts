@@ -1,12 +1,16 @@
 import { db } from '@/lib/db'
 import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2, requireWrite } from '@/lib/erp-helpers'
-import { CbTx, MODULE_KEY, activeAccount, money, optStr, parseDate } from '../../../accounts/_shared'
+import { businessDate } from '@/lib/business-date'
+import { CASH_TX, assertCashNotNegative, negativeCashOverride } from '@/lib/cash-guard'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
+import { CbTx, MODULE_KEY, activeAccount, money, optStr } from '../../../accounts/_shared'
 
 type Params = { params: Promise<{ id: string }> }
 
 // POST /api/loans/[id]/emi { companyId, date?, principal, interest, fromAccountId, reference?, notes? }
 // → LOAN_EMI entry (amount = principal + interest). Principal can't exceed the outstanding; the loan closes at 0.
 export async function POST(req: Request, { params }: Params) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, MODULE_KEY)
     const { id } = await params
@@ -17,7 +21,10 @@ export async function POST(req: Request, { params }: Params) {
     const interest = money(body?.interest, 'interest', { allowZero: true })
     const amount = r2(principal + interest)
     if (!(amount > 0)) throw new ApiError('Enter the principal and/or interest paid', 400)
-    const date = parseDate(body?.date, 'date') ?? new Date()
+    const date = businessDate(body?.date)
+    const override = negativeCashOverride(req, body as { allowNegativeCash?: unknown })
+    idem = await claimIdempotency(req, companyId, `POST /api/loans/${id}/emi`, body)
+    if (idem.replay) return idem.replay
 
     const result = await db.$transaction(async (txRaw) => {
       const tx = txRaw as CbTx
@@ -26,7 +33,7 @@ export async function POST(req: Request, { params }: Params) {
       if (loan.status === 'CLOSED') throw new ApiError('This loan is closed', 400)
       // Touch the loan row first: locks it so concurrent EMIs can't both pass the outstanding check
       await tx.loan.update({ where: { id: loan.id }, data: { updatedAt: new Date() } })
-      const acc = await activeAccount(tx, companyId, body?.fromAccountId, 'Paid from account')
+      const acc = await activeAccount(tx, companyId, body?.fromAccountId, 'Paid from account', date)
 
       const paid = await tx.accountTxn.aggregate({ where: { companyId, loanId: loan.id, type: 'LOAN_EMI' }, _sum: { principal: true } })
       const outstanding = r2(loan.principal - (paid._sum.principal || 0))
@@ -46,10 +53,14 @@ export async function POST(req: Request, { params }: Params) {
         companyId, userName: body?.userName, action: 'CREATE', entity: 'Loan', entityId: loan.id,
         details: `${number} • EMI ₹${amount.toFixed(2)} (principal ₹${principal.toFixed(2)}, interest ₹${interest.toFixed(2)}) for "${loan.name}" from ${acc.name}${closed ? ' — loan closed' : ''}`,
       })
-      return { ...txn, outstandingAfter: Math.max(0, after), loanClosed: closed }
-    })
+      await assertCashNotNegative(txRaw, { companyId, accounts: [{ accountId: acc.id }], from: date, override, what: `EMI ${number}`, entity: 'Loan', entityId: loan.id, userName: body?.userName as string | undefined })
+      const out = { ...txn, outstandingAfter: Math.max(0, after), loanClosed: closed }
+      await idem!.done(txRaw, out, closed ? 'EMI recorded — loan fully repaid' : 'EMI recorded')
+      return out
+    }, CASH_TX)
     return ok(result, result.loanClosed ? 'EMI recorded — loan fully repaid' : 'EMI recorded')
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

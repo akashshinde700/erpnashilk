@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { apiPost } from '@/lib/use-api'
+import { parseCsv } from '@/lib/import/csv'
 
 export interface ImportResult {
   imported: number
@@ -38,65 +39,6 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
 
 const PREVIEW_ROWS = 8
 const MAX_ERRORS_SHOWN = 5
-
-/**
- * Dependency-free CSV parser: handles quoted fields with escaped "" and
- * embedded commas/newlines, both \n and \r\n line endings, and a UTF-8 BOM.
- * Returns rows of string cells; fully-blank rows are dropped.
- */
-function parseCsv(text: string): string[][] {
-  const s = text.replace(/^\ufeff/, '')
-  const rows: string[][] = []
-  let cur: string[] = []
-  let field = ''
-  let inQuotes = false
-  let i = 0
-  while (i < s.length) {
-    const ch = s[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (s[i + 1] === '"') {
-          field += '"'
-          i += 2
-          continue
-        }
-        inQuotes = false
-        i++
-        continue
-      }
-      field += ch
-      i++
-      continue
-    }
-    if (ch === '"') {
-      inQuotes = true
-      i++
-      continue
-    }
-    if (ch === ',') {
-      cur.push(field)
-      field = ''
-      i++
-      continue
-    }
-    if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && s[i + 1] === '\n') i++
-      cur.push(field)
-      field = ''
-      rows.push(cur)
-      cur = []
-      i++
-      continue
-    }
-    field += ch
-    i++
-  }
-  if (field !== '' || cur.length > 0) {
-    cur.push(field)
-    rows.push(cur)
-  }
-  return rows.filter((r) => r.some((c) => c.trim() !== ''))
-}
 
 function csvEscape(v: string | number): string {
   const s = String(v ?? '')

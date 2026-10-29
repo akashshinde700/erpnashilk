@@ -1,18 +1,20 @@
 import { db } from '@/lib/db'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeBillTotals, isInterStateParty, logAudit, notify, ApiError, r2, requireWrite, claimStatus } from '@/lib/erp-helpers'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeBillTotals, isInterStateParty, logAudit, notify, ApiError, r2, requireWrite, claimStatus, requireRead } from '@/lib/erp-helpers'
 import { cashSaleCustomer } from '@/lib/party'
 import { PAYMENT_MODES } from '@/lib/erp-constants'
-import { accountForMode } from '@/lib/accounts'
+import { assertOnOrAfterOpening, chequeDetails, ensureCashFor, postingAccount } from '@/lib/accounts'
+import { businessDate } from '@/lib/business-date'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 import { type InvLine, optStr, optNum, gstRateOf, parseLine, withMasterInfo, resolveStockWarehouse, postSaleStock } from './shared'
 
 // Modes accepted for money received at billing time (credit/debit notes come only from returns)
 const RECEIVE_MODES: readonly string[] = PAYMENT_MODES
 
 // SalesInvoiceItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
-async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[]) {
+async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId: string, docs: T[], client: Pick<typeof db, 'item'> = db) {
   const ids = Array.from(new Set(docs.flatMap((d) => d.items.map((i) => i.itemId))))
   const masters = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, hsn: true } })
+    ? await client.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, hsn: true } })
     : []
   const map = new Map(masters.map((m) => [m.id, m]))
   return docs.map((d) => ({ ...d, items: d.items.map((i) => ({ ...i, item: map.get(i.itemId) || null })) }))
@@ -21,6 +23,7 @@ async function withItemInfo<T extends { items: { itemId: string }[] }>(companyId
 // GET /api/sales-invoices?companyId=&status=&customerId=&q=
 export async function GET(req: Request) {
   try {
+    requireRead(req, ['sales-invoices', 'receivables', 'gst-report']) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const status = (searchParams.get('status') || '').trim()
@@ -56,7 +59,7 @@ export async function GET(req: Request) {
 //   customerPoNo?, customerPoDate?, shippingAddress?, vehicleNo?, transporter?,
 //   lines? (alias: items): [{itemId, qty, rate, discountPct, gstRate, salesOrderItemId?}],
 //   billDiscount?, freightCharge?, freightGstRate? (18), packingCharge?, packingGstRate? (18),
-//   isCashSale?, receivedAmount?, receivedMode? (CASH), receivedReference?, receivedAccountId?,
+//   isCashSale?, receivedAmount?, receivedMode? (CASH), receivedReference?, receivedAccountId?, receivedChequeNo?, receivedChequeDate?,
 //   billingName?, driverPhone?, deductStock?, stockWarehouseId?, lines[].cessRate? (default: item master) }
 // - deductStock (only without salesOrderId/challanId) → SALE_OUT stock posting per line from stockWarehouseId
 //   (default: FG store, else first warehouse); with an SO/challan the challan dispatch moves the stock instead
@@ -67,6 +70,7 @@ export async function GET(req: Request) {
 // - challanId (needs salesOrderId) → bills that DISPATCHED challan; without lines, lines are built from its items
 // - SO auto-completes once every line is fully dispatched AND fully invoiced
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'sales-invoices')
     const body = await req.json().catch(() => ({}) as any)
@@ -161,8 +165,8 @@ export async function POST(req: Request) {
     const deductStock = !so && !challan && (body.deductStock === true || body.deductStock === 'true')
     const stockWarehouseId: string | null = deductStock ? await resolveStockWarehouse(companyId, body.stockWarehouseId) : null
 
-    const date = body.date ? new Date(body.date) : new Date()
-    if (isNaN(date.getTime())) throw new ApiError('date is not a valid date', 400)
+    // Business day in India (UTC midnight of the IST day) — same rule as its receipt and the reports
+    const date = businessDate(body.date, 'date')
     const dueDate = body.dueDate
       ? new Date(body.dueDate)
       : isCashSale ? date : new Date(date.getTime() + (customer?.paymentTermsDays || 30) * 24 * 60 * 60 * 1000)
@@ -190,8 +194,14 @@ export async function POST(req: Request) {
     const receivedMode = body.receivedMode ? String(body.receivedMode).toUpperCase() : 'CASH'
     if (received > 0 && !RECEIVE_MODES.includes(receivedMode)) throw new ApiError(`Payment mode must be one of ${RECEIVE_MODES.join(', ')}`, 400)
     const paid = r2(Math.min(received, totals.grandTotal))
+    // The receipt is dated on the invoice's business day (IST); a cheque dated after today is post-dated (PENDING)
+    const receiptDate = businessDate(date)
+    const receivedCheque = chequeDetails(receivedMode, body.receivedChequeNo, body.receivedChequeDate)
     const status = paid <= 0.005 ? 'UNPAID' : totals.grandTotal - paid <= 0.01 ? 'PAID' : 'PARTIALLY_PAID'
 
+    idem = await claimIdempotency(req, companyId, 'POST /api/sales-invoices', body)
+    if (idem.replay) return idem.replay
+    if (paid > 0.005) await ensureCashFor(companyId, receivedMode, optStr(body.receivedAccountId))
     const created = await db.$transaction(async (tx) => {
       const t = tx as any
       if (challan) {
@@ -203,8 +213,13 @@ export async function POST(req: Request) {
       }
       const party = isCashSale ? await cashSaleCustomer(t, companyId) : { id: customerId as string, name: customer?.name || '' }
       const number = await nextDocNumber(t, companyId, 'INV', date)
-      // Cash & Bank account the money received now goes into
-      const accountId = paid > 0.005 ? await accountForMode(t, companyId, receivedMode, optStr(body.receivedAccountId)) : null
+      // Cash & Bank account the money received now goes into — a chosen account must exist and be active
+      let accountId: string | null = null
+      if (paid > 0.005) {
+        const account = await postingAccount(t, companyId, receivedMode, optStr(body.receivedAccountId))
+        assertOnOrAfterOpening(account, receiptDate, 'The amount received')
+        accountId = account.id
+      }
       const inv = await tx.salesInvoice.create({
         data: {
           companyId,
@@ -263,7 +278,7 @@ export async function POST(req: Request) {
       // Payment received with the bill → receipt against this invoice
       let receiptNo: string | null = null
       if (paid > 0.005) {
-        receiptNo = await nextDocNumber(t, companyId, 'RCPT', date)
+        receiptNo = await nextDocNumber(t, companyId, 'RCPT', receiptDate)
         await tx.payment.create({
           data: {
             companyId,
@@ -275,7 +290,8 @@ export async function POST(req: Request) {
             invoiceId: inv.id,
             amount: paid,
             mode: receivedMode,
-            date,
+            date: receiptDate,
+            ...receivedCheque,
             reference: optStr(body.receivedReference),
             notes: `Received at billing — ${number}`,
             accountId,
@@ -332,20 +348,23 @@ export async function POST(req: Request) {
         companyId, userName: body.userName, action: 'CREATE', entity: 'SalesInvoice', entityId: inv.id,
         details: `Tax invoice ${number} for ${party.name}${isCashSale ? ' (cash sale)' : ''} • ₹${totals.grandTotal}${so ? ` against ${so.number}` : ''}${challan ? ` / ${challan.number}` : ''}${receiptNo ? ` • received ₹${paid} ${receivedMode} (${receiptNo})` : ''}${deductStock ? ' • stock deducted' : ''}`,
       })
-      return inv
+      // The response is built inside the transaction so an Idempotency-Key replay returns exactly it
+      const full = await tx.salesInvoice.findFirst({
+        where: { id: inv.id, companyId },
+        include: {
+          customer: { select: { name: true, gstin: true, state: true, stateCode: true } },
+          salesOrder: { select: { number: true } },
+          items: true,
+        },
+      })
+      const [row] = await withItemInfo(companyId, full ? [full] : [], tx) // through tx: no second pool connection
+      await idem!.done(tx, row, 'Invoice created')
+      return row
     })
 
-    const full = await db.salesInvoice.findFirst({
-      where: { id: created.id, companyId },
-      include: {
-        customer: { select: { name: true, gstin: true, state: true, stateCode: true } },
-        salesOrder: { select: { number: true } },
-        items: true,
-      },
-    })
-    const [row] = await withItemInfo(companyId, full ? [full] : [])
-    return ok(row, 'Invoice created')
+    return ok(created, 'Invoice created')
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

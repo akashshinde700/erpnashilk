@@ -1,6 +1,9 @@
 import { db } from '@/lib/db'
-import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2, requireWrite } from '@/lib/erp-helpers'
-import { accountForMode } from '@/lib/accounts'
+import { ApiError, companyRequired, handleError, logAudit, nextDocNumber, ok, r2, requireWrite, requireRead } from '@/lib/erp-helpers'
+import { assertOnOrAfterOpening, ensureCashFor, postingAccount } from '@/lib/accounts'
+import { businessDate } from '@/lib/business-date'
+import { CASH_TX, assertCashNotNegative, dayWindow, negativeCashOverride, refuseDuplicate, sameIstDay } from '@/lib/cash-guard'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 
 const EXPENSE_STATUSES = ['DRAFT', 'POSTED', 'CANCELLED']
 const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/
@@ -40,6 +43,7 @@ function expenseType(v: unknown): string {
 // GET /api/expenses?companyId=&q=&category=&expenseType=&accountId= → { items (+ accountName), total } (date desc)
 export async function GET(req: Request) {
   try {
+    requireRead(req, 'expenses') // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
     const q = (searchParams.get('q') || '').trim()
@@ -77,6 +81,7 @@ export async function GET(req: Request) {
 //   vendorGstin?, billNo?, billDate?, itcEligible?, status? (DRAFT|POSTED|CANCELLED, default POSTED),
 //   accountId? (default by payment mode), expenseType? (DIRECT|INDIRECT, default INDIRECT), userName? }
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'expenses')
     const body = await req.json().catch(() => ({}))
@@ -86,23 +91,33 @@ export async function POST(req: Request) {
     if (!description) throw new ApiError('description is required', 400)
     const amount = Number(body?.amount)
     if (!Number.isFinite(amount) || amount <= 0) throw new ApiError('amount must be greater than 0', 400)
-    const date = body?.date ? new Date(body.date) : new Date()
-    if (Number.isNaN(date.getTime())) throw new ApiError('Invalid date', 400)
+    const date = businessDate(body?.date)
     const vendorGstin = optGstin(body?.vendorGstin)
     const billDate = optDate(body?.billDate, 'billDate')
     const status = body?.status ? expenseStatus(body.status) : 'POSTED'
     const type = expenseType(body?.expenseType)
     const paymentMode = body?.paymentMode ? String(body.paymentMode) : 'CASH'
+    const override = negativeCashOverride(req, body)
+    idem = await claimIdempotency(req, companyId, 'POST /api/expenses', body)
+    if (idem.replay) return idem.replay
+    const paidTo = body?.paidTo ? String(body.paidTo).trim() : null
 
+    await ensureCashFor(companyId, paymentMode, body?.accountId ? String(body.accountId) : null)
     const expense = await db.$transaction(async (tx) => {
       const t = tx as unknown as Parameters<typeof nextDocNumber>[0] & Parameters<typeof logAudit>[0]
       const number = await nextDocNumber(t, companyId, 'EXP', date)
-      if (body?.accountId) {
-        const acc = await tx.moneyAccount.findFirst({ where: { id: String(body.accountId), companyId } })
-        if (!acc) throw new ApiError('Account not found', 404)
-        if (!acc.active) throw new ApiError(`Account ${acc.name} is inactive`, 400)
+      // A chosen account must exist and be active; DRAFT expenses move no money but keep their account
+      const account = await postingAccount(tx, companyId, paymentMode, body?.accountId ? String(body.accountId) : null)
+      assertOnOrAfterOpening(account, date, 'This expense')
+      const accountId = account.id
+      // Phase 5: same account, paid to, amount and mode on the same IST day → confirm first
+      if (status !== 'CANCELLED' && body?.confirmDuplicate !== true) {
+        const same = await tx.expense.findMany({
+          where: { companyId, accountId, paymentMode, paidTo, status: { not: 'CANCELLED' }, amount: { gte: r2(amount) - 0.005, lte: r2(amount) + 0.005 }, date: dayWindow(date) },
+          select: { number: true, date: true }, orderBy: { number: 'asc' }, take: 20,
+        })
+        refuseDuplicate(same.filter((e) => sameIstDay(e.date, date)).map((e) => e.number), body?.confirmDuplicate, 'account, paid to, amount and mode')
       }
-      const accountId = await accountForMode(tx, companyId, paymentMode, body?.accountId ? String(body.accountId) : null)
       const created = await tx.expense.create({
         data: {
           companyId,
@@ -114,7 +129,7 @@ export async function POST(req: Request) {
           paymentMode,
           accountId,
           expenseType: type,
-          paidTo: body?.paidTo ? String(body.paidTo).trim() : null,
+          paidTo,
           gstAmount: r2(Number(body?.gstAmount) || 0),
           status,
           vendorGstin,
@@ -131,10 +146,15 @@ export async function POST(req: Request) {
         entityId: created.id,
         details: `Expense ${created.number} of ₹${r2(amount)} ${status === 'POSTED' ? 'posted' : `saved as ${status}`} (${created.category})`,
       })
+      if (status === 'POSTED') {
+        await assertCashNotNegative(tx, { companyId, accounts: [{ accountId }], from: date, override, what: `Expense ${number}`, entity: 'EXPENSE', entityId: created.id, userName: body?.userName })
+      }
+      await idem!.done(tx, created, 'Expense recorded')
       return created
-    })
+    }, CASH_TX)
     return ok(expense, 'Expense recorded')
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

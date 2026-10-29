@@ -1,11 +1,12 @@
 import { db } from '@/lib/db'
-import { ok, handleError, companyRequired, ApiError, r2 } from '@/lib/erp-helpers'
+import { ok, handleError, companyRequired, ApiError, r2, requireFinancialReports } from '@/lib/erp-helpers'
 
 // GET /api/reports/profitability?companyId=&from=&to=
 // Line-level margin report: line taxable value (SalesInvoiceItem.lineTotal — stored as the
 // GST-exclusive taxable amount by the sales-invoices API) vs item standardCost × qty.
 export async function GET(req: Request) {
   try {
+    requireFinancialReports(req) // Phase 5: financial read permission
     const companyId = await companyRequired(req)
     const { searchParams } = new URL(req.url)
 

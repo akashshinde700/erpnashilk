@@ -12,6 +12,7 @@ import {
 import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
+import { RefundDialog } from '@/components/erp/refund-dialog'
 
 interface ItemInfo { code?: string | null; name?: string | null; uom?: string | null; hsn?: string | null }
 interface ReturnItem { id: string; invoiceItemId?: string | null; itemId: string; qty: number; rate: number; gstRate: number; lineTotal: number; discountPct?: number; hsn?: string | null; item?: ItemInfo | null }
@@ -26,8 +27,10 @@ interface ReturnRow {
   warehouse?: { code?: string | null; name?: string | null } | null
   items: ReturnItem[]
   company?: CompanyInfo | null
+  // credit on the note (Phase 4): applied to its invoice / other invoices, refunded, left for the customer
+  credit?: { total: number; appliedToInvoice: number; appliedElsewhere: number; refunded: number; remaining: number } | null
 }
-interface InvoiceListRow { id: string; number: string; date: string; status: string; grandTotal: number; customer?: { name?: string | null } | null }
+interface InvoiceListRow { id: string; number: string; date: string; status: string; grandTotal: number; paidAmount?: number; customerId?: string; customer?: { name?: string | null } | null }
 interface InvoiceDetail {
   id: string; number: string; date: string; isInterState: boolean
   customer?: { name?: string | null } | null
@@ -246,6 +249,27 @@ export default function SalesReturnsModule({ companyId }: { companyId: string })
 
   const totals = computeTotals(lines, invoice?.isInterState ?? false, settings.data?.roundOffTotals ?? true)
 
+  // ----- Credit left on a note: refund it, or apply it to another open invoice of the customer -----
+  const [refundRow, setRefundRow] = React.useState<ReturnRow | null>(null)
+  const [applyRow, setApplyRow] = React.useState<ReturnRow | null>(null)
+  const [applyInvoice, setApplyInvoice] = React.useState('')
+  const [applyAmount, setApplyAmount] = React.useState(0)
+  const [applying, setApplying] = React.useState(false)
+  const left = (r: ReturnRow) => (r.status === 'POSTED' ? r.credit?.remaining ?? 0 : 0)
+  const applyOpts = (invoices.data?.items ?? [])
+    .filter((inv) => applyRow && inv.customerId === applyRow.customerId && inv.status !== 'PAID' && inv.status !== 'CANCELLED')
+    .map((inv) => ({ value: inv.id, label: `${inv.number} — outstanding ${fmtMoney((inv.grandTotal || 0) - (inv.paidAmount || 0))}`, outstanding: (inv.grandTotal || 0) - (inv.paidAmount || 0) }))
+  async function submitApply() {
+    if (!applyRow) return
+    if (!applyInvoice) { toast.error('Choose the invoice to apply the credit to'); return }
+    if (!(applyAmount > 0)) { toast.error('Enter an amount'); return }
+    setApplying(true)
+    try {
+      await apiPatch(`/api/sales-returns/${applyRow.id}`, { companyId, action: 'apply', invoiceId: applyInvoice, amount: applyAmount })
+      toast.success('Credit applied — no money moved'); setApplyRow(null); void list.refetch(); void invoices.refetch()
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed to apply the credit') } finally { setApplying(false) }
+  }
+
   const columns: Column<ReturnRow>[] = [
     { key: 'number', header: 'Credit Note #', render: (r) => <span className="font-medium">{r.number}</span> },
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
@@ -255,9 +279,19 @@ export default function SalesReturnsModule({ companyId }: { companyId: string })
     { key: 'grandTotal', header: 'Amount', sortValue: (r) => r.grandTotal || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
+      key: 'credit', header: 'Credit left', hideOnMobile: true, sortValue: (r) => left(r),
+      render: (r) => (left(r) > 0.005 ? <Money value={left(r)} className="font-medium text-amber-700 dark:text-amber-400" /> : <span className="text-muted-foreground">—</span>),
+    },
+    {
       key: 'actions', header: 'Actions',
       render: (r) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {left(r) > 0.005 && (
+            <>
+              <Button variant="outline" size="sm" className="h-7" onClick={() => setRefundRow(r)}>Refund</Button>
+              <Button variant="outline" size="sm" className="h-7" onClick={() => { setApplyRow(r); setApplyInvoice(''); setApplyAmount(left(r)) }}>Apply</Button>
+            </>
+          )}
           <Button variant="ghost" size="sm" className="h-7" title="Print credit note" onClick={() => void printReturn(r)}><Printer className="h-3.5 w-3.5" /></Button>
           {r.status === 'POSTED' && (
             <ConfirmAction
@@ -362,6 +396,35 @@ export default function SalesReturnsModule({ companyId }: { companyId: string })
             </div>
           </>
         )}
+      </FormDialog>
+
+      {refundRow && (
+        <RefundDialog
+          key={refundRow.id} companyId={companyId} open onClose={() => setRefundRow(null)}
+          title="Refund to customer" accountLabel="Paid from account"
+          description={`${refundRow.number} · ${refundRow.customer?.name || ''} — money paid back to the customer`}
+          maxAmount={left(refundRow)}
+          onSave={async (v) => {
+            await apiPost('/api/payments', { companyId, type: 'PAYMENT', invoiceType: 'SALES_RETURN', invoiceId: refundRow.id, customerId: refundRow.customerId, ...v })
+            toast.success('Refund recorded'); void list.refetch()
+          }}
+        />
+      )}
+
+      <FormDialog
+        open={!!applyRow} onOpenChange={(o) => { if (!o) setApplyRow(null) }} loading={applying} onSubmit={submitApply}
+        title="Apply credit to an invoice" submitLabel="Apply"
+        description={applyRow ? `${applyRow.number} · ${applyRow.customer?.name || ''} · ${fmtMoney(left(applyRow))} left — no money moves` : ''}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Invoice" required className="sm:col-span-2">
+            <SelectInput
+              value={applyInvoice} options={applyOpts} placeholder={applyOpts.length ? 'Select an open invoice…' : 'No open invoices for this customer'}
+              onChange={(id) => { setApplyInvoice(id); const o = applyOpts.find((x) => x.value === id); if (o && applyRow) setApplyAmount(Math.min(left(applyRow), Math.round(o.outstanding * 100) / 100)) }}
+            />
+          </Field>
+          <Field label="Amount (₹)" required><NumberInput value={applyAmount} onChange={setApplyAmount} min={0} step="0.01" /></Field>
+        </div>
       </FormDialog>
     </div>
   )

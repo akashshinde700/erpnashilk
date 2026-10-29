@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
-import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, computeBillTotals, isInterStateParty, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { businessDate } from '@/lib/business-date'
+import { ok, fail, handleError, companyRequired, nextDocNumber, computeGst, isInterState, computeBillTotals, isInterStateParty, logAudit, notify, ApiError, r2, requireWrite, requireRead } from '@/lib/erp-helpers'
 import { optStr, optNum, gstRateOf, parseLine, withMasterInfo, resolveStockWarehouse, postSaleStock, reverseSaleStock } from '../shared'
 
 // SalesInvoiceItem carries only itemId (no Prisma relation to Item) — attach master info via JS mapping
@@ -31,6 +32,7 @@ function generateEwayBillNo(): string {
 // GET /api/sales-invoices/[id]?companyId=  — full detail incl customer + hsn (used for GST invoice print)
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    requireRead(req, ['sales-invoices', 'receivables', 'gst-report']) // Phase 5: financial read permission
     const { id } = await params
     const companyId = await companyRequired(req)
     const invoice = await db.salesInvoice.findFirst({
@@ -174,8 +176,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ? await resolveStockWarehouse(companyId, body.stockWarehouseId || current.stockWarehouseId)
         : null
 
-      const date = body.date ? new Date(body.date) : current.date
-      if (isNaN(date.getTime())) throw new ApiError('date is not a valid date', 400)
+      // Business day in India (UTC midnight of the IST day)
+      const date = body.date ? businessDate(body.date, 'date') : current.date
       const dueDate = body.dueDate ? new Date(body.dueDate) : current.dueDate
       if (dueDate && isNaN(dueDate.getTime())) throw new ApiError('dueDate is not a valid date', 400)
       const placeOfSupply = optStr(body.placeOfSupply) ?? (customerChanged ? customer.state ?? null : current.placeOfSupply)

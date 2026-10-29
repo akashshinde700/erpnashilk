@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { ApiError, postStock, r2 } from '@/lib/erp-helpers'
 import { consumeBatches, formatAllocation, joinSerials, parseSerials, restoreBatches, sellSerials, unsellSerials } from '@/lib/batches'
+import { liveSaleRows } from '@/lib/sale-cost'
 
 // Shared by POST /api/sales-invoices (create) and PATCH /api/sales-invoices/[id] (action 'edit').
 
@@ -120,11 +121,23 @@ export async function reverseSaleStock(tx: Tx, input: {
   const { companyId, invoiceId, number, warehouseId } = input
   const t = tx as any
   const invLines = await tx.salesInvoiceItem.findMany({ where: { invoiceId } })
+  const inv = { id: invoiceId, number, challanId: null, salesOrderId: null, deductStock: true }
+  const costOf = new Map<string, number>()
+  for (const itemId of Array.from(new Set(invLines.map((l) => l.itemId)))) {
+    // Back in at the cost the goods left at (stored on the sale's stock rows). Sales recorded before that cost was
+    // stored keep the previous rule: the current average cost (never the sale price, which distorts the average).
+    const live = await liveSaleRows(tx, companyId, inv, 'DIRECT', itemId)
+    if (live.rows.length && live.rows.every((r) => r.costRate !== null)) {
+      const qty = live.rows.reduce((s, r) => s + r.qtyOut, 0)
+      costOf.set(itemId, r2(live.rows.reduce((s, r) => s + r.qtyOut * (r.costRate as number), 0) / qty))
+    } else {
+      const bal = await tx.stockBalance.findUnique({ where: { itemId_warehouseId: { itemId, warehouseId } }, select: { avgRate: true } })
+      costOf.set(itemId, bal?.avgRate || 0)
+    }
+  }
   for (const l of invLines) {
-    // Back in at the current average cost (the sale price would distort the moving average)
-    const bal = await tx.stockBalance.findUnique({ where: { itemId_warehouseId: { itemId: l.itemId, warehouseId } }, select: { avgRate: true } })
     await postStock(t, {
-      companyId, itemId: l.itemId, warehouseId, type: 'SALE_CANCEL_IN', qtyIn: l.qty, rate: bal?.avgRate || 0,
+      companyId, itemId: l.itemId, warehouseId, type: 'SALE_CANCEL_IN', qtyIn: l.qty, rate: costOf.get(l.itemId) || 0,
       refType: 'SALES_INVOICE', refId: invoiceId, refNumber: number, notes: input.note,
     })
     // Back into the batch(es) it was drawn from (no-op for untracked items)
