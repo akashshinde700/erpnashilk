@@ -7,7 +7,7 @@ staging database kaun sa hai. Baaki sab Claude khud chalayega aur end me report 
 Ye prompt specifically un 3 guarantees ko verify karta hai jo release ke liye zaroori hain — **inventory integrity**,
 **billing accuracy**, **transaction safety** — plus backup/restore drill aur pichhle audit me fix hui cheezein.
 
-Expected green state (aaj ke code par): Playwright **132 passed**, `bun test` **27 files pass**, `npm run lint`
+Expected green state (aaj ke code par): Playwright **148 passed**, `bun test` **27 files pass**, `npm run lint`
 **0 errors**, `npx tsc --noEmit` **0 errors** (local par real Prisma client generate hota hai, isliye 0 — koi error aaye
 to wo asli bug hai).
 
@@ -103,7 +103,7 @@ npm run build                # next build; must finish with all pages generated
 npx playwright test --reporter=list
 ```
 
-Expected: **132 passed** (`e2e/specs` 10 files + `e2e/unit` 6 files). Run it twice if any flake appears and note which
+Expected: **148 passed** (`e2e/specs` 11 files + `e2e/unit` 6 files; 16 of them are the mobile viewport suite). Run it twice if any flake appears and note which
 test flaked — flaky tests are a finding, not a pass.
 
 ## Gate 4 — API suite against real MySQL (this is the one that needs my machine)

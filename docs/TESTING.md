@@ -66,6 +66,9 @@ e2e/
                                    HSN → GST rate suggestion in the line editor
     10-tally-einvoice.spec.ts      Tally XML/JSON/Excel downloads, push to Tally through the
                                    connector, sent-to-Tally mark, e-Invoice JSON for the portal
+    11-mobile.spec.ts              9 viewports (320→1366, incl. landscape): sideways-scroll guard,
+                                   drawer focus/Escape/scroll-lock, cards vs table, phone forms,
+                                   offline banner, PWA prerequisites
   unit/
     tally-export.spec.ts           pure builders: Tally voucher balance + XML shape,
                                    ledger-name precedence, IRP validation, GST split
@@ -98,6 +101,16 @@ e2e/
   pure functions; the invoice specs (`04`, `05`, `07`) prove the same numbers survive the dialog →
   API → saved document → print → report round trip. Change `computeBillTotals()`/`computeGst()` only
   with both green.
+
+## Mobile
+
+`e2e/specs/11-mobile.spec.ts` runs the same production build at 320×568, 360×800, 375×812, 390×844,
+412×915, 667×375 (landscape), 768×1024, 1024×768 and 1366×768: no sideways scrolling, a 56px header,
+the drawer (focus trap, Escape, scroll lock, selection, backdrop), record cards below 768px vs the table
+above it, phone dialogs, the offline banner and the PWA prerequisites (manifest + worker registration).
+
+What a browser cannot prove — install prompt, standalone launch, real-device keyboard, mobile
+print/PDF/Excel, and the DB-backed API suite — is in `docs/MOBILE-LOCAL-TEST.md`.
 
 ## CI
 
