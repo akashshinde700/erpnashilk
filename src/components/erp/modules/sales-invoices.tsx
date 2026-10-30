@@ -16,6 +16,7 @@ import { apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { ItemPicker, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } from '@/components/erp/item-picker'
 import { PAYMENT_MODES, accountsForMode, fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
+import { CURRENCIES, defaultFxRate, fxDeclaration } from '@/lib/currencies'
 import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, toBaseQty, unitOptions } from '@/lib/units'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null; state?: string | null; stateCode?: string | null; shippingAddress?: string | null }
@@ -32,6 +33,7 @@ interface InvoiceRow {
   billDiscount?: number | null; freightCharge?: number | null; freightGstRate?: number | null
   packingCharge?: number | null; packingGstRate?: number | null; roundOff?: number | null; isCashSale?: boolean | null
   billingName?: string | null; driverPhone?: string | null; cess?: number | null; shareToken?: string | null; deductStock?: boolean | null
+  docType?: string | null; reverseCharge?: boolean | null; currency?: string | null; fxRate?: number | null
   stockWarehouseId?: string | null
   // detail GET only: UPI payee for the "scan to pay" QR (company UPI id, else the print-on-invoice bank account's)
   upi?: { id: string; payeeName?: string | null } | null
@@ -229,6 +231,11 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
   const [date, setDate] = React.useState(today)
   const [dueDate, setDueDate] = React.useState('')
   const [placeOfSupply, setPlaceOfSupply] = React.useState('')
+  // GST document options (ported from the free GST billing app)
+  const [docType, setDocType] = React.useState('TAX_INVOICE')
+  const [currency, setCurrency] = React.useState('INR')
+  const [fxRate, setFxRate] = React.useState(1)
+  const [reverseCharge, setReverseCharge] = React.useState(false)
   const [notes, setNotes] = React.useState('')
   const [challanId, setChallanId] = React.useState('')
   const [challanNo, setChallanNo] = React.useState('')
@@ -270,6 +277,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     setMode('SO'); setSalesOrderId(''); setCustomerId(''); setDate(today()); setDueDate(''); setPlaceOfSupply(''); setNotes('')
     setChallanId(''); setChallanNo(''); setCustomerPoNo(''); setCustomerPoDate(''); setShippingAddress('')
     setVehicleNo(''); setTransporter('')
+    setDocType('TAX_INVOICE'); setCurrency('INR'); setFxRate(1); setReverseCharge(false)
     setLines([emptyLine()])
     setIsCashSale(false); setBillDiscount(0); setFreightCharge(0); setFreightGstRate(18); setPackingCharge(0); setPackingGstRate(18)
     setReceivedAmount(0); setReceivedMode('CASH'); setReceivedAccountId(''); setReceivedChequeNo(''); setReceivedChequeDate(''); setLastHints({})
@@ -295,6 +303,8 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     setDate(inv.date ? inv.date.slice(0, 10) : today())
     setDueDate(inv.dueDate ? inv.dueDate.slice(0, 10) : '')
     setPlaceOfSupply(inv.placeOfSupply || ''); setNotes(inv.notes || '')
+    setDocType(inv.docType || 'TAX_INVOICE'); setCurrency(inv.currency || 'INR')
+    setFxRate(inv.fxRate || 1); setReverseCharge(!!inv.reverseCharge)
     setCustomerPoNo(inv.customerPoNo || ''); setCustomerPoDate(inv.customerPoDate ? inv.customerPoDate.slice(0, 10) : '')
     setShippingAddress(inv.shippingAddress || ''); setVehicleNo(inv.vehicleNo || ''); setTransporter(inv.transporter || '')
     setBillingName(inv.billingName || ''); setDriverPhone(inv.driverPhone || '')
@@ -428,6 +438,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           billingName: billingName.trim() || undefined, driverPhone: driverPhone.trim() || undefined,
           deductStock, stockWarehouseId: deductStock ? effectiveWarehouseId || undefined : undefined,
           date, dueDate: dueDate || undefined, placeOfSupply: placeOfSupply || undefined, notes: notes || undefined,
+          docType, reverseCharge, currency, fxRate: currency === 'INR' ? 1 : fxRate,
           customerPoNo: customerPoNo || undefined, customerPoDate: customerPoDate || undefined,
           shippingAddress: shippingAddress || undefined, vehicleNo: vehicleNo || undefined, transporter: transporter || undefined,
           items: valid.map((l) => ({
@@ -459,6 +470,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
         stockWarehouseId: directSale && deductStock ? effectiveWarehouseId || undefined : undefined,
         challanId: fromSo && challanId ? challanId : undefined,
         date, dueDate: dueDate || undefined, placeOfSupply: placeOfSupply || undefined, notes: notes || undefined,
+        docType, reverseCharge, currency, fxRate: currency === 'INR' ? 1 : fxRate,
         customerPoNo: customerPoNo || undefined, customerPoDate: customerPoDate || undefined,
         shippingAddress: shippingAddress || undefined, vehicleNo: vehicleNo || undefined, transporter: transporter || undefined,
         items: valid.map((l) => ({
@@ -644,6 +656,13 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     const qtySum = r2(lines2.reduce((s, it) => s + (it.qty || 0), 0))
     const taxableSum = r2(lines2.reduce((s, it) => s + (it.lineTotal || 0), 0))
     const balance = r2((inv.grandTotal || 0) - (inv.paidAmount || 0))
+    const docTitle = inv.docType === 'BILL_OF_SUPPLY' ? 'Bill of Supply' : inv.docType === 'PROFORMA' ? 'Proforma Invoice' : 'Tax Invoice'
+    const docNotes = [
+      inv.reverseCharge ? 'Reverse charge: GST is payable by the recipient under Sec 9(3)/9(4).' : '',
+      inv.currency && inv.currency !== 'INR' ? fxDeclaration(inv.currency, inv.fxRate || 1) : '',
+      inv.docType === 'BILL_OF_SUPPLY' ? 'Bill of Supply — issued for exempt / nil-rated supplies; no GST is charged.' : '',
+      inv.docType === 'PROFORMA' ? 'Proforma Invoice — not a demand for payment; a tax invoice follows on supply.' : '',
+    ].filter(Boolean)
 
     // Bank details box — real rows when any bank field is stored on the company,
     // otherwise keep the 'As per records' placeholder so the box is never empty.
@@ -728,6 +747,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
             <div class="muted">${esc(joinAddr(cust?.state, buyerStateCode ? `State Code: ${buyerStateCode}` : ''))}</div>
             ${buyerContact ? `<div class="muted">${esc(buyerContact)}</div>` : ''}
             ${inv.placeOfSupply ? `<div class="muted">Place of Supply: ${esc(inv.placeOfSupply)}</div>` : ''}
+            ${docNotes.length ? `<div class="muted">${docNotes.map((n) => esc(n)).join('<br/>')}</div>` : ''}
             ${inv.shippingAddress ? `<div class="sec" style="margin-top:8px">Ship To</div><div class="muted" style="white-space:pre-wrap">${esc(inv.shippingAddress)}</div>` : ''}
           </td>
           <td style="width:42%">
@@ -807,7 +827,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           <strong>Declaration:</strong> We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
         </div>
       </div>`
-    printHtml(`Tax Invoice ${row.number}${size === 'A5' ? ' (A5)' : ''}`, html)
+    printHtml(`${docTitle} ${row.number}${size === 'A5' ? ' (A5)' : ''}`, html)
   }
 
   // Lazy read is SSR-safe (try/catch) and only drives the ✓ inside the closed-by-default menu
@@ -1007,6 +1027,38 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           </label>
         )}
         <div className="grid sm:grid-cols-3 gap-4">
+          <Field label="Document type">
+            <SelectInput
+              value={docType}
+              onChange={(v) => setDocType(v)}
+              options={[
+                { value: 'TAX_INVOICE', label: 'Tax Invoice' },
+                { value: 'BILL_OF_SUPPLY', label: 'Bill of Supply (exempt)' },
+                { value: 'PROFORMA', label: 'Proforma Invoice' },
+              ]}
+            />
+          </Field>
+          <Field label="Currency">
+            <SelectInput
+              value={currency}
+              onChange={(v) => { setCurrency(v); setFxRate(defaultFxRate(v)) }}
+              options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
+            />
+          </Field>
+          {currency === 'INR' ? (
+            <Field label="Exchange rate">
+              <TextInput value="1.00 (INR)" readOnly disabled />
+            </Field>
+          ) : (
+            <Field label={`Exchange rate (1 ${currency} = ₹)`} required>
+              <NumberInput value={fxRate} onChange={(e) => setFxRate(Number(e.target.value) || 0)} step="0.0001" />
+            </Field>
+          )}
+          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer sm:col-span-3">
+            <Checkbox checked={reverseCharge} onCheckedChange={(v) => setReverseCharge(v === true)} />
+            Reverse charge (Sec 9(3)/9(4))
+            <span className="text-xs font-normal text-muted-foreground">— GST is payable by the recipient, not you</span>
+          </label>
           {!isCashSale && !editing && (
             <Field label="Mode">
               <SelectInput

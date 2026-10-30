@@ -531,6 +531,11 @@ model SalesInvoice {
   cess            Float     @default(0)
   accountId       String?   // where "Received now" money went (Cash & Bank)
   shareToken      String?   @unique // public share link (WhatsApp / PDF)
+  // ---- GST document options (ported from the free GST billing app) ----
+  docType         String    @default("TAX_INVOICE") // TAX_INVOICE | BILL_OF_SUPPLY | PROFORMA
+  reverseCharge   Boolean   @default(false) // GST payable by the recipient (Sec 9(3)/9(4))
+  currency        String    @default("INR") // document currency (ISO-4217)
+  fxRate          Float     @default(1) // 1 unit of `currency` in INR
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -711,6 +716,7 @@ model PurchaseInvoice {
   roundOff       Float     @default(0) // + / − paise to make the total a whole rupee
   cess            Float     @default(0)
   accountId       String?   // where "Paid now" money came from
+  reverseCharge   Boolean   @default(false) // RCM purchase: the company pays the GST (Sec 9(3)/9(4))
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

@@ -1,0 +1,73 @@
+name: E2E (Playwright)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      E2E_PORT: '3000'
+      E2E_BASE_URL: 'http://127.0.0.1:3000'
+      E2E_WEB_COMMAND: 'npm run start:e2e'
+      # The E2E suite runs the UI against the in-browser API double
+      # (e2e/support/mock-api.ts), so no database service is needed. These values
+      # only have to satisfy module-scope env checks during the production build.
+      DATABASE_URL: 'mysql://root@127.0.0.1:3306/manuflow_e2e'
+      SESSION_SECRET: 'ci-only-session-secret-please-override-0123456789'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `cache: npm` — this repo locks dependencies with bun.lock, not a
+      # package-lock.json, and the cache action errors out without one.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the app
+        env:
+          # Same build invocation the suite is validated against: webpack compiler,
+          # with type checking delegated to the dedicated API type test.
+          NEXT_SKIP_TYPECHECK: '1'
+        run: npx next build --webpack
+
+      - name: Run Playwright tests
+        run: npx playwright test --reporter=list,html
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload traces and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: test-results/
+          retention-days: 14
