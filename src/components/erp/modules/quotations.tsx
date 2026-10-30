@@ -12,6 +12,7 @@ import {
 } from '@/components/erp/kit'
 import { apiDelete, apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
 import { fmtDate, fmtMoney } from '@/lib/erp-constants'
+import { quotationPrintHtml } from '@/lib/print-quotation'
 import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, unitOptions } from '@/lib/units'
 import { ItemPicker, QuickItemDialog, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } from '@/components/erp/item-picker'
 
@@ -65,11 +66,6 @@ function waUrl(phone: string | null | undefined, message: string): string {
 // Build a mailto: deep link — a missing recipient opens the user's mail app with a blank To: field.
 function mailtoUrl(email: string | null | undefined, subject: string, body: string): string {
   return `mailto:${email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-}
-
-// Minimal HTML escaping for user-entered text dropped into the print template
-function esc(v: string | null | undefined): string {
-  return (v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 // Share text for both the WhatsApp and email actions on a quotation.
@@ -275,39 +271,12 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
     window.location.href = mailtoUrl(row.customer?.email, subject, quotationMessage(row, company))
   }
 
-  function printQuotation(q: QuotationRow) {
-    const items2 = q.items ?? []
-    const body = `
-      <div class="head">
-        <div><h1>Acme Precision Manufacturing Pvt Ltd</h1>
-          <div class="muted">Quotation · ${q.number}</div></div>
-        <div style="text-align:right"><span class="badge">${q.status}</span><br/>
-          <div class="muted">Date: ${new Date(q.date).toLocaleDateString('en-IN')}</div>
-          ${q.validUntil ? `<div class="muted">Valid until: ${new Date(q.validUntil).toLocaleDateString('en-IN')}</div>` : ''}</div>
-      </div>
-      <p><strong>To:</strong> ${q.customer?.name || '—'}${q.customer?.gstin ? ` · GSTIN ${q.customer.gstin}` : ''}
-      ${q.customer?.city ? `<br/><span class="muted">${q.customer.city}${q.customer.state ? ', ' + q.customer.state : ''}</span>` : ''}
-      ${q.kindAttn ? `<br/><strong>Kind Attn:</strong> ${esc(q.kindAttn)}` : ''}</p>
-      <table>
-        <thead><tr><th>#</th><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Disc %</th><th class="num">GST %</th><th class="num">Amount</th></tr></thead>
-        <tbody>
-          ${items2.map((it, i) => `<tr><td>${i + 1}</td><td>${it.item?.name || it.itemId}</td><td class="num">${it.qty}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.discountPct}%</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`).join('')}
-        </tbody>
-      </table>
-      <table class="totals" style="width:280px;margin-left:auto">
-        <tr><td>Subtotal</td><td class="num">${fmtMoney(q.subtotal)}</td></tr>
-        <tr><td>Discount</td><td class="num">- ${fmtMoney(q.discountTotal)}</td></tr>
-        <tr><td>CGST</td><td class="num">${fmtMoney(q.cgst)}</td></tr>
-        <tr><td>SGST</td><td class="num">${fmtMoney(q.sgst)}</td></tr>
-        ${q.igst ? `<tr><td>IGST</td><td class="num">${fmtMoney(q.igst)}</td></tr>` : ''}
-        <tr class="grand"><td>Grand Total</td><td class="num">${fmtMoney(q.grandTotal)}</td></tr>
-      </table>
-      ${q.notes ? `<p class="muted">Notes: ${esc(q.notes)}</p>` : ''}
-      ${q.paymentTerms ? `<p><strong>Payment Terms:</strong> ${esc(q.paymentTerms)}</p>` : ''}
-      ${q.deliveryTerms ? `<p><strong>Delivery Terms:</strong> ${esc(q.deliveryTerms)}</p>` : ''}
-      ${q.terms ? `<div style="margin-top:10px"><strong>Terms &amp; Conditions</strong><div style="white-space:pre-wrap;font-size:11px;margin-top:4px">${esc(q.terms)}</div></div>` : ''}
-      <p class="muted">This is a computer generated quotation. Prices valid as per validity date above.</p>`
-    printHtml(`Quotation ${q.number}`, body)
+  async function printQuotation(q: QuotationRow) {
+    let company: { name?: string | null; gstin?: string | null } | null = null
+    try {
+      company = await apiGet<{ name?: string | null; gstin?: string | null }>(`/api/settings?companyId=${companyId}`)
+    } catch { /* header falls back to a generic title */ }
+    printHtml(`Quotation ${q.number}`, quotationPrintHtml(q, company))
   }
 
   const totals = computeTotals(lines.map((l) => lineToBase(l, itemRow(l.itemId))))
