@@ -216,7 +216,7 @@ function gstr2(store: Store) {
     id: b.id, number: b.number, supplierInvNo: b.supplierInvNo, date: b.date,
     supplierName: (b.supplier as Json)?.name ?? '', gstin: (b.supplier as Json)?.gstin ?? null,
     isInterState: !!b.isInterState, taxable: Number(b.subtotal) - Number(b.discountTotal || 0),
-    cgst: b.cgst, sgst: b.sgst, igst: b.igst, cess: b.cess ?? 0,
+    cgst: Number(b.cgst), sgst: Number(b.sgst), igst: Number(b.igst), cess: Number(b.cess ?? 0),
     totalTax: Number(b.cgst) + Number(b.sgst) + Number(b.igst) + Number(b.cess ?? 0),
     grandTotal: b.grandTotal,
     reverseCharge: !!b.reverseCharge,
