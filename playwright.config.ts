@@ -19,7 +19,6 @@ const PORT = Number(process.env.E2E_PORT || 3000)
 const baseURL = process.env.E2E_BASE_URL || `http://127.0.0.1:${PORT}`
 
 export default defineConfig({
-  testDir: './e2e/specs',
   outputDir: './test-results/artifacts',
   timeout: 90_000,
   expect: { timeout: 15_000 },
@@ -44,7 +43,15 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testDir: './e2e/specs',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
+    },
+    {
+      // Pure-function tests (Tally voucher / e-Invoice JSON builders) — no browser,
+      // no API, no database. They run in the same invocation as the UI suite.
+      name: 'unit',
+      testDir: './e2e/unit',
+      use: {},
     },
   ],
   webServer: process.env.E2E_SKIP_WEBSERVER

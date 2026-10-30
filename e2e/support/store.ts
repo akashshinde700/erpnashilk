@@ -130,7 +130,16 @@ const salesInvoiceBase = {
 }
 
 export const salesInvoices = [
-  { ...salesInvoiceBase, id: 'si_1', number: 'INV/26-27/0001', date: '2026-09-03', dueDate: '2026-10-03', placeOfSupply: '27', customerId: 'cus_1', status: 'POSTED', subtotal: 25000, discountTotal: 0, cgst: 2250, sgst: 2250, igst: 0, grandTotal: 29500, paidAmount: 29500, roundOff: 0, isInterState: false, items: [] },
+  {
+    ...salesInvoiceBase, id: 'si_1', number: 'INV/26-27/0001', date: '2026-09-03', dueDate: '2026-10-03', placeOfSupply: '27',
+    customerId: 'cus_1', status: 'POSTED', subtotal: 25000, discountTotal: 0, cgst: 2250, sgst: 2250, igst: 0,
+    grandTotal: 29500, paidAmount: 29500, roundOff: 0, isInterState: false,
+    // Line detail so the Tally / e-Invoice exports have something to describe
+    items: [{
+      id: 'sii_1', itemId: 'itm_4', hsn: '84836090', qty: 5, rate: 5000, discountPct: 0, gstRate: 18,
+      lineTotal: 25000, item: { id: 'itm_4', code: 'FG-SFT', name: 'Shaft Assembly SF-220', uom: 'NOS' },
+    }],
+  },
   { ...salesInvoiceBase, id: 'si_2', number: 'INV/26-27/0002', date: '2026-09-18', dueDate: '2026-10-18', placeOfSupply: '29', customerId: 'cus_2', customer: { id: 'cus_2', name: 'Deccan Auto Systems', gstin: '29AACCD9876K1Z3' }, status: 'PARTIALLY_PAID', subtotal: 42000, discountTotal: 2000, cgst: 0, sgst: 0, igst: 7200, grandTotal: 47200, paidAmount: 20000, roundOff: 0, isInterState: true, items: [] },
   { ...salesInvoiceBase, id: 'si_3', number: 'INV/26-27/0003', date: '2026-10-06', dueDate: '2026-11-06', placeOfSupply: '27', customerId: 'cus_3', customer: { id: 'cus_3', name: 'Sahyadri Pumps', gstin: '27AADCS5555P1Z9' }, status: 'DRAFT', subtotal: 15600, discountTotal: 0, cgst: 1404, sgst: 1404, igst: 0, grandTotal: 18408, paidAmount: 0, roundOff: 0, isInterState: false, items: [] },
   { ...salesInvoiceBase, id: 'si_5', number: 'INV/26-27/0005', date: '2026-10-24', dueDate: '2026-11-24', placeOfSupply: '27', customerId: 'cus_1', customer: { id: 'cus_1', name: 'Precision Tools Pvt Ltd', gstin: '27AABCP1234C1ZU' }, status: 'UNPAID', subtotal: 30000, discountTotal: 0, cgst: 2700, sgst: 2700, igst: 0, grandTotal: 35400, paidAmount: 0, roundOff: 0, isInterState: false, items: [] },

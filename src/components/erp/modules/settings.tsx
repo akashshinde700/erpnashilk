@@ -32,6 +32,13 @@ interface CompanyProfile {
   pincode?: string | null
   invoiceTerms?: string | null
   quotationTerms?: string | null
+  tallyCompanyName?: string | null
+  tallySalesLedger?: string | null
+  tallyCgstLedger?: string | null
+  tallySgstLedger?: string | null
+  tallyIgstLedger?: string | null
+  tallyFreightLedger?: string | null
+  tallyRoundOffLedger?: string | null
   logoImage?: string | null
   signatureImage?: string | null
   roundOffTotals?: boolean
@@ -44,6 +51,8 @@ const EMPTY_PROFILE: ProfileForm = {
   name: '', gstin: '', pan: '', addressLine: '', city: '', state: '', stateCode: '', phone: '', email: '', logoText: '',
   bankAccountName: '', bankAccountNumber: '', bankIfsc: '', bankUpiId: '', bankName: '', bankBranch: '',
   pincode: '', invoiceTerms: '', quotationTerms: '',
+  tallyCompanyName: '', tallySalesLedger: '', tallyCgstLedger: '', tallySgstLedger: '',
+  tallyIgstLedger: '', tallyFreightLedger: '', tallyRoundOffLedger: '',
 }
 
 interface SeqRow {
@@ -299,6 +308,13 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
         pincode: d.pincode || '',
         invoiceTerms: d.invoiceTerms || '',
         quotationTerms: d.quotationTerms || '',
+        tallyCompanyName: d.tallyCompanyName || '',
+        tallySalesLedger: d.tallySalesLedger || '',
+        tallyCgstLedger: d.tallyCgstLedger || '',
+        tallySgstLedger: d.tallySgstLedger || '',
+        tallyIgstLedger: d.tallyIgstLedger || '',
+        tallyFreightLedger: d.tallyFreightLedger || '',
+        tallyRoundOffLedger: d.tallyRoundOffLedger || '',
       })
       setLogoImage(d.logoImage || '')
       setSignatureImage(d.signatureImage || '')
@@ -558,6 +574,48 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
           </div>
           <p className="text-xs text-muted-foreground mt-4">
             State code drives the GST split — same-state parties get CGST + SGST, other states get IGST.
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Tally export"
+          actions={
+            <Button size="sm" onClick={() => void saveProfile()} disabled={saving}>
+              <Save className="h-4 w-4 mr-1.5" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          }
+        >
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="Tally company name" className="sm:col-span-2 lg:col-span-3">
+              <TextInput
+                value={form.tallyCompanyName}
+                onChange={(e) => setForm((f) => ({ ...f, tallyCompanyName: e.target.value }))}
+                placeholder="Exactly as it reads in TallyPrime (optional)"
+              />
+            </Field>
+            <Field label="Sales ledger">
+              <TextInput value={form.tallySalesLedger} onChange={(e) => setForm((f) => ({ ...f, tallySalesLedger: e.target.value }))} placeholder="Sales" />
+            </Field>
+            <Field label="CGST ledger">
+              <TextInput value={form.tallyCgstLedger} onChange={(e) => setForm((f) => ({ ...f, tallyCgstLedger: e.target.value }))} placeholder="Central Tax on Sales @ 9%" />
+            </Field>
+            <Field label="SGST ledger">
+              <TextInput value={form.tallySgstLedger} onChange={(e) => setForm((f) => ({ ...f, tallySgstLedger: e.target.value }))} placeholder="State Tax on Sales @ 9%" />
+            </Field>
+            <Field label="IGST ledger">
+              <TextInput value={form.tallyIgstLedger} onChange={(e) => setForm((f) => ({ ...f, tallyIgstLedger: e.target.value }))} placeholder="Integrated Tax on Sales @ 18%" />
+            </Field>
+            <Field label="Freight ledger">
+              <TextInput value={form.tallyFreightLedger} onChange={(e) => setForm((f) => ({ ...f, tallyFreightLedger: e.target.value }))} placeholder="Transport & Freight Charges" />
+            </Field>
+            <Field label="Round-off ledger">
+              <TextInput value={form.tallyRoundOffLedger} onChange={(e) => setForm((f) => ({ ...f, tallyRoundOffLedger: e.target.value }))} placeholder="Round Off" />
+            </Field>
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">
+            Used by the Tally import file on every sales invoice. Tally never creates a master on import, so these
+            names must match the ledgers of that Tally company exactly. Blank = the standard default.
           </p>
         </SectionCard>
 

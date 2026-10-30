@@ -23,7 +23,12 @@ const fail = (message: string, code = 'BAD_REQUEST', status = 400) => ({
   body: { success: false, error: { code, message } },
 })
 
-type Reply = { status: number; body: Json }
+type Reply = {
+  status: number
+  body: Json
+  /** Raw (file) response instead of the JSON envelope — used by the download endpoints. */
+  file?: { body: string; contentType: string; filename: string; headers?: Record<string, string> }
+}
 
 const iso = (d = new Date()) => d.toISOString()
 const today = () => iso().slice(0, 10)
@@ -523,6 +528,83 @@ export function makeApi(store: Store) {
       }
     }
 
+    // ---------------- Tally / e-Invoice exports ----------------
+    // Mirrors src/app/api/sales-invoices/[id]/{tally,einvoice}/route.ts.
+    if (head === 'sales-invoices' && second && (third === 'tally' || third === 'einvoice')) {
+      const invoice = (col('sales-invoices') as Json[]).find((r) => r.id === second)
+      if (!invoice) return fail('Invoice not found', 'NOT_FOUND', 404)
+      const customer = (col('customers') as Json[]).find((c) => c.id === invoice.customerId) as Json | undefined
+      const number = String(invoice.number || 'INV')
+      const safe = number.replace(/[\\/:*?"<>|]+/g, '-')
+      const grandTotal = Number(invoice.grandTotal || 0)
+      const items = (invoice.items as Json[] | undefined) ?? []
+      const warnings = customer && !customer.gstin ? [`Customer "${customer.name}" has no GSTIN.`] : []
+
+      if (third === 'tally') {
+        if (method === 'POST' || method === 'PATCH') {
+          const action = String(body?.action || 'mark-sent')
+          invoice.tallySentAt = action === 'unmark' ? null : iso()
+          return ok(invoice)
+        }
+        const voucher = {
+          voucherType: 'Sales',
+          voucherNumber: number,
+          remoteId: `MANUFLOW-INV-${invoice.id}`,
+          date: String(invoice.date || today()).replace(/-/g, ''),
+          dateISO: String(invoice.date || today()),
+          party: String(customer?.name || 'Customer'),
+          partyGstin: String(customer?.gstin || ''),
+          company: 'Nashilk Precision Works',
+          entries: [
+            { ledger: String(customer?.name || 'Customer'), amount: grandTotal, isParty: true, isDebit: true },
+            { ledger: 'Sales', amount: Number(invoice.subtotal || 0), isParty: false, isDebit: false },
+            { ledger: 'Central Tax on Sales @ 9%', amount: Number(invoice.cgst || 0), isParty: false, isDebit: false },
+            { ledger: 'State Tax on Sales @ 9%', amount: Number(invoice.sgst || 0), isParty: false, isDebit: false },
+          ].filter((e) => e.amount > 0),
+          items,
+          subtotal: Number(invoice.subtotal || 0),
+          grandTotal,
+          warnings,
+        }
+        if (query.get('preview') === '1') return ok({ voucher, ledgerNames: { sales: 'Sales' } })
+        const format = (query.get('format') || 'xml').toLowerCase()
+        if (format === 'json') {
+          return { status: 200, body: {}, file: { body: JSON.stringify(voucher, null, 2), contentType: 'application/json', filename: `${safe}_tally.json` } }
+        }
+        if (format === 'excel') {
+          return { status: 200, body: {}, file: { body: 'xlsx-bytes', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: `${safe}_tally.xlsx` } }
+        }
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE>\n  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>\n  <BODY><IMPORTDATA><REQUESTDATA>\n` +
+          `  <TALLYMESSAGE><VOUCHER REMOTEID="${voucher.remoteId}" VCHTYPE="Sales" ACTION="Create">\n` +
+          `    <DATE>${voucher.date}</DATE><VOUCHERNUMBER>${number}</VOUCHERNUMBER>\n` +
+          `    <PARTYLEDGERNAME>${voucher.party}</PARTYLEDGERNAME>\n` +
+          `  </VOUCHER></TALLYMESSAGE>\n</REQUESTDATA></IMPORTDATA></BODY>\n</ENVELOPE>`
+        return { status: 200, body: {}, file: { body: xml, contentType: 'application/xml', filename: `${safe}_tally.xml` } }
+      }
+
+      // e-Invoice (IRP bulk upload JSON, NIC schema v1.1)
+      const problems: string[] = []
+      if (!String(customer?.gstin || '').match(/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/)) problems.push('Buyer has an invalid GSTIN')
+      if (String(number).length > 16) problems.push('Invoice number is longer than 16 characters')
+      if (query.get('check') === '1') return ok({ ready: problems.length === 0, problems })
+      const json = [{
+        Version: '1.1',
+        TranDtls: { TaxSch: 'GST', SupTyp: 'B2B', RegRev: invoice.reverseCharge ? 'Y' : 'N', IgstOnIntra: 'N' },
+        DocDtls: { Typ: 'INV', No: number, Dt: String(invoice.date || today()).split('-').reverse().join('/') },
+        SellerDtls: { Gstin: '27AABCN1234M1Z8', LglNm: 'Nashilk Precision Works', Stcd: '27' },
+        BuyerDtls: { Gstin: String(customer?.gstin || ''), LglNm: String(customer?.name || ''), Pos: String(customer?.gstin || '').slice(0, 2) },
+        ItemList: items.map((it, i) => ({ SlNo: String(i + 1), HsnCd: String(it.hsn || '84836090'), Qty: Number(it.qty || 0), Unit: 'NOS', UnitPrice: Number(it.rate || 0), AssAmt: Number(it.lineTotal || 0), GstRt: Number(it.gstRate || 18), TotItemVal: Number(it.lineTotal || 0) })),
+        ValDtls: { AssVal: Number(invoice.subtotal || 0), CgstVal: Number(invoice.cgst || 0), SgstVal: Number(invoice.sgst || 0), IgstVal: Number(invoice.igst || 0), TotInvVal: grandTotal },
+      }]
+      return {
+        status: 200, body: {},
+        file: {
+          body: JSON.stringify(json, null, 2), contentType: 'application/json', filename: `${safe}_einvoice.json`,
+          headers: problems.length ? { 'x-einvoice-warnings': encodeURIComponent(JSON.stringify(problems)) } : undefined,
+        },
+      }
+    }
+
     // ---------------- audit log ----------------
     if (head === 'audit-logs') {
       const page = Number(query.get('page') || 1)
@@ -608,6 +690,20 @@ export function makeApi(store: Store) {
     // Generic envelope for anything not modelled: empty lists, successful writes.
     if (!reply) {
       reply = method === 'GET' ? ok({ items: [], total: 0 }) : ok({ id: store.nextId('gen'), ...(body || {}) })
+    }
+
+    if (reply.file) {
+      await route.fulfill({
+        status: reply.status,
+        contentType: reply.file.contentType,
+        headers: {
+          'cache-control': 'no-store',
+          'content-disposition': `attachment; filename="${reply.file.filename}"`,
+          ...(reply.file.headers || {}),
+        },
+        body: reply.file.body,
+      })
+      return
     }
 
     await route.fulfill({
