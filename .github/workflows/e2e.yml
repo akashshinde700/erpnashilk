@@ -32,10 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `cache: npm` — this repo locks dependencies with bun.lock, not a
+      # package-lock.json, and the cache action errors out without one.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
