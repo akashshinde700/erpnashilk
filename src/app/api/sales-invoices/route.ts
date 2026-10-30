@@ -212,7 +212,16 @@ export async function POST(req: Request) {
         if (dup > 0) throw new ApiError(`Delivery challan ${challan.number} is already invoiced`, 409)
       }
       const party = isCashSale ? await cashSaleCustomer(t, companyId) : { id: customerId as string, name: customer?.name || '' }
-      const number = await nextDocNumber(t, companyId, 'INV', date)
+      // GST document type: tax invoice (default), bill of supply (exempt/nil-rated) or proforma
+      const docType = ['TAX_INVOICE', 'BILL_OF_SUPPLY', 'PROFORMA'].includes(String(body.docType))
+        ? String(body.docType)
+        : 'TAX_INVOICE'
+      const docPrefix = docType === 'BILL_OF_SUPPLY' ? 'BOS' : docType === 'PROFORMA' ? 'PRO' : 'INV'
+      // Multi-currency: amounts stay in the document currency, fxRate converts them to INR for GST
+      const currency = /^[A-Z]{3}$/.test(String(body.currency || '').toUpperCase()) ? String(body.currency).toUpperCase() : 'INR'
+      const fxRate = currency === 'INR' ? 1 : Math.max(0.000001, Number(body.fxRate) || 1)
+      const reverseCharge = body.reverseCharge === true || body.reverseCharge === 'true'
+      const number = await nextDocNumber(t, companyId, docPrefix, date)
       // Cash & Bank account the money received now goes into — a chosen account must exist and be active
       let accountId: string | null = null
       if (paid > 0.005) {
@@ -258,6 +267,10 @@ export async function POST(req: Request) {
           deductStock,
           stockWarehouseId,
           accountId,
+          docType,
+          reverseCharge,
+          currency,
+          fxRate,
           items: {
             create: lines.map((l, i) => ({
               itemId: l.itemId,
