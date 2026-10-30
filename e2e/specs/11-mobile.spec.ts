@@ -77,15 +77,17 @@ function describeViewport(vp: ViewportSpec) {
       await expectNoHorizontalScroll(page, 'dashboard')
 
       const hamburger = page.getByRole('button', { name: 'Open navigation' })
-      const rail = page.getByRole('navigation', { name: 'ERP modules' })
+      // The rail (desktop) and the drawer (mobile) each render a nav with the same name, so both
+      // are scoped to their container — an unscoped lookup matches two elements.
+      const rail = page.locator('aside').getByRole('navigation', { name: 'ERP modules' })
       if (vp.width < 1024) {
         // Phones and the 768px tablet use the drawer; the desktop rail is not on screen.
         await expect(hamburger).toBeVisible()
         await expect(rail).toBeHidden()
         await hamburger.click()
-        await expect(rail).toBeVisible()
         const panel = page.getByRole('dialog', { name: 'Navigation' })
         await expect(panel).toBeVisible()
+        await expect(panel.getByRole('navigation', { name: 'ERP modules' })).toBeVisible()
         // Background must not scroll behind the open drawer.
         expect(await page.evaluate(() => document.body.style.overflow)).toBe('hidden')
         // Focus starts inside the panel, and Escape returns it to the hamburger.
@@ -196,3 +198,26 @@ function describeForm(vp: ViewportSpec) {
 }
 
 for (const vp of [PHONES[0], PHONES[2]]) describeForm(vp)
+
+test.describe('Phone write flow', () => {
+  test.use({ viewport: { width: 375, height: 812 } })
+
+  test('a record created on the phone shows up in the card list', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'Items')
+    const dialog = await openCreate(page, 'Item')
+
+    await dialog.getByPlaceholder('Hex Bolt M8').fill('Mobile Bracket 30x30')
+    await dialog.getByPlaceholder('Auto (RM-001…)').fill('RM-MOB')
+    await dialog.getByRole('button', { name: 'Create' }).click()
+    await expect(dialog).toBeHidden()
+
+    // The new record is in the list the phone actually renders (cards, not a table).
+    const card = page.locator('main li[data-row-id]').filter({ hasText: 'Mobile Bracket 30x30' }).first()
+    await expect(card).toBeVisible()
+    await expect(page.locator('main table')).toHaveCount(0)
+
+    const created = (store.collections.items as { name: string }[]).find((i) => i.name === 'Mobile Bracket 30x30')
+    expect(created, 'the API double received the create call').toBeTruthy()
+  })
+})

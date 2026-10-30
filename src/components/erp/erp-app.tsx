@@ -5,7 +5,7 @@ import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import { io, type Socket } from 'socket.io-client'
 import {
-  Bell, Building2, CheckCheck, ChevronRight, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
+  Bell, Building2, Check, CheckCheck, ChevronRight, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
   Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles, Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -698,7 +698,7 @@ export default function ErpApp() {
             onClick={() => toggleFav(m.key)}
             className={cn(
               'mr-1.5 cursor-pointer rounded p-1 transition-opacity',
-              isFav ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+              isFav ? 'opacity-100' : 'opacity-100 hover:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100',
               active ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted',
             )}
             aria-label={isFav ? `Unpin ${m.label}` : `Pin ${m.label} to favorites`}
@@ -1001,6 +1001,26 @@ export default function ErpApp() {
                 {dark ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
                 {dark ? 'Light mode' : 'Dark mode'}
               </DropdownMenuItem>
+              {/* The header tenant picker is desktop-only, so phones get the same control here. */}
+              <div className="sm:hidden">
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Company
+                </DropdownMenuLabel>
+                <div className="max-h-52 overflow-y-auto">
+                  {companyList.map((c) => (
+                    <DropdownMenuItem
+                      key={c.id}
+                      disabled={!canSwitch}
+                      onSelect={() => { if (c.id !== companyId) switchCompany(c.id) }}
+                    >
+                      <Check className={cn('mr-2 h-4 w-4', c.id === companyId ? 'opacity-100 text-primary' : 'opacity-0')} aria-hidden="true" />
+                      <span className="truncate">{c.name}</span>
+                      {c.id === companyId && <span className="sr-only"> (current company)</span>}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void logout()} className="text-destructive focus:text-destructive">
                 <LogOut className="h-4 w-4 mr-2" />Sign out

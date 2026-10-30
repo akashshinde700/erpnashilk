@@ -584,6 +584,13 @@ export function DataTable<T extends { id: string }>({
     ? Math.max(1, Math.ceil(serverPagination.total / serverPagination.pageSize))
     : Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageRows = serverPagination ? displayRows : displayRows.slice(page * pageSize, page * pageSize + pageSize)
+
+  // Phone cards are cheap individually but a screen can hand us a 200-row page. Render a slice and
+  // let the user ask for more, so a mid-range Android does not build 200 DOM cards at once.
+  const CARD_PAGE = 40
+  const [cardLimit, setCardLimit] = React.useState(CARD_PAGE)
+  React.useEffect(() => { setCardLimit(CARD_PAGE) }, [q, pageRows.length])
+  const cardRows = pageRows.length > cardLimit ? pageRows.slice(0, cardLimit) : pageRows
   const pagerPage = serverPagination ? serverPagination.page : page
   const pagerPageSize = serverPagination ? serverPagination.pageSize : pageSize
   const pagerTotal = serverPagination ? serverPagination.total : filtered.length
@@ -800,7 +807,7 @@ export function DataTable<T extends { id: string }>({
               emptyState
             ) : (
               <ul className="divide-y">
-                {pageRows.map((row) => {
+                {cardRows.map((row) => {
                   const highlighted = highlightId !== null && highlightId !== undefined && String(row.id) === highlightId
                   return (
                     <li
@@ -852,6 +859,13 @@ export function DataTable<T extends { id: string }>({
                   )
                 })}
               </ul>
+            )}
+            {!loading && pageRows.length > cardRows.length && (
+              <div className="border-t p-3">
+                <Button variant="outline" className="w-full" onClick={() => setCardLimit((n) => n + CARD_PAGE)}>
+                  Show {Math.min(CARD_PAGE, pageRows.length - cardRows.length)} more of {pageRows.length - cardRows.length}
+                </Button>
+              </div>
             )}
             {cardTotals}
           </div>
