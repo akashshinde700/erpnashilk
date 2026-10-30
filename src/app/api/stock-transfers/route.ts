@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 import { batchNote, parseSerials, transferBatches, transferSerials } from '@/lib/batches'
 
 // GET /api/stock-transfers?companyId= — TRANSFER_OUT ledger rows (UI pairs with TRANSFER_IN)
@@ -38,6 +39,7 @@ export async function GET(req: Request) {
 // Batch-tracked items move batch-wise: out of the chosen batch (else FEFO, legacy un-batched stock last) and into
 // the destination under the same batch no / dates. Serial-tracked items need the serials being moved.
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'stock-transfers')
     const body = await req.json().catch(() => ({}) as any)
@@ -68,6 +70,10 @@ export async function POST(req: Request) {
     for (const l of cleanLines) {
       if (l.qty <= 0) throw new ApiError('Transfer qty must be greater than 0', 400)
     }
+
+    // A retried submission must not move the stock twice. See src/lib/idempotency.ts.
+    idem = await claimIdempotency(req, companyId, 'POST /api/stock-transfers', body)
+    if (idem.replay) return idem.replay
 
     const result = await db.$transaction(async (tx) => {
       const itemIds = Array.from(new Set(cleanLines.map((l: any) => l.itemId)))
@@ -122,7 +128,7 @@ export async function POST(req: Request) {
         details: `Transfer ${number}: ${cleanLines.length} line(s) from ${fromWh.code} to ${toWh.code}`,
       })
 
-      return {
+      const payload = {
         number,
         date: transferDate,
         fromWarehouseId,
@@ -130,10 +136,13 @@ export async function POST(req: Request) {
         lines: cleanLines.length,
         totalQty: r2(cleanLines.reduce((s: number, l: any) => s + l.qty, 0)),
       }
+      await idem!.done(tx, payload, `Stock transfer ${number} posted`)
+      return payload
     })
 
     return ok(result, `Stock transfer ${result.number} posted`)
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

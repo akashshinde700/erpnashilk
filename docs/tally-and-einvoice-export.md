@@ -57,7 +57,18 @@ any signed-in user make the server call an internal address — SSRF).
 
 The server builds the same Import envelope as the XML download, hands it to the
 connector as a `push-voucher` job, and the connector posts that document to
-TallyPrime unchanged. The outcome comes back as the job's result and the invoice
+TallyPrime unchanged.
+
+**Sales invoices and purchase bills both push.** A bill travels as a *Purchase*
+voucher (`REMOTEID="MANUFLOW-BILL-…"`): the supplier is credited with the bill
+total, while the purchase ledger, the input-tax ledgers and the stock lines are
+debited. Purchase-side ledger names have no per-company column yet, so they come
+from the environment — `TALLY_LEDGER_PURCHASE` (default `Purchase`),
+`TALLY_LEDGER_CGST_INPUT` / `TALLY_LEDGER_SGST_INPUT` (default
+`Input Central Tax @ 9%` / `Input State Tax @ 9%`),
+`TALLY_LEDGER_IGST_INPUT` (default `Input Integrated Tax @ 18%`) and
+`TALLY_LEDGER_CESS_INPUT` (default `Input Cess`); freight and round-off reuse the
+existing settings. Push the bill from **Purchase Invoices → Tally** on the row. The outcome comes back as the job's result and the invoice
 is marked “sent to Tally”. Off unless the server runs with
 `TALLY_CONNECTOR_PUSH=1`; the full rules (one voucher per job, no DTD, duplicate
 handling, permissions) are in `docs/tally-connector.md`.

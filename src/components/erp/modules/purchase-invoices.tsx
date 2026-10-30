@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
-import { BadgeIndianRupee, Pencil, Plus, Redo2, Trash2, X } from 'lucide-react'
+import { BadgeIndianRupee, CloudUpload, Pencil, Plus, Redo2, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, openCreate, useCreatePreset
@@ -347,6 +347,38 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
     roundOff: settings.data?.roundOffTotals ?? true,
   })
 
+  /**
+   * Push this bill into TallyPrime as a Purchase voucher through the paired connector.
+   *
+   * The server builds the Import envelope from the bill (supplier credited, purchase + input-tax
+   * ledgers debited, REMOTEID MANUFLOW-BILL-… so a re-import cannot double the books); the connector
+   * posts it and reports back, and the job is polled here until it settles.
+   */
+  async function pushToTally(r: PiRow) {
+    try {
+      const job = await apiPost<{ id: string; voucherNumber?: string }>('/api/import-center/tally/push', { companyId, billId: r.id })
+      toast.info(`Sending bill ${job.voucherNumber || r.number} to Tally…`, {
+        description: 'The connector picks it up on its next check-in (every 5–30 seconds).',
+      })
+      for (let i = 0; i < 24; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2500))
+        const st = await apiGet<{ status: string; message?: string | null; result?: { status: string } | null }>(
+          `/api/import-center/tally/jobs?id=${encodeURIComponent(job.id)}`,
+        )
+        if (st.status === 'done') {
+          if (st.result?.status === 'exists') toast.warning(`${r.number} was already in TallyPrime`, { description: 'Nothing was created twice.' })
+          else toast.success(`${r.number} imported into TallyPrime`)
+          return
+        }
+        if (st.status === 'failed') { toast.error(st.message || 'Tally refused the purchase voucher'); return }
+        if (st.status === 'cancelled') { toast.error('Push cancelled'); return }
+      }
+      toast.warning('Still waiting for the connector', { description: 'The push keeps running in the background — open Tally on the office PC, then check again.' })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not push the bill to Tally')
+    }
+  }
+
   const columns: Column<PiRow>[] = [
     { key: 'number', header: 'Invoice #', render: (r) => <span className="font-medium">{r.number}</span> },
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
@@ -378,6 +410,11 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
             <Button variant="ghost" size="sm" className="h-7" title="Purchase return / debit note"
               onClick={() => openCreate('purchase-returns', { invoiceId: r.id })}>
               <Redo2 className="h-3.5 w-3.5 mr-0.5" />Return
+            </Button>
+          )}
+          {r.status !== 'CANCELLED' && (
+            <Button variant="ghost" size="sm" className="h-7" title="Push this bill to Tally (connector)" onClick={() => void pushToTally(r)}>
+              <CloudUpload className="h-3.5 w-3.5 mr-0.5" />Tally
             </Button>
           )}
           {r.status !== 'CANCELLED' && (r.paidAmount || 0) <= 0 && !r.poId && !r.grnId && (

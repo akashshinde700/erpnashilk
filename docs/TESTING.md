@@ -91,6 +91,10 @@ e2e/
   `data-value` attributes.
 * Data-driven helpers (`store`) are per-test: creating a record in one test never
   leaks into another.
+* **Billing maths is verified twice.** `unit/billing-totals.spec.ts` proves the rounding rules on the
+  pure functions; the invoice specs (`04`, `05`, `07`) prove the same numbers survive the dialog →
+  API → saved document → print → report round trip. Change `computeBillTotals()`/`computeGst()` only
+  with both green.
 
 ## CI
 

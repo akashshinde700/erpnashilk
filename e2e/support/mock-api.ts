@@ -538,13 +538,17 @@ export function makeApi(store: Store) {
       if (second === 'go-live') return ok({ ok: true })
       if (second === 'tally') {
         if (third === 'status') return ok({ configured: true, reachable: true, endpoint: 'http://127.0.0.1:9000', checkedAt: iso(), version: 'Tally Prime 4.1' })
-        // POST /api/import-center/tally/push — the invoice is handed to the connector.
+        // POST /api/import-center/tally/push — the invoice / purchase bill is handed to the connector.
         if (third === 'push' && method === 'POST') {
-          const invoice = (col('sales-invoices') as Json[]).find((i) => i.id === body?.invoiceId)
-          if (!invoice) return fail('Invoice not found', 'NOT_FOUND', 404)
-          const job = { id: store.nextId('tallyjob'), type: 'push-voucher', invoiceId: invoice.id, number: invoice.number }
+          const isBill = Boolean(body?.billId)
+          const doc = (col(isBill ? 'purchase-invoices' : 'sales-invoices') as Json[]).find((i) => i.id === (isBill ? body?.billId : body?.invoiceId))
+          if (!doc) return fail(isBill ? 'Bill not found' : 'Invoice not found', 'NOT_FOUND', 404)
+          const job = { id: store.nextId('tallyjob'), type: 'push-voucher', kind: isBill ? 'bill' : 'invoice', docId: doc.id, number: doc.number }
           tallyPushes.push(job as Json)
-          return ok({ id: job.id, type: 'push-voucher', status: 'queued', voucherNumber: invoice.number, invoiceId: invoice.id })
+          return ok({
+            id: job.id, type: 'push-voucher', status: 'queued', voucherNumber: doc.number,
+            ...(isBill ? { billId: doc.id } : { invoiceId: doc.id }),
+          })
         }
         // GET /api/import-center/tally/jobs?id= — the fake connector settles at once.
         if (third === 'jobs' && method === 'GET') {
@@ -552,7 +556,7 @@ export function makeApi(store: Store) {
           if (!id) return ok({ items: tallyJobs })
           const pushed = tallyPushes.find((j) => j.id === id)
           if (!pushed) return fail('This Tally request was not found — start again', 'NOT_FOUND', 404)
-          return ok({ id, type: 'push-voucher', status: 'done', invoiceId: pushed.invoiceId, count: 1, result: { status: 'created', message: null } })
+          return ok({ id, type: 'push-voucher', status: 'done', docId: pushed.docId, count: 1, result: { status: 'created', message: null } })
         }
         if (third === 'jobs') return ok({ items: [] })
         if (third === 'connector') return ok({ paired: true, code: '8421', expiresAt: iso(new Date(Date.now() + 900000)) })

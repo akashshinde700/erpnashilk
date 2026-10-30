@@ -158,6 +158,7 @@ export interface TallyItemLine {
   unit: string
   rate: number
   amount: number
+  /** Accounting ledger the line posts to: the sales ledger on an invoice, the purchase ledger on a bill. */
   salesLedger: string
 }
 
@@ -323,11 +324,12 @@ const xmlLedgerEntry = (e: TallyEntry) => `
               </BILLALLOCATIONS.LIST>` : ''}
             </${ENTRY_TAG}>`
 
-const xmlInventoryEntry = (line: TallyItemLine) => `
+/** Sales vouchers credit the stock item, purchase vouchers debit it. */
+const xmlInventoryEntry = (line: TallyItemLine, debit = false) => `
             <ALLINVENTORYENTRIES.LIST>
               <STOCKITEMNAME>${tallyText(line.stockItem)}</STOCKITEMNAME>
-              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-              <ISLASTDEEMEDPOSITIVE>No</ISLASTDEEMEDPOSITIVE>
+              <ISDEEMEDPOSITIVE>${debit ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>
+              <ISLASTDEEMEDPOSITIVE>${debit ? 'Yes' : 'No'}</ISLASTDEEMEDPOSITIVE>
               <ISAUTONEGATE>No</ISAUTONEGATE>
               <RATE>${line.rate.toFixed(2)}/${tallyText(line.unit)}</RATE>
               <ACTUALQTY>${line.quantity.toFixed(3)} ${tallyText(line.unit)}</ACTUALQTY>
@@ -339,7 +341,7 @@ const xmlInventoryEntry = (line: TallyItemLine) => `
               <ACCOUNTINGALLOCATIONS.LIST>
                 <LEDGERNAME>${tallyText(line.salesLedger)}</LEDGERNAME>
                 <GSTCLASS/>
-                <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+                <ISDEEMEDPOSITIVE>${debit ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>
                 <LEDGERFROMITEM>No</LEDGERFROMITEM>
                 <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
                 <ISPARTYLEDGER>No</ISPARTYLEDGER>
@@ -353,6 +355,9 @@ const xmlInventoryEntry = (line: TallyItemLine) => `
  * about this than a plain XML parser.
  */
 export function voucherToXml(voucher: TallyVoucher, tallyCompanyName?: string | null): string {
+  // 'Sales' and 'Purchase' share one import envelope; only the type name and the side the entries post to differ.
+  const vchType = (voucher.voucherType || 'Sales').trim() || 'Sales'
+  const purchase = /^purchase/i.test(vchType)
   const narration = [voucher.voucherNumber, voucher.references.order ? `Against Order: ${voucher.references.order}` : '', voucher.references.po ? `Customer PO: ${voucher.references.po}` : '']
     .filter(Boolean).join(' | ')
   const itemNarration = voucher.items.map((i) => `${i.stockItem} ${i.quantity} ${i.unit} @ ${i.rate}`).join('; ')
@@ -382,10 +387,10 @@ export function voucherToXml(voucher: TallyVoucher, tallyCompanyName?: string | 
       </REQUESTDESC>
       <REQUESTDATA>
         <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          <VOUCHER REMOTEID="${tallyText(voucher.remoteId)}" VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
+          <VOUCHER REMOTEID="${tallyText(voucher.remoteId)}" VCHTYPE="${tallyText(vchType)}" ACTION="Create" OBJVIEW="Invoice Voucher View">
             <DATE>${voucher.date}</DATE>
             <EFFECTIVEDATE>${voucher.date}</EFFECTIVEDATE>
-            <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+            <VOUCHERTYPENAME>${tallyText(vchType)}</VOUCHERTYPENAME>
             <VOUCHERNUMBER>${tallyText(voucher.voucherNumber)}</VOUCHERNUMBER>
             <REFERENCE>${tallyText(voucher.voucherNumber)}</REFERENCE>
             <REFERENCEDATE>${voucher.date}</REFERENCEDATE>
@@ -400,7 +405,7 @@ export function voucherToXml(voucher: TallyVoucher, tallyCompanyName?: string | 
             <ISCANCELLED>No</ISCANCELLED>
             <HASCASHFLOW>No</HASCASHFLOW>
             <DIFFACTUALQTY>No</DIFFACTUALQTY>
-            <ASORIGINAL>No</ASORIGINAL>${irnBlock}${ewayBlock}${voucher.entries.map(xmlLedgerEntry).join('')}${voucher.items.map(xmlInventoryEntry).join('')}
+            <ASORIGINAL>No</ASORIGINAL>${irnBlock}${ewayBlock}${voucher.entries.map(xmlLedgerEntry).join('')}${voucher.items.map((i) => xmlInventoryEntry(i, purchase)).join('')}
           </VOUCHER>
         </TALLYMESSAGE>
       </REQUESTDATA>

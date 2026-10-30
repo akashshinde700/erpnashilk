@@ -54,3 +54,51 @@ export async function loadTallyInvoice(id: string, companyId: string) {
     },
   }
 }
+
+/**
+ * Load one purchase bill in the shape `buildPurchaseVoucher()` expects.
+ *
+ * PurchaseInvoiceItem carries only itemId, so the item master (HSN, UOM, display name) is joined in
+ * here — the same way the sales loader does it.
+ */
+export async function loadTallyBill(id: string, companyId: string) {
+  const bill = await db.purchaseInvoice.findFirst({
+    where: { id, companyId },
+    include: { supplier: true, items: true },
+  })
+  if (!bill) throw new ApiError('Bill not found', 404)
+
+  const itemIds = Array.from(new Set(bill.items.map((i) => i.itemId)))
+  type ItemMaster = { id: string; code: string; name: string; uom: string; hsn: string | null }
+  const masters: ItemMaster[] = itemIds.length
+    ? await db.item.findMany({ where: { companyId, id: { in: itemIds } }, select: { id: true, code: true, name: true, uom: true, hsn: true } })
+    : []
+  const byId = new Map(masters.map((m) => [m.id, m]))
+
+  const company = await db.company.findUnique({
+    where: { id: companyId },
+    select: {
+      name: true, gstin: true, state: true, stateCode: true,
+      tallyCompanyName: true, tallyFreightLedger: true, tallyRoundOffLedger: true,
+    },
+  })
+  if (!company) throw new ApiError('Company not found', 404)
+
+  return {
+    company,
+    bill: {
+      ...bill,
+      items: bill.items.map((line) => {
+        const master = byId.get(line.itemId)
+        return {
+          ...line,
+          hsn: line.hsn || master?.hsn || '',
+          uom: master?.uom || 'Nos',
+          itemName: master?.name || 'Purchase',
+          description: [master?.code, master?.name].filter(Boolean).join(' — ') || 'Purchase',
+          amount: line.lineTotal,
+        }
+      }),
+    },
+  }
+}

@@ -247,9 +247,10 @@ as `voucher_rejected` with a message that says so.
    process, `prisma db push` on deploy, no data-loss flags).
 4. Build and sign the connector app; document firewall settings (port 9000 reachable from
    127.0.0.1 only).
-5. Vouchers: **sales invoices can already be pushed** (see above). Purchase bills, receipts and
-   journals still need the accounting decisions listed in the Smart Import audit (no general ledger,
-   document numbering, bill-wise outstanding, go-live date).
+5. Vouchers: **sales invoices and purchase bills can already be pushed** (see above; bills go out as
+   Purchase vouchers with the input-tax ledgers). Receipts and journals still need the accounting
+   decisions listed in the Smart Import audit (no general ledger, document numbering, bill-wise
+   outstanding, go-live date).
 6. Once a real TallyPrime is available: capture the exact reply of an Import (`<STATUS>1</STATUS>`,
    line errors for a duplicate remote id) and replace the pattern matching in `pushVoucher()`.
 7. Persist push results (a `tallyPushedAt` / `tallyRemoteId` on the invoice would let the list show it).

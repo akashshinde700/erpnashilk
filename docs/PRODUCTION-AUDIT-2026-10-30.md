@@ -39,7 +39,8 @@ no code was invented for them.
 |---|---|---|---|---|
 | **BILL-01** | High | Billing / print / GST | A bill-level discount was spread over the lines with unrounded division and the totals were rounded separately, so **Σ(printed line taxable) ≠ bill taxable by 1 paisa** (reproduced: 3 × ₹100 with ₹1 bill discount → lines 299.01, bill 299.00, total 352.82 vs 352.83). Same class of gap in `computeGst()` for quotations/POs. Ledger/GSTR-1 comparisons trip on exactly this. | **Fixed** |
 | **TXN-01** | High | Manufacturing / stock | `POST /api/production-entries` read the work order without a row lock. Two concurrent submissions both read the old `producedQty`, both passed the planned-qty check, **both posted finished-goods stock and both backflushed raw material**, while the work order counted only one of them (lost update) → stock inflation and duplicated consumption. | **Fixed** |
-| **TXN-02** | Medium | Manufacturing / stock | `POST /api/material-issues` had the same read-then-write shape: two issues against one work order each read the already-issued quantity before the other committed, so both passed the +5 % over-issue cap and the issue could exceed the allowed quantity. `postStock()` still prevented negative stock, so the damage was bounded, but the cap was not enforced under concurrency. | **Fixed** |
+| **TXN-02** | Medium | Manufacturing / stock | `POST /api/material-issues` had the same read-then-write shape as TXN-01, but the real risk is the **cross-route** one: a material issue and a production entry on the same work order could interleave, and `backflushComponents()` reads "already consumed" (issues + earlier backflushes) *outside* any lock — so a component could be consumed twice, or not at all. The per-line +5 % cap is a single-request check (not cumulative), so it was never the concurrency problem. `postStock()` still prevented negative stock, which bounded the damage. | **Fixed** — both routes now take the same work-order row lock, so issue and backflush serialise |
+| **TXN-03** | Medium | Manufacturing / inventory | Only 9 money routes used `Idempotency-Key`; **material issues, production entries, stock adjustments and stock transfers did not**, so a double click or a network retry posted the stock movement twice (the UI disables the button, which is not a guarantee — a retried request still arrives). | **Fixed** — `claimIdempotency()` on all four routes; the response is stored in the same transaction as the documents, a retry returns the original response, a reused key with a different payload is rejected (422) and a failed request releases its claim |
 | INV-01 | — | Manufacturing / stock | Investigated the suspicion that the backflush (`need − issued − backflushed`, recomputed per entry) could over-consume a component or drive stock negative. **Code-verified as safe, no change made:** the deduction is clamped to positives, the full shortage list is raised as a 409 *before* any row is posted, and the manual-issue side is separately capped at +5 %. The remaining nuance — a manual issue above the exact requirement reduces later backflush rather than being netted line-by-line — is inherent to a BOM-total requirement and is **not** a stock-integrity defect. | Verified, no defect |
 | DB-01 | Medium | Database | Money/quantity columns are `Float`/`Double`, not `Decimal`. Paisa-exact arithmetic is now done in integer paise inside the bill builder, but aggregates elsewhere (reports, `SUM()`) are still float. A `Decimal(18,4)` migration is a **schema change with data migration** — needs a separate, approved release. | Open (documented) |
 | RPT-01 | Low | Reports | `stockValueBefore()` values historical stock at the **current** moving-average rate (stated in the code) — historical valuation is an approximation. | Open (by design) |
@@ -87,7 +88,8 @@ guard, the backflush plan and the status transition now see each other's writes.
 | `npx tsc --noEmit` | 219 errors — all pre-existing Prisma-stub noise (this sandbox cannot download the Prisma engine; baseline 219/222 without these edits). **No new errors from this change.** |
 | `node --check scripts/daily-backup.mjs` | ✅ syntax OK |
 | `tests/*.test.ts` (bun + MySQL) | ⛔ **not run** — no MySQL and no bun in this environment. Not claimed as passing. |
-| Concurrency proof for TXN-01/02 | ⛔ **not executed** — needs two live MySQL connections. The fix is code-verified (InnoDB row lock on a matched `UPDATE`), the browser suite that exercises the same routes passes, and the two-request race must be re-run on staging before release. |
+| Concurrency + idempotency tests → `tests/production-concurrency.test.ts` | ⛔ **written, not executed** — needs the guarded MySQL test database (`TEST_DATABASE_URL`, `bun run test:db:prepare`, `bun test`). Five cases: two parallel entries for the full planned qty, five parallel entries, retried submission replayed, same key with a different payload refused, failed entry releases its key. |
+| Two-request race proof (TXN-01/02) | ⛔ **not executed here** — no MySQL. Code-verified (InnoDB row lock on a matched `UPDATE`); the test above is the executable proof to run on staging. |
 | Prisma migrate / `db:push` | ⛔ not run — no database; no schema change was made by this audit, so nothing to apply |
 
 New regression tests: `e2e/unit/billing-totals.spec.ts` — 6 cases, including a deterministic 400-bill property test
@@ -132,6 +134,20 @@ server uses — so the preview now inherits the paisa-exact fix automatically.
 
 ---
 
+## 4d. Follow-up delivered after the audit
+
+* **Bill-level transaction safety** — `Idempotency-Key` added to material issues, production entries, stock
+  adjustments and stock transfers; `tests/production-concurrency.test.ts` is the executable race proof (bun + MySQL).
+* **Tally connector direct push** — the push path now covers **purchase bills** as well as sales invoices
+  (`MANUFLOW-BILL-…`, Purchase voucher: supplier credited, purchase + input-tax ledgers debited, stock debited).
+  Ledger names come from `TALLY_LEDGER_PURCHASE` / `TALLY_LEDGER_CGST_INPUT` / `TALLY_LEDGER_SGST_INPUT` /
+  `TALLY_LEDGER_IGST_INPUT` / `TALLY_LEDGER_CESS_INPUT`. Verified by `e2e/unit/tally-purchase.spec.ts` (balances to
+  the paisa, single Purchase envelope, round-off, RCM / missing-GSTIN warnings, env overrides) and by the browser
+  test `a purchase bill is pushed to Tally as a Purchase voucher`.
+* **GSTR-2 reverse-charge column** — already present before this pass (per-bill `RCM` badge, supplier-wise `N RCM`
+  count and the 3.1(d) summary line); covered by
+  `GST Reports: reverse-charge bills get their own column in the GSTR-2 register`. No change was needed.
+
 ## 5. Business scenarios — what was and was not verified
 
 | # | Scenario | Status |
@@ -164,10 +180,8 @@ Carry-forward risks (all documented above):
 2. **RPT-01** historical stock valuation uses today's average rate.
 3. **Concurrency proof for TXN-01/02** must be re-run against a real MySQL on staging (two parallel submissions);
    the lock is standard InnoDB behaviour but was not executed here.
-4. **Idempotency retrofit** — 9 money routes take an `Idempotency-Key`; production entries and material issues do not
-   (the UI disables the submit button while saving, and the route is now serialised, so a double submission updates the
-   work order twice), *not* done because it cannot be verified without a database.
-5. **26 `bun test` suites** need MySQL + bun; run them, then do the **backup → restore drill** on staging
+4. **27 `bun test` suites** (26 existing + the new concurrency/idempotency suite) need MySQL + bun; run them, then do
+   the **backup → restore drill** on staging
    (`Settings → Data & Backup`, or `node scripts/daily-backup.mjs` + restore) before go-live.
-6. **Scope** — weight (kg) tracking, lot charges, process-wise WIP, job cards and certificates do not exist in this
+5. **Scope** — weight (kg) tracking, lot charges, process-wise WIP, job cards and certificates do not exist in this
    data model; they are features, not defects, and were not invented.
