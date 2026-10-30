@@ -70,6 +70,9 @@ e2e/
                                    and the reverse-charge GSTR-1 rchrg flag
     tally-push.spec.ts             the push envelope: one create-voucher, no DTD, size cap,
                                    and the TALLY_CONNECTOR_PUSH switch
+    billing-totals.spec.ts         paisa-exact bill maths: line column ↔ bill taxable, tax heads ↔
+                                   Σ line tax, grand total ↔ printed components, discount cap,
+                                   round-off to the rupee, 400 deterministic random bills
 ```
 
 `npx playwright test` runs two projects: `chromium` (the UI suite, `e2e/specs`) and
