@@ -38,8 +38,11 @@ real application code (routing, forms, validation, tables, GST maths in the
 components) while persistence stays in memory. That keeps the suite hermetic and
 fast, and lets it run in CI in seconds without a MySQL service.
 
-Pass `E2E_LIVE_API=1` (see `npm run test:e2e:live`) to skip the interception layer
-and drive a real database — useful when validating Prisma schema changes.
+**There is no live mode.** Every spec installs that interception layer, so `E2E_LIVE_API=1` /
+`E2E_MODE=live` (and the `test:e2e:live` script) now **fail with an explanation** instead of silently
+running the mock suite and looking green. Real-database coverage is the bun API suite
+(`bun test`, needs `TEST_DATABASE_URL`) plus the manual checklist in `docs/LOCAL-TEST-PROMPT.md` —
+that is where Prisma schema changes, stock movements and money maths must be verified.
 
 ## Suite layout
 
