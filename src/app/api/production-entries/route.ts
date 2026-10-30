@@ -3,6 +3,7 @@ import { backflushComponents } from '@/lib/manufacturing'
 import { ok, handleError, companyRequired, postStock, logAudit, notify, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 import { parseSerials, receiveBatch, receiveSerials } from '@/lib/batches'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 
 // WorkOrder has no item relation in the schema — join in JS.
 async function attachWorkOrderItems(entries: any[]) {
@@ -46,6 +47,7 @@ export async function GET(req: Request) {
 // Batch-tracked finished item: the produced qty goes into batch `batchNo` (default = work order number), expiry optional.
 // Serial-tracked finished item: `serials` (newline / comma separated) required, one per produced unit.
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'production-entries')
     const body = await req.json().catch(() => ({}) as any)
@@ -60,7 +62,13 @@ export async function POST(req: Request) {
     if (!workOrderId) throw new ApiError('Select a work order — finished stock is posted to its item', 400)
     // Quantities are optional: an all-zero entry just records work details / downtime.
 
-    const created = await db.$transaction(async (tx) => {
+    // A retried submission (double click, network retry) must not post the stock twice. The key is
+    // claimed before the transaction and completed inside it, so the response and the documents commit
+    // together; see src/lib/idempotency.ts.
+    idem = await claimIdempotency(req, companyId, 'POST /api/production-entries', body)
+    if (idem.replay) return idem.replay
+
+    const { payload, message } = await db.$transaction(async (tx) => {
       // Serialize entries on the same work order: this no-op write takes the work-order row lock, so a
       // second submission waits here and then reads the first one's committed quantities (the same
       // lock trick postStock uses on the stock row). Without it two parallel entries both read the old
@@ -152,18 +160,28 @@ export async function POST(req: Request) {
           + (flushed.length ? ` · auto-consumed ${flushed.length} component(s) from stock` : ''),
       })
 
-      return { ...entry, consumed: flushed }
+      // Same shape the GET list returns (workOrder + its item), built from what this transaction has,
+      // so a replayed response is indistinguishable from the original one.
+      const payload = {
+        ...entry,
+        workOrder: {
+          number: wo.number,
+          status: completed ? 'COMPLETED' : 'IN_PROGRESS',
+          itemId: wo.itemId,
+          item: { id: item.id, code: item.code, name: item.name, uom: item.uom },
+        },
+        consumed: flushed,
+      }
+      const message = `Production entry posted for ${wo.number}`
+        + (flushed.length ? ` — ${flushed.length} raw material(s) auto-consumed from stock` : '')
+      await idem!.done(tx, payload, message)
+      return { payload, message }
     })
 
-    const row = await db.productionEntry.findUnique({
-      where: { id: created.id },
-      include: { workOrder: { select: { number: true, status: true, itemId: true } } },
-    })
-    const [full] = await attachWorkOrderItems([row])
-    void emitEvent({ companyId, title: 'Production reported', message: `${full?.workOrder?.number || 'work order'} +${producedQty}`, topic: 'production' })
-    const consumedNote = created.consumed.length ? ` — ${created.consumed.length} raw material(s) auto-consumed from stock` : ''
-    return ok({ ...full, consumed: created.consumed }, `Production entry posted for ${full?.workOrder?.number || 'work order'}${consumedNote}`)
+    void emitEvent({ companyId, title: 'Production reported', message: `${payload.workOrder.number} +${producedQty}`, topic: 'production' })
+    return ok(payload, message)
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

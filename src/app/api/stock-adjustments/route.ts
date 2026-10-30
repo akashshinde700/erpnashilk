@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 import { emitEvent } from '@/lib/emit-event'
 import { batchNote, consumeBatches, parseSerials, receiveBatch, receiveSerials, writeOffSerials, type BatchAlloc } from '@/lib/batches'
 
@@ -54,6 +55,7 @@ export async function GET(req: Request) {
 //   serial items — serials (newline / comma separated, count = |qty|). IN adds them IN_STOCK; OUT writes them
 //   off: status SOLD with outRefType 'ADJUSTMENT' / outRefId = adjustment number (there is no WRITTEN_OFF status).
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'stock-adjustments')
     const body = await req.json().catch(() => ({}) as any)
@@ -79,6 +81,10 @@ export async function POST(req: Request) {
       }))
       .filter((l: any) => l.itemId && l.qty !== 0)
     if (cleanLines.length === 0) throw new ApiError('Adjustment qty cannot be zero', 400)
+
+    // A retried submission must not adjust stock twice. See src/lib/idempotency.ts.
+    idem = await claimIdempotency(req, companyId, 'POST /api/stock-adjustments', body)
+    if (idem.replay) return idem.replay
 
     const result = await db.$transaction(async (tx) => {
       const itemIds = Array.from(new Set(cleanLines.map((l: any) => l.itemId)))
@@ -144,13 +150,16 @@ export async function POST(req: Request) {
         details: `Adjustment ${number}: ${cleanLines.length} line(s) in ${warehouse.code}${reason ? ` — ${reason}` : ''}`,
       })
 
-      return { number, date: adjDate, warehouseId, lines: cleanLines.length }
+      const payload = { number, date: adjDate, warehouseId, lines: cleanLines.length }
+      await idem!.done(tx, payload, `Stock adjustment ${number} posted`)
+      return payload
     })
 
     void emitEvent({ companyId, title: 'Stock adjusted', message: reason || `Adjustment ${result.number}`, level: 'WARNING', topic: 'inventory' })
 
     return ok(result, `Stock adjustment ${result.number} posted`)
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }

@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, availableQty, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { batchNote, consumeBatches } from '@/lib/batches'
+import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
 
 // MaterialIssueItem has no item relation in the schema — join in JS.
 async function attachIssueItems(issues: any[]) {
@@ -47,6 +48,7 @@ export async function GET(req: Request) {
 
 // POST /api/material-issues  { workOrderId, warehouseId, notes?, userName?, lines: [{itemId, requiredQty, issuedQty}] }
 export async function POST(req: Request) {
+  let idem: Idempotency | null = null
   try {
     requireWrite(req, 'material-issues')
     const body = await req.json().catch(() => ({}) as any)
@@ -63,7 +65,12 @@ export async function POST(req: Request) {
         ?? (await db.warehouse.findFirst({ where: { companyId }, orderBy: { createdAt: 'asc' } }))
     if (!warehouse) throw new ApiError(warehouseId ? 'Warehouse not found' : 'Create a warehouse first', 404)
 
-    const created = await db.$transaction(async (tx) => {
+    // A retried submission must not issue the same material twice (each issue would move stock and
+    // over-issue the work order). See src/lib/idempotency.ts.
+    idem = await claimIdempotency(req, companyId, 'POST /api/material-issues', body)
+    if (idem.replay) return idem.replay
+
+    const { payload, message } = await db.$transaction(async (tx) => {
       // Same row lock as production entries: it serializes two issues against one work order, so the
       // availability check, the status flip to IN_PROGRESS and the stock posting stay consistent.
       await tx.workOrder.updateMany({ where: { id: workOrderId, companyId }, data: { producedQty: { increment: 0 } } })
@@ -99,8 +106,9 @@ export async function POST(req: Request) {
       }
 
       // Availability guard: company-wide available qty across warehouses
+      const createdItems: any[] = []
       for (const l of validLines) {
-        const item = itemMap.get(l.itemId)!
+        const item: any = itemMap.get(l.itemId)!
         const available = await availableQty(tx as any, companyId, l.itemId)
         if (available < l.issuedQty) {
           throw new ApiError(`Insufficient stock: ${item.code} (available ${r2(available)}, needed ${r2(l.issuedQty)})`, 400)
@@ -116,7 +124,7 @@ export async function POST(req: Request) {
       })
 
       for (const l of validLines) {
-        const item = itemMap.get(l.itemId)!
+        const item: any = itemMap.get(l.itemId)!
         const bal = await tx.stockBalance.findUnique({
           where: { itemId_warehouseId: { itemId: l.itemId, warehouseId: warehouse.id } },
         })
@@ -132,9 +140,10 @@ export async function POST(req: Request) {
           notes: `Issued to work order ${wo.number}${batchNote(allocs)}`,
         })
 
-        await tx.materialIssueItem.create({
+        const issueItem = await tx.materialIssueItem.create({
           data: { issueId: issue.id, itemId: l.itemId, requiredQty: l.requiredQty, issuedQty: l.issuedQty },
         })
+        createdItems.push({ ...issueItem, item: { id: item.id, code: item.code, name: item.name, uom: item.uom } })
       }
 
       // First issue moves the work order into production
@@ -147,21 +156,20 @@ export async function POST(req: Request) {
         entityId: issue.id, details: `Posted material issue ${number} against work order ${wo.number}`,
       })
 
-      return issue
+      // Same shape the GET list returns, so a replayed response matches the original one
+      const payload = {
+        ...issue,
+        workOrder: { number: wo.number, itemId: wo.itemId, plannedQty: wo.plannedQty, warehouseId: wo.warehouseId },
+        items: createdItems,
+      }
+      const message = `Material issue ${number} posted`
+      await idem!.done(tx, payload, message)
+      return { payload, message }
     })
 
-    const fullRow = await db.materialIssue.findUnique({
-      where: { id: created.id },
-      include: {
-        workOrder: {
-          select: { number: true, itemId: true, plannedQty: true, warehouseId: true },
-        },
-        items: true,
-      },
-    })
-    const [full] = await attachIssueItems([fullRow])
-    return ok(full, `Material issue ${created.number} posted`)
+    return ok(payload, message)
   } catch (e) {
+    await idem?.release()
     return handleError(e)
   }
 }
