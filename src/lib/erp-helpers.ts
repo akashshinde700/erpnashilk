@@ -339,7 +339,35 @@ export interface TaxLine {
  * line column summed to a different value than its taxable total would fail GSTR-1 matching).
  * The intra-state split gives an odd paisa to SGST, so CGST + SGST is exactly the line's tax.
  */
+/** Largest quantity / rate a line may carry, and the largest line value (₹10,000 crore): far beyond any
+ *  real bill, and small enough that every total stays exact in paise (2^53 paise ≈ ₹90 lakh crore). */
+export const MAX_LINE_QTY = 1e9
+export const MAX_LINE_RATE = 1e9
+export const MAX_LINE_VALUE = 1e11
+
+/**
+ * Reject line values no bill can have before they reach the totals: a discount above 100 % turned a
+ * line negative (a negative taxable value and a negative bill), and a huge quantity silently lost
+ * paise. Sign rules for qty / rate stay with each route (returns, zero-rate lines).
+ */
+export function assertTaxLines(lines: TaxLine[]) {
+  lines.forEach((l, i) => {
+    const n = i + 1
+    const pct = (v: unknown, what: string) => {
+      const x = Number(v ?? 0)
+      if (!Number.isFinite(x) || x < 0 || x > 100) throw new ApiError(`Line ${n}: ${what} must be between 0 and 100 %`, 400)
+    }
+    pct(l.discountPct, 'discount')
+    pct(l.gstRate, 'GST rate')
+    pct(l.cessRate, 'cess rate')
+    if (!Number.isFinite(l.qty) || Math.abs(l.qty) > MAX_LINE_QTY) throw new ApiError(`Line ${n}: quantity is not a usable number (max ${MAX_LINE_QTY.toLocaleString('en-IN')})`, 400)
+    if (!Number.isFinite(l.rate) || Math.abs(l.rate) > MAX_LINE_RATE) throw new ApiError(`Line ${n}: rate is not a usable number (max ${MAX_LINE_RATE.toLocaleString('en-IN')})`, 400)
+    if (Math.abs(l.qty * l.rate) > MAX_LINE_VALUE) throw new ApiError(`Line ${n}: value above ₹${MAX_LINE_VALUE.toLocaleString('en-IN')} — split it across documents`, 400)
+  })
+}
+
 export function computeGst(lines: TaxLine[], interState: boolean) {
+  assertTaxLines(lines)
   let subtotal = 0, discountTotal = 0, cgst = 0, sgst = 0, igst = 0
   const computed = lines.map((l) => {
     const gross = r2(l.qty * l.rate)
@@ -384,6 +412,12 @@ export interface BillAdjustments {
  *    and reports all read the same number.
  */
 export function computeBillTotals(lines: TaxLine[], interState: boolean, adj: BillAdjustments = {}) {
+  assertTaxLines(lines)
+  for (const [what, c] of [['freight', adj.freight], ['packing', adj.packing]] as const) {
+    if (!c) continue
+    if (!Number.isFinite(c.amount) || c.amount < 0 || c.amount > MAX_LINE_VALUE) throw new ApiError(`${what} charge is not a usable amount`, 400)
+    if (!Number.isFinite(c.gstRate ?? 18) || (c.gstRate ?? 18) < 0 || (c.gstRate ?? 18) > 100) throw new ApiError(`${what} GST rate must be between 0 and 100 %`, 400)
+  }
   const round2 = (n: number) => Math.round(n * 100) / 100
   const cents = (n: number) => Math.round(n * 100)
   let subtotalC = 0, lineDiscC = 0
