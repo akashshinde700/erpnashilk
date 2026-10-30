@@ -8,13 +8,26 @@ import { defineConfig, devices } from '@playwright/test'
  *  1. `npm run test:e2e`          — UI suite against the app with the in-browser fake API
  *                                   (e2e/support/mock-api.ts). Needs no database, so it runs
  *                                   anywhere the Next.js server can boot.
- *  2. `E2E_MODE=live npm run test:e2e:live`
- *                                   — same specs, but every /api call goes to the real Next.js
- *                                   route handlers + MySQL (see docs/TESTING.md).
+ *  2. a "live" mode against real route handlers + MySQL is **not implemented** — every
+ *                                   spec installs the in-browser API double (e2e/support/fixtures.ts
+ *                                   auto-fixture). Setting E2E_LIVE_API / E2E_MODE=live therefore
+ *                                   fails loudly instead of quietly passing against the fake API.
+ *                                   API-level, real-database coverage lives in tests/ (bun test).
  *
  * `PLAYWRIGHT_CHROMIUM_EXECUTABLE` lets a sandbox point at a Chromium binary it already has
  * instead of downloading one through `npx playwright install`.
  */
+// A flag that does nothing is worse than no flag: someone runs `E2E_LIVE_API=1 playwright test`, sees
+// green, and believes the suite exercised MySQL. It never did — the mock API is installed by an
+// auto-fixture in e2e/support/fixtures.ts for every spec. Real-database coverage is `bun test` in
+// tests/ (route handlers + Prisma), so point people there instead of pretending.
+if (process.env.E2E_LIVE_API || process.env.E2E_MODE === 'live') {
+  throw new Error(
+    'Live E2E mode (E2E_LIVE_API / E2E_MODE=live) is not implemented: every spec uses the in-browser mock API.\n'
+    + 'Real-database coverage: `bun test` (tests/, needs TEST_DATABASE_URL) and the manual checklist in docs/LOCAL-TEST-PROMPT.md.',
+  )
+}
+
 const PORT = Number(process.env.E2E_PORT || 3000)
 const baseURL = process.env.E2E_BASE_URL || `http://127.0.0.1:${PORT}`
 
