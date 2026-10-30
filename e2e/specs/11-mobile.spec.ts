@@ -41,11 +41,38 @@ async function horizontalOverflow(page: Page) {
   }))
 }
 
+/**
+ * Elements whose box sticks out of the viewport. Named in the failure message so a red build says
+ * *which* component overflows instead of only how many pixels it overflowed by.
+ */
+async function overflowingElements(page: Page) {
+  return page.evaluate(() => {
+    const vw = document.documentElement.clientWidth
+    const found: string[] = []
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
+      const r = el.getBoundingClientRect()
+      if (r.width < 1 || r.height < 1) continue
+      const style = getComputedStyle(el)
+      // Teleported overlays (menus, popovers, the Radix focus guard) are not page overflow.
+      if (style.position === 'fixed' && (r.right > vw + 1 || r.left < -1)) continue
+      if (r.right <= vw + 1 && r.left >= -1) continue
+      const cls = typeof el.className === 'string' ? el.className : ''
+      found.push(
+        `<${el.tagName.toLowerCase()} class="${cls.slice(0, 110)}"> left=${Math.round(r.left)} right=${Math.round(r.right)} width=${Math.round(r.width)}`,
+      )
+      if (found.length >= 8) break
+    }
+    return found
+  })
+}
+
 async function expectNoHorizontalScroll(page: Page, where: string) {
   const m = await horizontalOverflow(page)
+  const offenders = m.scrollWidth > m.innerWidth + 1 ? await overflowingElements(page) : []
   expect(
     m.scrollWidth,
-    `${where}: document scrolls sideways (${m.scrollWidth}px content in a ${m.innerWidth}px viewport)`,
+    `${where}: document scrolls sideways (${m.scrollWidth}px content in a ${m.innerWidth}px viewport)`
+      + (offenders.length ? `\nWidest offenders:\n${offenders.join('\n')}` : ''),
   ).toBeLessThanOrEqual(m.innerWidth + 1)
 }
 
