@@ -635,6 +635,110 @@ export function makeApi(store: Store) {
       return ok({ items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize })
     }
 
+    // ---------------- CRM: leads + follow-ups ----------------
+    // Mirrors src/app/api/leads/route.ts and /api/lead-activities.
+    if (head === 'leads') {
+      const rows = col('leads') as Json[]
+      if (!second && method === 'GET') {
+        const stage = query.get('stage') || ''
+        const items = stage ? rows.filter((r) => r.stage === stage) : rows
+        const open = items.filter((r) => r.stage !== 'WON' && r.stage !== 'LOST')
+        return ok({
+          items, total: items.length,
+          summary: {
+            total: items.length,
+            open: open.length,
+            pipelineValue: open.reduce((s, r) => s + Number(r.value || 0), 0),
+            weightedValue: open.reduce((s, r) => s + (Number(r.value || 0) * Number(r.probability || 0)) / 100, 0),
+            won: items.filter((r) => r.stage === 'WON').length,
+            lost: items.filter((r) => r.stage === 'LOST').length,
+            wonValue: items.filter((r) => r.stage === 'WON').reduce((s, r) => s + Number(r.value || 0), 0),
+          },
+        })
+      }
+      if (!second && method === 'POST') {
+        const now = iso()
+        const created = {
+          id: store.nextId('lead'), code: `LD-${String(rows.length + 1).padStart(4, '0')}`,
+          activities: [], createdAt: now, updatedAt: now, ...body,
+        }
+        rows.unshift(created as Json)
+        return ok(created, 201)
+      }
+      if (second && (method === 'PATCH' || method === 'PUT')) {
+        const row = rows.find((r) => r.id === second)
+        if (!row) return fail('Lead not found', 'NOT_FOUND', 404)
+        if (body?.action === 'convert') {
+          if (row.customerId) return ok({ lead: row, customerId: row.customerId, created: false })
+          const customers = col('customers') as Json[]
+          const customer = {
+            id: store.nextId('cus'), code: `C-${String(customers.length + 1).padStart(4, '0')}`,
+            name: String(row.companyName || row.name), phone: row.phone || null, email: row.email || null,
+            city: row.city || null, gstType: 'UNREGISTERED', status: 'ACTIVE',
+          }
+          customers.unshift(customer as Json)
+          Object.assign(row, { stage: 'WON', probability: 100, customerId: customer.id, convertedAt: iso(), updatedAt: iso() })
+          return ok({ lead: row, customer, customerId: customer.id, created: true })
+        }
+        const { action: _action, companyId: _company, ...rest } = (body || {}) as Record<string, unknown>
+        Object.assign(row, rest, { updatedAt: iso() })
+        if (body?.stage && body?.probability === undefined) {
+          const prob: Record<string, number> = { NEW: 10, CONTACTED: 25, QUALIFIED: 45, PROPOSAL: 60, NEGOTIATION: 80, WON: 100, LOST: 0 }
+          row.probability = prob[String(body.stage)] ?? row.probability
+        }
+        return ok(row)
+      }
+      if (second && method === 'DELETE') {
+        const i = rows.findIndex((r) => r.id === second)
+        if (i >= 0) rows.splice(i, 1)
+        const acts = col('lead-activities') as Json[]
+        for (let k = acts.length - 1; k >= 0; k--) if (acts[k].leadId === second) acts.splice(k, 1)
+        return ok({ id: second })
+      }
+    }
+
+    if (head === 'lead-activities') {
+      const rows = col('lead-activities') as Json[]
+      if (!second && method === 'GET') {
+        const onlyOpen = query.get('open') === '1'
+        const items = onlyOpen ? rows.filter((r) => !r.doneAt) : rows
+        return ok({ items, total: items.length })
+      }
+      if (!second && method === 'POST') {
+        const lead = (col('leads') as Json[]).find((l) => l.id === body?.leadId)
+        if (!lead) return fail('Lead not found', 'NOT_FOUND', 404)
+        const created = {
+          id: store.nextId('act'), ...body,
+          doneAt: body?.done === true || body?.kind === 'NOTE' ? iso() : null,
+          createdAt: iso(),
+          lead: { id: lead.id, code: lead.code, name: lead.name, companyName: lead.companyName },
+        }
+        rows.unshift(created as Json)
+        // the board shows the lead's next open follow-up
+        const open = (lead.activities as Json[] | undefined) ?? []
+        lead.activities = [...open, created as Json].filter((a) => !a.doneAt).slice(0, 1)
+        return ok(created, 201)
+      }
+      if (second && (method === 'PATCH' || method === 'PUT')) {
+        const row = rows.find((r) => r.id === second)
+        if (!row) return fail('Follow-up not found', 'NOT_FOUND', 404)
+        const { companyId: _company, done, ...rest } = (body || {}) as Record<string, unknown>
+        Object.assign(row, rest)
+        if (done !== undefined) row.doneAt = done ? iso() : null
+        // keep the lead's "next open follow-up" (the board card) in sync
+        const lead = (col('leads') as Json[]).find((l) => l.id === row.leadId)
+        if (lead && done) {
+          lead.activities = ((lead.activities as Json[] | undefined) ?? []).filter((a) => a.id !== row.id)
+        }
+        return ok(row)
+      }
+      if (second && method === 'DELETE') {
+        const i = rows.findIndex((r) => r.id === second)
+        if (i >= 0) rows.splice(i, 1)
+        return ok({ id: second })
+      }
+    }
+
     // ---------------- generic CRUD over collections ----------------
     const collection = head
     if (!collection) return null

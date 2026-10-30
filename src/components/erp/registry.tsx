@@ -6,6 +6,7 @@ import {
   ClipboardList, FileText, ShoppingCart, Boxes, Warehouse, ArrowLeftRight, SlidersHorizontal,
   Factory, ClipboardCheck, Award, ReceiptIndianRupee, Wallet, Landmark, Percent, Activity,
   ScrollText, Settings, Handshake, FileSpreadsheet, PackageCheck, BarChart3, Bell, Undo2, Redo2, FileUp,
+  Target, ScanBarcode,
 } from 'lucide-react'
 
 import DashboardModule from '@/components/erp/modules/dashboard'
@@ -50,6 +51,8 @@ import SettingsModule from '@/components/erp/modules/settings'
 import ReportsModule from '@/components/erp/modules/reports'
 import CompanySetupModule from '@/components/erp/modules/company-setup'
 import ImportCenterModule from '@/components/erp/modules/import-center'
+import CrmModule from '@/components/erp/modules/crm'
+import PosModule from '@/components/erp/modules/pos'
 
 export interface ErpModuleDef {
   key: string
@@ -78,12 +81,14 @@ const SCREENS: ErpModuleDef[] = [
   { key: 'boms', label: 'BOM', icon: Layers3, group: 'Masters', description: 'Bill of Materials', component: BomsModule },
   { key: 'users', label: 'Users & Roles', icon: UserCog, group: 'Masters', component: UsersModule },
   // Sales
+  { key: 'crm', label: 'CRM', icon: Target, group: 'Sales', description: 'Leads, pipeline & follow-ups', component: CrmModule },
   { key: 'enquiries', label: 'Enquiries', icon: ClipboardList, group: 'Sales', component: EnquiriesModule },
   { key: 'quotations', label: 'Quotations', icon: FileText, group: 'Sales', component: QuotationsModule },
   { key: 'sales-orders', label: 'Sales Orders', icon: ShoppingCart, group: 'Sales', component: SalesOrdersModule },
   { key: 'deliveries', label: 'Delivery Challans', icon: Truck, group: 'Sales', component: DeliveriesModule },
   { key: 'sales-invoices', label: 'Sales Invoices', icon: ReceiptIndianRupee, group: 'Sales', description: 'GST tax invoices', component: SalesInvoicesModule },
   { key: 'sales-returns', label: 'Sales Returns', icon: Undo2, group: 'Sales', description: 'Credit notes — goods back from customers', component: SalesReturnsModule },
+  { key: 'pos', label: 'POS', icon: ScanBarcode, group: 'Sales', description: 'Counter billing — walk-in cash sales', component: PosModule },
   { key: 'payments', label: 'Payment In / Out', icon: Wallet, group: 'Sales', description: 'Payment In (from customers) & Payment Out (to suppliers)', component: PaymentsModule },
   // Purchase
   { key: 'requisitions', label: 'Requisitions', icon: ClipboardList, group: 'Purchase', component: RequisitionsModule },

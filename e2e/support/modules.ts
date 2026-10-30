@@ -34,10 +34,12 @@ export const SCREENS: ScreenDef[] = [
       { key: 'quotations', label: 'Quotations' },
     ],
   },
+  { key: 'crm', label: 'CRM', group: 'Sales' },
   { key: 'sales-orders', label: 'Sales Orders', group: 'Sales' },
   { key: 'deliveries', label: 'Delivery Challans', group: 'Sales' },
   { key: 'sales-invoices', label: 'Sales Invoices', group: 'Sales' },
   { key: 'sales-returns', label: 'Sales Returns', group: 'Sales' },
+  { key: 'pos', label: 'POS', group: 'Sales' },
   { key: 'payments', label: 'Payment In / Out', group: 'Sales' },
 
   { key: 'requisitions', label: 'Requisitions', group: 'Purchase' },

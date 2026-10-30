@@ -77,6 +77,7 @@ model Company {
   machines     Machine[]
   users        User[]
   plants       Plant[]
+  leads        Lead[]
 }
 
 // Subscription plan offered to customer organizations. Limits: 0 = unlimited.
@@ -1237,4 +1238,56 @@ model UserCompanyAccess {
 
   @@unique([userId, companyId])
   @@index([companyId])
+}
+
+// ============================== CRM ==============================
+// A sales lead / opportunity moving through the pipeline, with the follow-up activities taken
+// against it (calls, meetings, reminders). Winning a lead converts it into a Customer master.
+model Lead {
+  id          String   @id @default(cuid())
+  companyId   String
+  code        String // LD-0001
+  name        String // contact person
+  companyName String? // prospect's firm (what we quoted / followed up with)
+  phone       String?
+  email       String?
+  city        String?
+  source      String   @default("OTHER") // WEBSITE | REFERRAL | EXHIBITION | CALL | WHATSAPP | WALK_IN | OTHER
+  stage       String   @default("NEW") // NEW | CONTACTED | QUALIFIED | PROPOSAL | NEGOTIATION | WON | LOST
+  value       Float    @default(0) // expected deal value (₹)
+  probability Int      @default(10) // 0-100, used for the weighted pipeline
+  owner       String? // sales owner (user name)
+  expectedCloseDate DateTime?
+  lostReason  String?
+  notes       String?  @db.Text
+  customerId  String? // set when the lead is won and converted
+  convertedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  activities  LeadActivity[]
+
+  @@unique([companyId, code])
+  @@index([companyId, stage])
+  @@index([companyId, createdAt])
+}
+
+model LeadActivity {
+  id        String   @id @default(cuid())
+  companyId String
+  leadId    String
+  kind      String   @default("CALL") // CALL | MEETING | EMAIL | WHATSAPP | VISIT | NOTE
+  summary   String
+  notes     String?  @db.Text
+  dueDate   DateTime? // when the follow-up is due
+  doneAt    DateTime? // null = still open
+  owner     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, dueDate])
+  @@index([leadId])
 }

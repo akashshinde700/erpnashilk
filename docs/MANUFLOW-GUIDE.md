@@ -118,6 +118,31 @@ flowchart LR
 | ↩️ | **Sales Returns** (Invoice row par **Return**) | Kaunsa maal kitna wapas aaya, store, reason | **Credit Note** banta hai: stock **plus**, customer ka baaki utna **kam** (invoice par adjust). Zyada ho to "refund due" dikhata hai |
 
 **Counter / seedhi bikri (Vyapar jaisa):** `Alt + S` → Sales Invoice → **Cash Sale (walk-in)** tick → items scan/chuno → *Received now* poora → Save → **Receipt** (2"/3" thermal) ya A4/A5 print.
+Ya phir **Sales → POS** — scan box mein barcode daalo aur Enter, ya item tile par tap; neeche mode aur *Cash diya* bharo, change apne aap dikhta hai, **Charge** dabao. Sale seedhi cash-sale invoice banti hai (stock minus + GST + Tally/e-invoice sab usual).
+
+---
+
+## 4A. CRM — lead se customer tak
+
+```mermaid
+flowchart LR
+    L[Lead<br/>NEW] --> C[CONTACTED] --> Q[QUALIFIED] --> P[PROPOSAL] --> N[NEGOTIATION] --> W[WON<br/>customer ban gaya]
+    Q -.follow-up.-> A[CALL / MEETING / WHATSAPP / NOTE]
+    P -.follow-up.-> A
+    N -->|rate nahi bani| X[LOST<br/>reason likho]
+```
+
+| Step | Screen | Aap kya karte ho | System apne aap kya karta hai |
+|---|---|---|---|
+| 1 | Sales → **CRM** → **New lead** | Contact, company, phone, source, deal value | `LD-0001` code, stage ke hisaab se probability |
+| 2 | **Pipeline** (stage columns) | Card par **next stage** ka button | Stage badalta hai, probability bhi; audit log |
+| 3 | Card par **+ Follow-up** | Call / meeting / WhatsApp, due date, kya karna hai | Card par "next follow-up" dikhta hai, overdue **laal** |
+| 4 | **Follow-ups** tab | **Mark done** | Wo follow-up band, list se hat jaata hai |
+| 5 | Card par **Convert** (ya stage `WON`) | — | **Customer master** ban jaata hai (`C-000x`), phone/email/city copy, lead se link. Dobara Convert dabao to duplicate nahi banta |
+| ↩️ | Card par **X** (mark lost) | — | Lead `LOST`, pipeline value se hat |
+
+Header cards: **open pipeline value**, **weighted forecast** (value × probability), jeete/gaye leads.
+**Leads** tab par poore records table mein — search, sort, CSV/XLSX export.
 
 **Invoice par aur kya hai:** bill par discount (₹), freight aur packing (GST ke saath), round-off (Settings se on/off), "Received now" (bill ke saath hi payment), party ka **pichla rate apne aap**, ship-to address party se.
 
@@ -264,7 +289,7 @@ flowchart LR
 | Role | Kya milta hai |
 |---|---|
 | Tenant Admin / Management | Sab kuch |
-| Sales Manager / Executive | Items, Customers, Enquiry → Invoice, (Manager: Payments, Reports) |
+| Sales Manager / Executive | Items, Customers, **CRM**, **POS**, Enquiry → Invoice, (Manager: Payments, Reports) |
 | Purchase Manager / Executive | Items, Suppliers, Requisition → Bill, (Manager: Payments, Reports) |
 | Production / Plant Manager | BOM, Machines, Work Orders, Issues, Production, MRP, QC |
 | Production Supervisor | Work Orders, Issues, Production, MRP, QC |
@@ -272,7 +297,7 @@ flowchart LR
 | Store Manager / Operator | Stock, Ledger, Transfers, Adjustments, GRN, Deliveries |
 | Quality Manager / QC Inspector | QC, GRN, Production |
 | Accounts Manager / Accountant | Invoices, Bills, Payments, Expenses, Outstanding, GST, Reports |
-| Dispatch Manager | Sales Orders, Deliveries, Stock |
+| Dispatch Manager | Sales Orders, Deliveries, **POS**, Stock |
 | Viewer | Sirf Dashboard |
 
 ---
