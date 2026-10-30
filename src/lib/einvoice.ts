@@ -59,11 +59,23 @@ export interface IrpInvoice {
   grandTotal: number
   roundOff?: number | null
   freightCharge?: number | null
+  freightGstRate?: number | null
   packingCharge?: number | null
+  packingGstRate?: number | null
   placeOfSupply?: string | null
   isInterState?: boolean | null
   docType?: string | null
   reverseCharge?: boolean | null
+}
+
+/** SAC used for the freight / packing service lines. */
+export const FREIGHT_SAC = '996511'
+export const PACKING_SAC = '998540'
+
+export interface NicItem {
+  SlNo: string; PrdDesc: string; IsServc: 'Y' | 'N'; HsnCd: string; Qty: number; Unit: string; UnitPrice: number
+  TotAmt: number; Discount: number; AssAmt: number; GstRt: number; CgstAmt: number; SgstAmt: number; IgstAmt: number
+  CesAmt?: number; CesRt?: number; TotItemVal: number
 }
 
 /** NIC allows at most 16 characters in the document number. */
@@ -151,31 +163,41 @@ export interface NicInvoice {
   DocDtls: { Typ: string; No: string; Dt: string | null }
   SellerDtls: Record<string, unknown>
   BuyerDtls: Record<string, unknown>
-  ItemList: Record<string, unknown>[]
+  ItemList: NicItem[]
   ValDtls: Record<string, number>
 }
 
 /**
  * NIC "Invoice Bulk Upload" schema v1.1 for one invoice.
- * Tax rates come from the line; the header totals come from the invoice itself
- * (they already carry freight / packing / round-off).
+ * Lines carry their own discount and tax (freight / packing become service lines), so Σ item values
+ * equal the header: AssVal + taxes + round-off === TotInvVal, which is what the portal validates.
  */
 export function buildEInvoiceJson(invoice: IrpInvoice, seller?: IrpParty | null): NicInvoice[] {
   const buyer = invoice.customer
   const interState = !!invoice.isInterState || round2(invoice.igst) > 0
 
-  const itemList = (invoice.items || []).map((it, i) => {
+  // Line values follow computeBillTotals (src/lib/erp-helpers.ts) to the paisa, so Σ item values ==
+  // the header totals the portal checks: tax on the stored taxable value, an odd paisa to CGST.
+  const lineTax = (assAmt: number, gstRt: number) => {
+    const taxC = Math.round((Math.round(assAmt * 100) * gstRt) / 100)
+    if (interState) return { cgstAmt: 0, sgstAmt: 0, igstAmt: taxC / 100 }
+    const half = Math.round(taxC / 2)
+    return { cgstAmt: half / 100, sgstAmt: (taxC - half) / 100, igstAmt: 0 }
+  }
+
+  const itemList: NicItem[] = (invoice.items || []).map((it, i) => {
     const hsn = String(it.hsn || '').trim()
     const isService = hsn.startsWith('99')
     const qty = Number(it.qty) || 0
-    const rate = round2(Number(it.rate) || 0)
-    const assAmt = round2(Number(it.amount) || Number(it.lineTotal) || qty * rate)
+    const rate = Number(it.rate) || 0
+    const gross = round2(qty * rate)
+    // the stored line value is already net of the line discount and its share of the bill discount
+    const assAmt = round2(Number(it.amount) || Number(it.lineTotal) || gross)
+    const discount = round2(Math.max(0, gross - assAmt))
     const gstRt = Number(it.gstRate) || 0
     const cessRt = Number(it.cessRate ?? it.cess) || 0
-    const cgstAmt = interState ? 0 : round2((assAmt * gstRt) / 200)
-    const sgstAmt = interState ? 0 : round2((assAmt * gstRt) / 200)
-    const igstAmt = interState ? round2((assAmt * gstRt) / 100) : 0
-    const cesAmt = cessRt ? round2((assAmt * cessRt) / 100) : 0
+    const { cgstAmt, sgstAmt, igstAmt } = lineTax(assAmt, gstRt)
+    const cesAmt = cessRt ? Math.round(Math.round(assAmt * 100) * cessRt / 100) / 100 : 0
     return {
       SlNo: String(i + 1),
       PrdDesc: String(it.itemName || it.description || 'Item').slice(0, 300),
@@ -184,7 +206,8 @@ export function buildEInvoiceJson(invoice: IrpInvoice, seller?: IrpParty | null)
       Qty: Number(qty.toFixed(3)),
       Unit: String(it.uom || 'NOS').toUpperCase().slice(0, 8),
       UnitPrice: Number(rate.toFixed(3)),
-      TotAmt: assAmt,
+      TotAmt: Math.max(gross, assAmt),
+      Discount: discount,
       AssAmt: assAmt,
       GstRt: gstRt,
       CgstAmt: cgstAmt,
@@ -195,7 +218,25 @@ export function buildEInvoiceJson(invoice: IrpInvoice, seller?: IrpParty | null)
     }
   })
 
-  const othChrg = round2((invoice.freightCharge || 0) + (invoice.packingCharge || 0))
+  // Freight and packing carry GST, so the portal needs them as taxable service lines — as "other
+  // charges" (non-taxable) their tax would not add up to the header tax heads.
+  const charges: [string, string, number, number][] = [
+    ['Freight charges', FREIGHT_SAC, Number(invoice.freightCharge) || 0, invoice.freightGstRate ?? 18],
+    ['Packing charges', PACKING_SAC, Number(invoice.packingCharge) || 0, invoice.packingGstRate ?? 18],
+  ]
+  for (const [desc, sac, amount, rateRaw] of charges) {
+    const amt = round2(amount)
+    if (!(amt > 0)) continue
+    const gstRt = Number(rateRaw) || 0
+    const { cgstAmt, sgstAmt, igstAmt } = lineTax(amt, gstRt)
+    itemList.push({
+      SlNo: String(itemList.length + 1), PrdDesc: desc, IsServc: 'Y', HsnCd: sac, Qty: 1, Unit: 'OTH', UnitPrice: amt,
+      TotAmt: amt, Discount: 0, AssAmt: amt, GstRt: gstRt, CgstAmt: cgstAmt, SgstAmt: sgstAmt, IgstAmt: igstAmt,
+      TotItemVal: round2(amt + cgstAmt + sgstAmt + igstAmt),
+    })
+  }
+  const assVal = round2(itemList.reduce((s, l) => s + l.AssAmt, 0))
+
   const sellerDtls = {
     Gstin: String(seller?.gstin || '').trim(),
     LglNm: String(seller?.name || '').slice(0, 100),
@@ -233,12 +274,12 @@ export function buildEInvoiceJson(invoice: IrpInvoice, seller?: IrpParty | null)
     BuyerDtls: buyerDtls,
     ItemList: itemList,
     ValDtls: {
-      AssVal: round2(invoice.subtotal),
+      AssVal: assVal,
       CgstVal: round2(invoice.cgst || 0),
       SgstVal: round2(invoice.sgst || 0),
       IgstVal: round2(invoice.igst || 0),
       ...(round2(invoice.cess || 0) ? { CesVal: round2(invoice.cess || 0) } : {}),
-      OthChrg: othChrg,
+      OthChrg: 0,
       RndOffAmt: round2(invoice.roundOff || 0),
       TotInvVal: round2(invoice.grandTotal),
     },

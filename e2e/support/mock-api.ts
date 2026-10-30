@@ -644,7 +644,7 @@ export function makeApi(store: Store) {
         SellerDtls: { Gstin: '27AABCN1234M1Z8', LglNm: 'Nashilk Precision Works', Stcd: '27' },
         BuyerDtls: { Gstin: String(customer?.gstin || ''), LglNm: String(customer?.name || ''), Pos: String(customer?.gstin || '').slice(0, 2) },
         ItemList: items.map((it, i) => ({ SlNo: String(i + 1), HsnCd: String(it.hsn || '84836090'), Qty: Number(it.qty || 0), Unit: 'NOS', UnitPrice: Number(it.rate || 0), AssAmt: Number(it.lineTotal || 0), GstRt: Number(it.gstRate || 18), TotItemVal: Number(it.lineTotal || 0) })),
-        ValDtls: { AssVal: Number(invoice.subtotal || 0), CgstVal: Number(invoice.cgst || 0), SgstVal: Number(invoice.sgst || 0), IgstVal: Number(invoice.igst || 0), TotInvVal: grandTotal },
+        ValDtls: { AssVal: Number(invoice.subtotal || 0) - Number(invoice.discountTotal || 0), CgstVal: Number(invoice.cgst || 0), SgstVal: Number(invoice.sgst || 0), IgstVal: Number(invoice.igst || 0), TotInvVal: grandTotal },
       }]
       return {
         status: 200, body: {},
