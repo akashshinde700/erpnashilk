@@ -59,7 +59,17 @@ e2e/
     06-inventory-manufacturing.spec.ts  stock, transfers, production, MRP, QC
     07-finance-gst.spec.ts         outstanding, cash & bank, expenses, GST reports
     08-admin.spec.ts               settings, notifications, audit log, import, search
+    09-gst-billing.spec.ts         document type, currency + exchange rate, reverse charge
+    10-tally-einvoice.spec.ts      Tally XML/JSON/Excel downloads, sent-to-Tally mark,
+                                   e-Invoice JSON for the GST portal
+  unit/
+    tally-export.spec.ts           pure builders: Tally voucher balance + XML shape,
+                                   ledger-name precedence, IRP validation, GST split
 ```
+
+`npx playwright test` runs two projects: `chromium` (the UI suite, `e2e/specs`) and
+`unit` (pure functions, `e2e/unit`, no browser and no API). Run one with
+`--project=unit` / `--project=chromium`.
 
 ## Conventions
 

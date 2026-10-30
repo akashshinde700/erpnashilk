@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
-import { BadgeIndianRupee, Copy, Link2Off, Mail, MessageCircle, Pencil, Plus, Printer, ReceiptText, Share2, Trash2, Undo2, X } from 'lucide-react'
+import { BadgeIndianRupee, BookOpenCheck, CheckCheck, Copy, Download, FileJson, FileSpreadsheet, FileText, Link2Off, Mail, MessageCircle, Pencil, Plus, Printer, ReceiptText, Share2, Trash2, Undo2, X } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
@@ -17,6 +17,7 @@ import { ItemPicker, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } 
 import { PAYMENT_MODES, accountsForMode, fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
 import { CURRENCIES, defaultFxRate, fxDeclaration } from '@/lib/currencies'
+import { IRP_BULK_UPLOAD_URL } from '@/lib/einvoice'
 import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, toBaseQty, unitOptions } from '@/lib/units'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null; state?: string | null; stateCode?: string | null; shippingAddress?: string | null }
@@ -34,6 +35,7 @@ interface InvoiceRow {
   packingCharge?: number | null; packingGstRate?: number | null; roundOff?: number | null; isCashSale?: boolean | null
   billingName?: string | null; driverPhone?: string | null; cess?: number | null; shareToken?: string | null; deductStock?: boolean | null
   docType?: string | null; reverseCharge?: boolean | null; currency?: string | null; fxRate?: number | null
+  tallySentAt?: string | null; tallyXmlDownloadedAt?: string | null
   stockWarehouseId?: string | null
   // detail GET only: UPI payee for the "scan to pay" QR (company UPI id, else the print-on-invoice bank account's)
   upi?: { id: string; payeeName?: string | null } | null
@@ -915,6 +917,80 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
   const effectiveAccountId = accounts.length ? (receivedAccountId || forMode.fallback?.id || '') : ''
   const accountOpts = forMode.matching.map((a) => ({ value: a.id, label: a.name }))
 
+  // ---- Tally + e-Invoice exports (file-based, see src/lib/tally/voucher.ts) ----
+
+  /** Save a server-generated file and return its name. */
+  async function downloadFile(url: string, fallbackName: string) {
+    const res = await fetch(url, { credentials: 'same-origin', headers: { 'x-company-id': companyId } })
+    if (!res.ok) {
+      const err = await res.json().catch(() => null)
+      throw new Error(err?.error?.message || `Download failed (${res.status})`)
+    }
+    const disposition = res.headers.get('content-disposition') || ''
+    const named = /filename="([^"]+)"/.exec(disposition)?.[1]
+    const blob = await res.blob()
+    const href = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = href
+    a.download = named || fallbackName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(href)
+    // Anything the voucher builder wants to flag (missing GSTIN, unbalanced residual…)
+    const warn = res.headers.get('x-einvoice-warnings')
+    if (warn) {
+      const problems: string[] = JSON.parse(decodeURIComponent(warn))
+      toast.warning(`${problems.length} thing(s) to fix before upload`, { description: problems[0], duration: 8000 })
+    }
+    return a.download
+  }
+
+  async function downloadTally(r: InvoiceRow, format: 'xml' | 'json' | 'excel') {
+    const base = `/api/sales-invoices/${r.id}/tally?companyId=${encodeURIComponent(companyId)}`
+    try {
+      // Preview first so the warnings are shown even if the browser saves silently.
+      const preview = await apiGet<{ voucher: { warnings: string[]; entries: { ledger: string; amount: number }[]; grandTotal: number } }>(`${base}&preview=1`)
+      const warnings = preview?.voucher?.warnings ?? []
+      if (warnings.length) toast.warning(`${warnings.length} thing(s) to check in Tally`, { description: warnings[0], duration: 8000 })
+      const ext = format === 'excel' ? 'xlsx' : format
+      const name = await downloadFile(`${base}&format=${format}`, `${r.number.replace(/[\\/:*?"<>|]+/g, '-')}_tally.${ext}`)
+      toast.success(`Tally ${format.toUpperCase()} downloaded`, { description: name })
+      void list.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not build the Tally file')
+    }
+  }
+
+  async function downloadEInvoice(r: InvoiceRow) {
+    try {
+      const check = await apiGet<{ ready: boolean; problems: string[] }>(`/api/sales-invoices/${r.id}/einvoice?companyId=${encodeURIComponent(companyId)}&check=1`)
+      if (check && !check.ready) {
+        toast.warning(`${check.problems.length} thing(s) the portal will reject`, { description: check.problems[0], duration: 9000 })
+      }
+      const name = await downloadFile(
+        `/api/sales-invoices/${r.id}/einvoice?companyId=${encodeURIComponent(companyId)}`,
+        `${r.number.replace(/[\\/:*?"<>|]+/g, '-')}_einvoice.json`,
+      )
+      // Same flow as the reference app: the file is downloaded, then the portal opens.
+      window.open(IRP_BULK_UPLOAD_URL, '_blank', 'noopener,noreferrer')
+      toast.success('e-Invoice JSON downloaded', { description: 'Upload it on the GST portal tab that just opened.' })
+      void name
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not build the e-Invoice JSON')
+    }
+  }
+
+  async function markSentToTally(r: InvoiceRow, sent: boolean) {
+    try {
+      await apiPost<unknown>(`/api/sales-invoices/${r.id}/tally`, { companyId, action: sent ? 'mark-sent' : 'unmark' })
+      toast.success(sent ? `${r.number} marked as imported into Tally` : `Tally mark cleared on ${r.number}`)
+      void list.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update the Tally mark')
+    }
+  }
+
   const columns: Column<InvoiceRow>[] = [
     { key: 'number', header: 'Invoice #', render: (r) => <span className="font-medium">{r.number}</span> },
     { key: 'date', header: 'Date', render: (r) => <DateCell value={r.date} /> },
@@ -990,6 +1066,45 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           {r.status !== 'CANCELLED' && (
             <Button variant="ghost" size="sm" className="h-7" title="Sales return / credit note" onClick={() => openCreate('sales-returns', { invoiceId: r.id })}><Undo2 className="h-3.5 w-3.5" /></Button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7" title="Tally / e-Invoice export">
+                {r.tallySentAt ? <BookOpenCheck className="h-3.5 w-3.5 text-emerald-600" /> : <Download className="h-3.5 w-3.5" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel className="text-xs">
+                Tally import{r.tallySentAt ? ' · imported' : ''}
+              </DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => void downloadTally(r, 'xml')}>
+                <FileText className="h-3.5 w-3.5 mr-2" />Tally XML (import file)
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void downloadTally(r, 'json')}>
+                <FileJson className="h-3.5 w-3.5 mr-2" />Tally JSON
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void downloadTally(r, 'excel')}>
+                <FileSpreadsheet className="h-3.5 w-3.5 mr-2" />Tally Excel
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {r.tallySentAt ? (
+                <DropdownMenuItem onSelect={() => void markSentToTally(r, false)}>
+                  <CheckCheck className="h-3.5 w-3.5 mr-2" />Clear "sent to Tally"
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onSelect={() => void markSentToTally(r, true)}>
+                  <CheckCheck className="h-3.5 w-3.5 mr-2" />Mark as sent to Tally
+                </DropdownMenuItem>
+              )}
+              {r.status !== 'CANCELLED' && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void downloadEInvoice(r)}>
+                    <BadgeIndianRupee className="h-3.5 w-3.5 mr-2" />e-Invoice JSON (GST portal)
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {r.status !== 'CANCELLED' && (r.paidAmount || 0) <= 0 && (
             <ConfirmAction
               trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
@@ -1051,7 +1166,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
             </Field>
           ) : (
             <Field label={`Exchange rate (1 ${currency} = ₹)`} required>
-              <NumberInput value={fxRate} onChange={(e) => setFxRate(Number(e.target.value) || 0)} step="0.0001" />
+              <NumberInput value={fxRate} onChange={(n) => setFxRate(n)} step="0.0001" />
             </Field>
           )}
           <label className="flex items-center gap-2 text-sm font-medium cursor-pointer sm:col-span-3">

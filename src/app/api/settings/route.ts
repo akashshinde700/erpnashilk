@@ -2,7 +2,9 @@ import { db } from '@/lib/db'
 import { ApiError, companyRequired, handleError, logAudit, ok, requireWrite } from '@/lib/erp-helpers'
 import { hashPassword, verifyPassword } from '@/lib/password'
 
-const EDITABLE = ['name', 'gstin', 'pan', 'addressLine', 'city', 'state', 'stateCode', 'phone', 'email', 'logoText', 'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankUpiId', 'bankName', 'bankBranch', 'pincode', 'invoiceTerms', 'quotationTerms'] as const
+const EDITABLE = ['name', 'gstin', 'pan', 'addressLine', 'city', 'state', 'stateCode', 'phone', 'email', 'logoText', 'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankUpiId', 'bankName', 'bankBranch', 'pincode', 'invoiceTerms', 'quotationTerms',
+  // Tally export: the voucher names these ledgers, and Tally never creates a master on import
+  'tallyCompanyName', 'tallySalesLedger', 'tallyCgstLedger', 'tallySgstLedger', 'tallyIgstLedger', 'tallyFreightLedger', 'tallyRoundOffLedger'] as const
 type EditableField = (typeof EDITABLE)[number]
 
 const PROFILE_SELECT = {
@@ -26,6 +28,13 @@ const PROFILE_SELECT = {
   pincode: true,
   invoiceTerms: true,
   quotationTerms: true,
+  tallyCompanyName: true,
+  tallySalesLedger: true,
+  tallyCgstLedger: true,
+  tallySgstLedger: true,
+  tallyIgstLedger: true,
+  tallyFreightLedger: true,
+  tallyRoundOffLedger: true,
   logoImage: true,
   signatureImage: true,
   roundOffTotals: true,

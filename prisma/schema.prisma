@@ -39,6 +39,14 @@ model Company {
   signatureImage    String?  @db.MediumText // data: URL, "Authorised signatory" on invoices
   roundOffTotals    Boolean  @default(true)  // round invoice / bill totals to the rupee
   docPrefixes       String?  @db.Text        // JSON { INV: "SI", PINV: "PB", ... } overrides of default prefixes
+  // ---- Tally export: names must match the Tally company exactly (Tally never creates masters) ----
+  tallyCompanyName     String? // SVCURRENTCOMPANY sent in the import envelope
+  tallySalesLedger     String?
+  tallyCgstLedger      String?
+  tallySgstLedger      String?
+  tallyIgstLedger      String?
+  tallyFreightLedger   String?
+  tallyRoundOffLedger  String?
   lockEnabled       Boolean  @default(false) // PIN needed to edit / cancel / delete saved documents
   lockPinHash       String?
   // Go-live (cutover) date: the first day the books are kept in ManuFlow. Imported opening figures are
@@ -167,6 +175,7 @@ model Customer {
   code             String
   name             String
   gstin            String?
+  tallyLedgerName  String? // ledger name in Tally, when it differs from the customer name
   contactPerson    String?
   phone            String?
   email            String?
@@ -212,6 +221,7 @@ model Supplier {
   code             String
   name             String
   gstin            String?
+  tallyLedgerName  String? // ledger name in Tally, when it differs from the customer name
   contactPerson    String?
   phone            String?
   email            String?
@@ -533,6 +543,9 @@ model SalesInvoice {
   shareToken      String?   @unique // public share link (WhatsApp / PDF)
   // ---- GST document options (ported from the free GST billing app) ----
   docType         String    @default("TAX_INVOICE") // TAX_INVOICE | BILL_OF_SUPPLY | PROFORMA
+  // ---- Tally export (voucher JSON/XML) ----
+  tallyXmlDownloadedAt DateTime? // last time the import file was downloaded
+  tallySentAt          DateTime? // marked as imported into Tally (locks nothing, just records it)
   reverseCharge   Boolean   @default(false) // GST payable by the recipient (Sec 9(3)/9(4))
   currency        String    @default("INR") // document currency (ISO-4217)
   fxRate          Float     @default(1) // 1 unit of `currency` in INR
