@@ -61,13 +61,15 @@ e2e/
     08-admin.spec.ts               settings, notifications, audit log, import, search
     09-gst-billing.spec.ts         document type, currency + exchange rate, reverse charge,
                                    HSN → GST rate suggestion in the line editor
-    10-tally-einvoice.spec.ts      Tally XML/JSON/Excel downloads, sent-to-Tally mark,
-                                   e-Invoice JSON for the GST portal
+    10-tally-einvoice.spec.ts      Tally XML/JSON/Excel downloads, push to Tally through the
+                                   connector, sent-to-Tally mark, e-Invoice JSON for the portal
   unit/
     tally-export.spec.ts           pure builders: Tally voucher balance + XML shape,
                                    ledger-name precedence, IRP validation, GST split
     gst-reports.spec.ts            currency → INR conversion (fxToInr/toInrAmount/sumInr)
                                    and the reverse-charge GSTR-1 rchrg flag
+    tally-push.spec.ts             the push envelope: one create-voucher, no DTD, size cap,
+                                   and the TALLY_CONNECTOR_PUSH switch
 ```
 
 `npx playwright test` runs two projects: `chromium` (the UI suite, `e2e/specs`) and

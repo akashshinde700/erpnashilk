@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx'
 import { db } from '@/lib/db'
 import { logAudit, companyRequired, handleError, ok, ApiError, requireRead, requireWrite } from '@/lib/erp-helpers'
 import { buildTallyVoucher, ledgerNames, voucherFileName, voucherRows, voucherToXml } from '@/lib/tally/voucher'
+import { loadTallyInvoice } from '@/lib/tally/load-invoice'
 
 /**
  * GET /api/sales-invoices/[id]/tally?format=xml|json|excel
@@ -18,54 +19,6 @@ import { buildTallyVoucher, ledgerNames, voucherFileName, voucherRows, voucherTo
  * then the standard defaults — Tally never creates a master on import, so a name
  * that does not exist in that Tally company fails the whole voucher.
  */
-async function loadInvoice(id: string, companyId: string) {
-  const invoice = await db.salesInvoice.findFirst({
-    where: { id, companyId },
-    include: {
-      customer: true,
-      salesOrder: { select: { number: true } },
-      items: true,
-    },
-  })
-  if (!invoice) throw new ApiError('Invoice not found', 404)
-
-  // Line masters (HSN, UOM, display name) — SalesInvoiceItem only carries itemId
-  const itemIds = Array.from(new Set(invoice.items.map((i) => i.itemId)))
-  type ItemMaster = { id: string; code: string; name: string; uom: string; hsn: string | null }
-  const masters: ItemMaster[] = itemIds.length
-    ? await db.item.findMany({ where: { companyId, id: { in: itemIds } }, select: { id: true, code: true, name: true, uom: true, hsn: true } })
-    : []
-  const byId = new Map(masters.map((m) => [m.id, m]))
-
-  const company = await db.company.findUnique({
-    where: { id: companyId },
-    select: {
-      name: true, gstin: true, state: true, stateCode: true,
-      tallyCompanyName: true, tallySalesLedger: true, tallyCgstLedger: true, tallySgstLedger: true,
-      tallyIgstLedger: true, tallyFreightLedger: true, tallyRoundOffLedger: true,
-    },
-  })
-  if (!company) throw new ApiError('Company not found', 404)
-
-  return {
-    company,
-    invoice: {
-      ...invoice,
-      items: invoice.items.map((line) => {
-        const master = byId.get(line.itemId)
-        return {
-          ...line,
-          hsn: line.hsn || master?.hsn || '',
-          uom: master?.uom || 'Nos',
-          itemName: master?.name || 'Sales',
-          description: [master?.code, master?.name].filter(Boolean).join(' — ') || 'Sales',
-          amount: line.lineTotal,
-        }
-      }),
-    },
-  }
-}
-
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     requireRead(req, ['sales-invoices', 'receivables', 'gst-report'])
@@ -75,7 +28,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const format = (searchParams.get('format') || 'xml').toLowerCase()
     const preview = searchParams.get('preview') === '1'
 
-    const { invoice, company } = await loadInvoice(id, companyId)
+    const { invoice, company } = await loadTallyInvoice(id, companyId)
     const voucher = buildTallyVoucher(invoice as any, company as any, ledgerNames(company as any))
 
     if (preview) return ok({ voucher, ledgerNames: ledgerNames(company as any) })

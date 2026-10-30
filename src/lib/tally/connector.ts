@@ -77,7 +77,12 @@ export interface ConnectorRecord {
 }
 
 /** Async on purpose: a database-backed store can replace the in-memory one without changing callers. */
-export type TallyJobType = 'list-companies' | 'export-customers' | 'export-suppliers' | 'export-items'
+/**
+ * `list-companies` / `export-*` read from Tally (fixed Export requests built by the connector).
+ * `push-voucher` is the only direction that writes: the server builds one Import envelope from a
+ * sales invoice and the connector posts it to Tally unchanged (see src/lib/tally/push.ts).
+ */
+export type TallyJobType = 'list-companies' | 'export-customers' | 'export-suppliers' | 'export-items' | 'push-voucher'
 export type TallyJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
 export interface TallyJobRecord {
@@ -95,6 +100,10 @@ export interface TallyJobRecord {
   /** Machine code; the UI message is written by the server. */
   error: string | null
   records: Record<string, string>[] | null
+  /** push-voucher only: the Tally Import envelope, built by the server, sent to the connector as-is. */
+  payload?: string | null
+  /** push-voucher only: the sales invoice it was built from (dedupe + UI). */
+  targetId?: string | null
 }
 
 export interface ConnectorStore {
@@ -285,7 +294,8 @@ const ENDPOINT_RE = /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{
 
 export interface HeartbeatReply {
   nextHeartbeatSec: number
-  job?: { id: string; type: TallyJobType; company?: string }
+  /** `xml` is only ever a server-built Import envelope for a push-voucher job. */
+  job?: { id: string; type: TallyJobType; company?: string; xml?: string }
 }
 
 export async function recordHeartbeat(c: ConnectorRecord, body: unknown, store = connectorStore()): Promise<HeartbeatReply> {
@@ -332,7 +342,12 @@ async function takeNextJob(c: ConnectorRecord, store: ConnectorStore): Promise<H
   const next = mine.filter((j) => j.status === 'queued').sort((a, b) => a.createdAt - b.createdAt)[0]
   if (!next) return undefined
   await store.updateJob(next.id, { status: 'running', startedAt: now })
-  return { id: next.id, type: next.type, ...(next.tallyCompany ? { company: next.tallyCompany } : {}) }
+  return {
+    id: next.id,
+    type: next.type,
+    ...(next.tallyCompany ? { company: next.tallyCompany } : {}),
+    ...(next.type === 'push-voucher' && next.payload ? { xml: next.payload } : {}),
+  }
 }
 
 export async function revokeConnector(companyId: string, store = connectorStore()) {

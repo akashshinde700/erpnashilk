@@ -12,8 +12,11 @@ async function openExportMenu(page: Page, number: string) {
   const row = invoiceRow(page, number)
   await expect(row).toBeVisible()
   await row.getByTitle('Tally / e-Invoice export').click()
-  await expect(page.getByRole('menu')).toBeVisible()
-  return page.getByRole('menu')
+  const menu = page.getByRole('menu')
+  await expect(menu).toBeVisible()
+  // The menu is mounted (and its items laid out) before any item is clicked.
+  await expect(menu.getByRole('menuitem').first()).toBeVisible()
+  return menu
 }
 
 test.describe('Tally + e-Invoice export', () => {
@@ -34,6 +37,23 @@ test.describe('Tally + e-Invoice export', () => {
     expect(xml).toContain('REMOTEID="MANUFLOW-INV-si_1"')
     expect(xml).toContain('<PARTYLEDGERNAME>Precision Tools Pvt Ltd</PARTYLEDGERNAME>')
     expect(xml).toContain('<VOUCHERNUMBER>INV/26-27/0001</VOUCHERNUMBER>')
+  })
+
+  test('a voucher can be pushed straight into Tally through the connector', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'Sales Invoices')
+
+    // A different invoice than the mark/unmark test below, so the two do not share the flag.
+    const menu = await openExportMenu(page, 'INV/26-27/0002')
+    await menu.getByRole('menuitem', { name: 'Push to Tally (connector)' }).click()
+
+    // The server queues the job, the (fake) connector settles it, the invoice is marked imported.
+    await expect(page.getByText('Sending INV/26-27/0002 to Tally…')).toBeVisible()
+    await expect(page.getByText('INV/26-27/0002 imported into TallyPrime')).toBeVisible({ timeout: 20_000 })
+
+    const invoice = (store.collections['sales-invoices'] as { number: string; tallySentAt?: string | null }[])
+      .find((i) => i.number === 'INV/26-27/0002')
+    expect(invoice?.tallySentAt).toBeTruthy()
   })
 
   test('Tally JSON download describes the same voucher', async ({ page, store }) => {
@@ -73,17 +93,17 @@ test.describe('Tally + e-Invoice export', () => {
     await openModule(page, 'Sales Invoices')
 
     let menu = await openExportMenu(page, 'INV/26-27/0001')
-    await menu.getByText('Mark as sent to Tally').click()
+    await menu.getByRole('menuitem', { name: 'Mark as sent to Tally' }).click()
     await expect(page.locator('[data-sonner-toast]').first()).toBeVisible()
 
     // The mark is stored on the invoice row and the menu offers to clear it.
     menu = await openExportMenu(page, 'INV/26-27/0001')
     await expect(menu.getByText('Tally import · imported')).toBeVisible()
-    await menu.getByText('Clear "sent to Tally"').click()
+    await menu.getByRole('menuitem', { name: 'Clear "sent to Tally"' }).click()
     await expect(page.locator('[data-sonner-toast]').first()).toBeVisible()
 
     menu = await openExportMenu(page, 'INV/26-27/0001')
-    await expect(menu.getByText('Mark as sent to Tally')).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Mark as sent to Tally' })).toBeVisible()
   })
 
   test('the Tally importer .bat and masters XML are downloadable', async ({ page, store }) => {

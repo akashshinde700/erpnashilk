@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
-import { BadgeIndianRupee, BookOpenCheck, CheckCheck, Copy, Download, FileJson, FileSpreadsheet, FileText, Link2Off, Mail, MessageCircle, Pencil, Plus, Printer, ReceiptText, Share2, Trash2, Undo2, X } from 'lucide-react'
+import { BadgeIndianRupee, BookOpenCheck, CheckCheck, CloudUpload, Copy, Download, FileJson, FileSpreadsheet, FileText, Link2Off, Mail, MessageCircle, Pencil, Plus, Printer, ReceiptText, Share2, Trash2, Undo2, X } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
@@ -998,6 +998,38 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     }
   }
 
+  /**
+   * Push the voucher straight into TallyPrime through the paired connector.
+   *
+   * The server builds the Import envelope from the invoice; the connector picks the job up on its
+   * next check-in, posts it to Tally and reports back. We poll the job and stop when it settles.
+   */
+  async function pushToTally(r: InvoiceRow) {
+    try {
+      const job = await apiPost<{ id: string; voucherNumber?: string }>('/api/import-center/tally/push', { companyId, invoiceId: r.id })
+      toast.info(`Sending ${job.voucherNumber || r.number} to Tally…`, {
+        description: 'The connector picks it up on its next check-in (every 5–30 seconds).',
+      })
+      for (let i = 0; i < 24; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2500))
+        const st = await apiGet<{ status: string; message?: string | null; result?: { status: string } | null }>(
+          `/api/import-center/tally/jobs?id=${encodeURIComponent(job.id)}`,
+        )
+        if (st.status === 'done') {
+          if (st.result?.status === 'exists') toast.warning(`${r.number} was already in TallyPrime`, { description: 'Nothing was created twice.' })
+          else toast.success(`${r.number} imported into TallyPrime`)
+          void markSentToTally(r, true)
+          return
+        }
+        if (st.status === 'failed') { toast.error(st.message || 'Tally refused the voucher'); return }
+        if (st.status === 'cancelled') { toast.error('Push cancelled'); return }
+      }
+      toast.warning('Still waiting for the connector', { description: 'The push keeps running in the background — open Tally on the office PC, then check again.' })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not push the invoice to Tally')
+    }
+  }
+
   async function markSentToTally(r: InvoiceRow, sent: boolean) {
     try {
       await apiPost<unknown>(`/api/sales-invoices/${r.id}/tally`, { companyId, action: sent ? 'mark-sent' : 'unmark' })
@@ -1095,6 +1127,9 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
               </DropdownMenuLabel>
               <DropdownMenuItem onSelect={() => void downloadTally(r, 'xml')}>
                 <FileText className="h-3.5 w-3.5 mr-2" />Tally XML (import file)
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void pushToTally(r)}>
+                <CloudUpload className="h-3.5 w-3.5 mr-2" />Push to Tally (connector)
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void downloadTally(r, 'json')}>
                 <FileJson className="h-3.5 w-3.5 mr-2" />Tally JSON

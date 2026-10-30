@@ -14,7 +14,7 @@ import { resetDb } from './helpers/db'
 import { seedTenant, seedUser } from './helpers/seed'
 
 // Mock TallyPrime (real TallyPrime is not available here) — records every request body it receives
-type Mode = 'tally' | 'html' | 'down'
+type Mode = 'tally' | 'html' | 'down' | 'import-ok' | 'import-duplicate'
 let tallyMode: Mode = 'tally'
 const tallyBodies: string[] = []
 let tally: ReturnType<typeof Bun.serve>
@@ -29,6 +29,8 @@ beforeAll(() => {
     async fetch(req) {
       tallyBodies.push(await req.text())
       if (tallyMode === 'html') return new Response('<html>router</html>')
+      if (tallyMode === 'import-ok') return new Response('<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><IMPORTRESULT><CREATED>1</CREATED></IMPORTRESULT></DATA></BODY></ENVELOPE>')
+      if (tallyMode === 'import-duplicate') return new Response('<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Voucher number already exists</LINEERROR></DATA></BODY></ENVELOPE>')
       return new Response('<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Report</LINEERROR></DATA></BODY></ENVELOPE>')
     },
   })
@@ -78,6 +80,47 @@ async function paired(user: TestUser) {
   expect(r.status).toBe(200)
   return r.json.data.token as string
 }
+
+describe('push to Tally (the only write)', () => {
+  const pushXml = () => '<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE><HEADER><VERSION>1</VERSION>' +
+    '<TALLYREQUEST>Import Data</TALLYREQUEST><TYPE>Data</TYPE><ID>Vouchers</ID></HEADER>' +
+    '<BODY><DESC><STATICVARIABLES><SVCURRENTCOMPANY>Nashilk</SVCURRENTCOMPANY></STATICVARIABLES></DESC>' +
+    '<DATA><TALLYMESSAGE><VOUCHER VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">' +
+    '<DATE>20260910</DATE><VOUCHERNUMBER>INV/26-27/0001</VOUCHERNUMBER>' +
+    '</VOUCHER></TALLYMESSAGE></DATA></BODY></ENVELOPE>'
+
+  test('only a single create-voucher envelope is accepted', () => {
+    expect(connector.pushProblem(pushXml())).toBeNull()
+    expect(connector.pushProblem('')).toBe('empty')
+    expect(connector.pushProblem(pushXml().replace('ACTION="Create"', 'ACTION="Delete"'))).toBe('not_a_create')
+    expect(connector.pushProblem(pushXml().replace('Import Data', 'Export'))).toBe('not_an_import')
+    expect(connector.pushProblem('<!DOCTYPE x [<!ENTITY a "b">]>' + pushXml())).toBe('unsafe_xml')
+  })
+
+  test('the voucher is posted to Tally as-is and a created voucher comes back', async () => {
+    tallyMode = 'import-ok'
+    const out = await connector.pushVoucher(tallyUrl(), {
+      id: 'job_1', type: 'push-voucher', xml: pushXml(),
+    })
+    expect(out.ok).toBe(true)
+    expect(out.records[0]).toMatchObject({ name: 'INV/26-27/0001', status: 'created' })
+    // Exactly the document it was given — no rebuild, no extra request.
+    expect(tallyBodies.at(-1)).toBe(pushXml())
+  })
+
+  test('a duplicate in Tally is reported as "already there", not as a failure', async () => {
+    tallyMode = 'import-duplicate'
+    const out = await connector.pushVoucher(tallyUrl(), { id: 'job_2', type: 'push-voucher', xml: pushXml() })
+    expect(out.ok).toBe(true)
+    expect(out.records[0].status).toBe('exists')
+  })
+
+  test('Tally refusing the voucher fails the job with a fixable message', async () => {
+    tallyMode = 'tally'
+    const out = await connector.pushVoucher(tallyUrl(), { id: 'job_3', type: 'push-voucher', xml: pushXml() })
+    expect(out).toEqual({ ok: false, error: 'voucher_rejected' })
+  })
+})
 
 describe('feature switch', () => {
   test('off by default: status says unavailable; pairing and connector endpoints refuse (503)', async () => {

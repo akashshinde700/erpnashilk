@@ -18,13 +18,15 @@ export const EXPORT_JOB: Record<'customers' | 'suppliers' | 'items', TallyJobTyp
   customers: 'export-customers', suppliers: 'export-suppliers', items: 'export-items',
 }
 export const MAX_RECORDS = 20_000
-const MAX_OPEN_JOBS = 6
+export const MAX_OPEN_JOBS = 6
 
 const FIELDS: Record<TallyJobType, Record<string, number>> = {
   'list-companies': { name: 200, booksFrom: 10, startingFrom: 10 },
   'export-customers': partyFields(),
   'export-suppliers': partyFields(),
   'export-items': { guid: 100, name: 200, parent: 200, unit: 50, hsn: 20, gstRate: 10 },
+  // What Tally reports back for a voucher we pushed: the voucher number it accepted and its status.
+  'push-voucher': { name: 100, status: 20, message: 300 },
 }
 function partyFields() {
   return {
@@ -42,6 +44,8 @@ export const JOB_ERRORS: Record<string, string> = {
   too_large: 'This company has too much data to read in one go.',
   tally_error: 'TallyPrime reported an error for this request. Check that the company is open in TallyPrime and try again.',
   cancelled: 'Cancelled.',
+  voucher_rejected: 'TallyPrime refused this voucher. Usually a ledger, item or GST master is missing — import the Tally masters file once, or check the voucher in Tally.',
+  voucher_exists: 'TallyPrime already has a voucher with this remote id, so it was not created again.',
 }
 
 export interface JobView {
@@ -54,6 +58,9 @@ export interface JobView {
   createdAt: string
   /** list-companies only: the companies Tally returned (real data, never a sample). */
   companies?: { name: string; booksFrom: string | null; startingFrom: string | null }[]
+  /** push-voucher only: the sales invoice the voucher was built from / what Tally answered. */
+  invoiceId?: string | null
+  result?: { status: string; message: string | null } | null
 }
 
 export function jobView(j: TallyJobRecord): JobView {
@@ -65,6 +72,14 @@ export function jobView(j: TallyJobRecord): JobView {
   }
   if (j.type === 'list-companies' && j.status === 'done') {
     v.companies = (j.records ?? []).map((r) => ({ name: r.name, booksFrom: r.booksFrom || null, startingFrom: r.startingFrom || null }))
+  }
+  if (j.type === 'push-voucher') {
+    v.invoiceId = j.targetId ?? null
+    const first = j.records?.[0]
+    v.result = first ? { status: first.status || 'created', message: first.message || null } : null
+    // A voucher that Tally already had is not a failure, but the user should see it.
+    if (j.status === 'done' && first?.status === 'exists') v.message = JOB_ERRORS.voucher_exists
+    if (j.status === 'done') v.count = first ? 1 : 0
   }
   return v
 }

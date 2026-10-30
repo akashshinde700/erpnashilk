@@ -50,10 +50,20 @@ warnings the UI shows before the download.
 
 ### Direct push
 
-There is deliberately **no "push to a URL"** action: a request-supplied URL would
-let any signed-in user make the server call an internal address (SSRF). Installs
-where ManuFlow runs next to Tally use the connector setting `TALLY_HTTP_URL`
-(see `docs/tally-connector.md`); everything else uses the XML file.
+**Push to Tally (connector)** in the invoice menu sends the voucher straight into
+TallyPrime — but only through a **paired ManuFlow Tally Connector** running on the
+office PC, never to an address from the request (a request-supplied URL would let
+any signed-in user make the server call an internal address — SSRF).
+
+The server builds the same Import envelope as the XML download, hands it to the
+connector as a `push-voucher` job, and the connector posts that document to
+TallyPrime unchanged. The outcome comes back as the job's result and the invoice
+is marked “sent to Tally”. Off unless the server runs with
+`TALLY_CONNECTOR_PUSH=1`; the full rules (one voucher per job, no DTD, duplicate
+handling, permissions) are in `docs/tally-connector.md`.
+
+Installs where ManuFlow runs next to Tally can also use the `TALLY_HTTP_URL`
+connectivity check; everything else uses the XML file (or the connector).
 
 ## GST e-Invoice (IRP / NIC)
 
@@ -140,7 +150,11 @@ envelope carries `REMOTEID="MANUFLOW-INV-<id>"`.
 ## Tests
 
 * `e2e/specs/10-tally-einvoice.spec.ts` — the UI flow: all three Tally downloads,
-  the sent-to-Tally mark, and the e-Invoice JSON download (content asserted).
+  the connector push, the sent-to-Tally mark, and the e-Invoice JSON download
+  (content asserted).
+* `e2e/unit/tally-push.spec.ts` — the push envelope checks: a real voucher passes,
+  an Export / Delete / two-voucher / DTD / oversized document does not, and the
+  feature switch is off unless `TALLY_CONNECTOR_PUSH=1`.
 * `e2e/unit/tally-export.spec.ts` — the builders themselves: voucher balances, the
   Round Off residual, XML escaping/invoice-mode entries, ledger-name precedence,
   IRP validation, the intra-state / inter-state tax split, and the masters file
