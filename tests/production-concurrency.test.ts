@@ -73,7 +73,9 @@ describe('Production entries at the same work order', () => {
     expect(succeeded.length).toBe(1)
     const failed = [a, b].find((r) => !r.json.success)!
     expect(failed.status).toBe(400)
-    expect(failed.json.error?.message).toMatch(/exceeds planned qty/i)
+    // The loser waits on the work-order row lock and then reads the winner's commit. A full-qty
+    // winner has already COMPLETED the order, so the status check refuses it before the qty check.
+    expect(failed.json.error?.message).toMatch(/must be RELEASED or IN_PROGRESS.*COMPLETED|exceeds planned qty/i)
 
     // One entry's worth of stock — not two
     expect(await qtyOf(s.company.id, s.fg.id)).toBe(10)
