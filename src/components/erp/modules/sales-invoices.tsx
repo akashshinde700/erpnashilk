@@ -18,6 +18,7 @@ import { PAYMENT_MODES, accountsForMode, fmtDate, fmtMoney } from '@/lib/erp-con
 import { amountInWords } from '@/lib/number-to-words'
 import { CURRENCIES, defaultFxRate, fxDeclaration } from '@/lib/currencies'
 import { IRP_BULK_UPLOAD_URL } from '@/lib/einvoice'
+import { TALLY_IMPORT_BAT_PATH } from '@/lib/tally/masters'
 import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, toBaseQty, unitOptions } from '@/lib/units'
 
 interface PartyRow { id: string; name?: string | null; code?: string | null; state?: string | null; stateCode?: string | null; shippingAddress?: string | null }
@@ -962,6 +963,16 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     }
   }
 
+  /** All Masters file: ledgers, units and Sundry Debtors the Tally import expects to already exist. */
+  async function downloadMasters() {
+    try {
+      const name = await downloadFile(`/api/tally/masters?companyId=${encodeURIComponent(companyId)}`, 'tally-masters.xml')
+      toast.success('Tally masters downloaded', { description: `${name} — import it once in TallyPrime (Import Data → Masters).` })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not build the Tally masters file')
+    }
+  }
+
   async function downloadEInvoice(r: InvoiceRow) {
     try {
       const check = await apiGet<{ ready: boolean; problems: string[] }>(`/api/sales-invoices/${r.id}/einvoice?companyId=${encodeURIComponent(companyId)}&check=1`)
@@ -1084,6 +1095,15 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void downloadTally(r, 'excel')}>
                 <FileSpreadsheet className="h-3.5 w-3.5 mr-2" />Tally Excel
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <a href={TALLY_IMPORT_BAT_PATH} download="Tally-Import.bat">
+                  <Download className="h-3.5 w-3.5 mr-2" />Tally importer (.bat)
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void downloadMasters()}>
+                <FileText className="h-3.5 w-3.5 mr-2" />Tally masters (XML)
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               {r.tallySentAt ? (

@@ -58,3 +58,6 @@ deploy_config*.json
 /test-results/
 /playwright-report/
 /blob-report/
+
+# this repo installs with bun; the sandbox npm install writes its own lockfile
+/package-lock.json

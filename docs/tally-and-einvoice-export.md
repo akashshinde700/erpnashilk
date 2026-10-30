@@ -100,6 +100,33 @@ After the portal generates the IRN, record it on the invoice — the existing
 **Generate IRN** action (mock gateway) or the direct `irn` / `ewayBillNo` fields.
 The Tally XML picks both up (`<IRNNO>`, `<EWAYBILLDETAILS.LIST>`).
 
+## One-time setup: masters file + importer
+
+Tally never creates a master while importing a voucher — a voucher that names a
+ledger the company does not have comes back as *Ledger not found*. The old way was
+to type every ledger by hand. Two downloads remove that step:
+
+| Download | Where | What it does |
+| --- | --- | --- |
+| **Tally masters (XML)** | Sales Invoices → Tally menu, or Settings → Tally export | `GET /api/tally/masters?companyId=…` — an *All Masters* import that creates the sales / CGST / SGST / IGST / freight / round-off ledgers under the exact names this company's export uses (Settings overrides included), the units the item master uses, and one `Sundry Debtors` ledger per active customer (`?parties=0` skips the customers) |
+| **Tally importer (.bat)** | same two places | `/downloads/tally/Tally-Import.bat` — posts a downloaded voucher file to Tally over HTTP and prints `CREATED / ALTERED / ERRORS / EXCEPTIONS` |
+
+### Importing a voucher with the .bat
+
+1. Download **Tally XML (import file)** for the invoice.
+2. Drag that `*_tally.xml` onto `Tally-Import.bat` (or double-click it — it picks the
+   newest `*_tally.xml` in `Downloads`).
+3. The batch file POSTs the file to `http://127.0.0.1:9000` and prints Tally's counts;
+   `<LINEERROR>` lines are echoed with a hint for the usual causes.
+
+Tally has to be open with its HTTP server on: *F1 Help → Settings → Connectivity →
+Client/Server configuration*, **TallyPrime acts as: Both**, port **9000**. Tally on
+another machine? Put `TALLY_URL=http://192.168.1.20:9000` in
+`Tally-Import.config.txt` next to the `.bat`.
+
+Re-importing the same file updates the voucher instead of duplicating it — every
+envelope carries `REMOTEID="MANUFLOW-INV-<id>"`.
+
 ## Configuration
 
 | Setting | Where | Purpose |
@@ -116,4 +143,5 @@ The Tally XML picks both up (`<IRNNO>`, `<EWAYBILLDETAILS.LIST>`).
   the sent-to-Tally mark, and the e-Invoice JSON download (content asserted).
 * `e2e/unit/tally-export.spec.ts` — the builders themselves: voucher balances, the
   Round Off residual, XML escaping/invoice-mode entries, ledger-name precedence,
-  IRP validation and the intra-state / inter-state tax split.
+  IRP validation, the intra-state / inter-state tax split, and the masters file
+  (ledger groups, unit de-duplication, party overrides).
