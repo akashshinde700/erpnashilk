@@ -165,6 +165,8 @@ export async function POST(req: Request) {
           supplierInvDate: toDate(body.supplierInvDate),
           dueDate,
           isInterState: interState,
+          // Buyer pays the tax (Sec 9(3)/9(4)) — GSTR-3B reports it under 3.1(d) and the ITC is claimable.
+          reverseCharge: !!body.reverseCharge,
           subtotal: totals.subtotal,
           discountTotal: totals.discountTotal,
           cgst: totals.cgst,

@@ -17,6 +17,7 @@ import { ItemPicker, ScanToAdd, pickIntoLines, scanIntoLines, type PickerItem } 
 import { PAYMENT_MODES, accountsForMode, fmtDate, fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
 import { CURRENCIES, defaultFxRate, fxDeclaration } from '@/lib/currencies'
+import { suggestGstRate } from '@/lib/gst-rates'
 import { IRP_BULK_UPLOAD_URL } from '@/lib/einvoice'
 import { TALLY_IMPORT_BAT_PATH } from '@/lib/tally/masters'
 import { baseQtyHint, convertRate, defaultSellRate, inclGstHint, lineToBase, toBaseQty, unitOptions } from '@/lib/units'
@@ -406,7 +407,8 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     setLines((ls) => {
       const r = pickIntoLines(ls, idx, it.id, (x) => ({
         // A different item no longer matches the linked SO line
-        ...x, itemId: it.id, soItemId: it.id === x.itemId ? x.soItemId : undefined, rate: x.rate || defaultSellRate(it), gstRate: it.gstRate ?? x.gstRate,
+        ...x, itemId: it.id, soItemId: it.id === x.itemId ? x.soItemId : undefined, rate: x.rate || defaultSellRate(it),
+        gstRate: it.gstRate ?? suggestGstRate(it.hsn)?.rate ?? x.gstRate,
         unit: it.id === x.itemId ? x.unit : undefined,
         cessRate: it.id === x.itemId ? x.cessRate : Number(it.cessRate || 0),
       }))
@@ -418,7 +420,11 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
   /** Barcode scan: +1 on the item's line, or a new line. */
   function scanItem(it: PickerItem) {
     const row = (items.data?.items ?? []).find((o) => o.id === it.id)
-    setLines((ls) => scanIntoLines(ls, it.id, () => ({ ...emptyLine(), itemId: it.id, qty: 1, rate: defaultSellRate(row), gstRate: row?.gstRate ?? 18, cessRate: Number(row?.cessRate || 0) })))
+    setLines((ls) => scanIntoLines(ls, it.id, () => ({
+      ...emptyLine(), itemId: it.id, qty: 1, rate: defaultSellRate(row),
+      gstRate: row?.gstRate ?? suggestGstRate(row?.hsn)?.rate ?? 18,
+      cessRate: Number(row?.cessRate || 0),
+    })))
   }
 
   async function submit() {
@@ -1300,6 +1306,19 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
                 <span className="text-[10px] text-muted-foreground sm:hidden">GST %</span>
                 <NumberInput value={l.gstRate} min={0} placeholder="GST %"
                   onChange={(n) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, gstRate: n } : x)))} />
+                {(() => {
+                  // HSN / SAC hint from the rate table — click to apply it to this line.
+                  const hint = suggestGstRate(itemRow(l.itemId)?.hsn)
+                  if (!hint || hint.rate === l.gstRate) return null
+                  const code = String(itemRow(l.itemId)?.hsn || '')
+                  return (
+                    <button type="button" className="w-fit text-left text-[10px] leading-tight text-emerald-700 underline decoration-dotted dark:text-emerald-400"
+                      title={`${code.startsWith('99') ? 'SAC' : 'HSN'} ${code} — ${hint.label}. Click to use ${hint.rate}%.`}
+                      onClick={() => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, gstRate: hint.rate } : x)))}>
+                      {code.startsWith('99') ? 'SAC' : 'HSN'} {code} → {hint.rate}%
+                    </button>
+                  )
+                })()}
               </label>
               <label className="col-span-2 sm:col-span-1 grid gap-0.5">
                 <span className="text-[10px] text-muted-foreground sm:hidden">Cess %</span>

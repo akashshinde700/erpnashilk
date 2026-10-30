@@ -65,14 +65,19 @@ interface Gstr2Data {
   totals: { bills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; grandTotal: number; itcEligibleTax: number; itcIneligibleTax: number; debitNotes: number; debitNoteTax: number }
 }
 interface Heads { igst: number; cgst: number; sgst: number; cess: number }
+interface ReverseChargeBlock { docs: number; taxable: number; tax: Heads; totalTax: number }
 interface Gstr3bData {
   outward: { taxable: number; salesTaxable: number; returnsTaxable: number; invoices: number; creditNotes: number; tax: Heads; totalTax: number }
   itc: { bills: Heads; expenses: Heads; total: Heads; totalTax: number; ineligible: Heads; ineligibleTotal: number }
+  reverseCharge?: { outward: ReverseChargeBlock; inward: ReverseChargeBlock }
   net: Heads; payable: Heads; credit: Heads; totalPayable: number; totalCredit: number; netTotal: number
 }
 interface Gstr1Json {
   json: { gstin: string; fp: string } & Record<string, unknown>
-  summary: { invoices: number; b2bInvoices: number; b2clInvoices?: number; b2csRows: number; creditNotes: number; hsnRows: number; missingGstin: boolean }
+  summary: {
+    invoices: number; b2bInvoices: number; b2clInvoices?: number; b2csRows: number; creditNotes: number; hsnRows: number
+    reverseChargeInvoices?: number; foreignCurrencyInvoices?: number; missingGstin: boolean
+  }
 }
 interface Gstr9Row extends Heads { count: number; taxable: number }
 interface Gstr9Hsn { hsn: string; desc: string; uqc: string; rate: number; qty: number; taxable: number; igst: number; cgst: number; sgst: number; cess: number; totalTax: number }
@@ -256,7 +261,16 @@ export default function GstReportModule({ companyId }: { companyId: string }) {
       a.click()
       URL.revokeObjectURL(url)
       if (d.summary.missingGstin) toast.warning('Company GSTIN is not set (Settings) — add it before uploading')
-      else toast.success(`GSTR-1 JSON: ${d.summary.b2bInvoices} B2B invoice(s), ${d.summary.b2clInvoices ?? 0} B2CL invoice(s), ${d.summary.b2csRows} B2CS row(s), ${d.summary.creditNotes} credit note(s), ${d.summary.hsnRows} HSN row(s)`)
+      else {
+        const extra = [
+          d.summary.reverseChargeInvoices ? `${d.summary.reverseChargeInvoices} reverse-charge` : '',
+          d.summary.foreignCurrencyInvoices ? `${d.summary.foreignCurrencyInvoices} in foreign currency (converted to INR)` : '',
+        ].filter(Boolean).join(' · ')
+        toast.success(
+          `GSTR-1 JSON: ${d.summary.b2bInvoices} B2B invoice(s), ${d.summary.b2clInvoices ?? 0} B2CL invoice(s), ${d.summary.b2csRows} B2CS row(s), ${d.summary.creditNotes} credit note(s), ${d.summary.hsnRows} HSN row(s)`,
+          extra ? { description: extra, duration: 7000 } : undefined,
+        )
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to build GSTR-1 JSON')
     } finally {
@@ -288,6 +302,8 @@ export default function GstReportModule({ companyId }: { companyId: string }) {
       ${row('4(A)(5) ITC — expenses', d.itc.expenses)}
       ${row('4(C) Net ITC available', d.itc.total)}
       ${row('4(D) Ineligible ITC (unregistered suppliers)', d.itc.ineligible)}
+      ${d.reverseCharge?.inward.docs ? row('3.1(d) Inward supplies liable to reverse charge (self-assessed)', d.reverseCharge.inward.tax, d.reverseCharge.inward.taxable) : ''}
+      ${d.reverseCharge?.outward.docs ? row('Outward reverse-charge invoices (tax payable by the buyer)', d.reverseCharge.outward.tax, d.reverseCharge.outward.taxable) : ''}
       ${row('6.1 Tax payable', d.payable)}
       ${row('Credit carried forward', d.credit)}
       </tbody></table>
@@ -635,6 +651,22 @@ function Gstr3bView({ data, loading, monthLabel }: { data: Gstr3bData | null; lo
     { label: '4(A)(5) ITC — expenses', sub: 'Expenses marked ITC eligible', h: data.itc.expenses },
     { label: '4(C) Net ITC available', h: data.itc.total, strong: true },
     { label: '4(D) Ineligible ITC', sub: 'Bills from suppliers without a GSTIN', h: data.itc.ineligible },
+    ...(data.reverseCharge?.inward.docs
+      ? [{
+        label: '3.1(d) Inward supplies liable to reverse charge',
+        sub: `${data.reverseCharge.inward.docs} bill(s) — self-assessed, claimed back as ITC`,
+        h: data.reverseCharge.inward.tax,
+        taxable: data.reverseCharge.inward.taxable,
+      }]
+      : []),
+    ...(data.reverseCharge?.outward.docs
+      ? [{
+        label: 'Outward reverse-charge invoices',
+        sub: `${data.reverseCharge.outward.docs} invoice(s) — tax payable by the buyer, not collected by you`,
+        h: data.reverseCharge.outward.tax,
+        taxable: data.reverseCharge.outward.taxable,
+      }]
+      : []),
     { label: '6.1 Tax payable', h: data.payable, strong: true },
     { label: 'Credit carried forward', h: data.credit },
   ]
@@ -677,7 +709,9 @@ function Gstr3bView({ data, loading, monthLabel }: { data: Gstr3bData | null; lo
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
           Best-effort figures from saved documents. Payable is per tax head; cross-head set-off of IGST credit,
-          interest and late fee are not computed — verify on the GST portal before filing.
+          interest and late fee are not computed — verify on the GST portal before filing. Foreign-currency
+          invoices are converted to INR at their recorded exchange rate, and reverse-charge tax is kept out of
+          3.1(a) because the buyer pays it.
         </p>
       </SectionCard>
     </>

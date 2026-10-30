@@ -48,6 +48,8 @@ export interface PartyRecord {
   openingBalance?: number
   notes?: string | null
   status: string
+  /** Ledger name this party is posted to in Tally (blank = the party name). */
+  tallyLedgerName?: string | null
   /** "Both" link: set on a customer that is also a supplier / on a supplier that is also a customer */
   supplierId?: string | null
   supplier?: { id: string; code: string } | null
@@ -73,7 +75,8 @@ type FormState = Record<
   'kind' | 'code' | 'name' | 'nickName' | 'gstin' | 'gstType' | 'pan' | 'contactPerson' | 'phone' | 'altPhone' | 'email'
   | 'addressLine' | 'addressLine2' | 'city' | 'state' | 'stateCode' | 'pincode' | 'country' | 'shippingAddress'
   | 'bankIfsc' | 'bankName' | 'bankAccountNo' | 'bankBranch'
-  | 'paymentTermsDays' | 'creditLimit' | 'openingBalance' | 'openingBalanceSupplier' | 'notes' | 'status',
+  | 'paymentTermsDays' | 'creditLimit' | 'openingBalance' | 'openingBalanceSupplier' | 'notes' | 'status'
+  | 'tallyLedgerName',
   string
 >
 
@@ -107,6 +110,7 @@ const toForm = (kind: PartyKind, p: PartyRecord | null): FormState => ({
   openingBalanceSupplier: '',
   notes: p?.notes ?? '',
   status: p?.status ?? 'ACTIVE',
+  tallyLedgerName: p?.tallyLedgerName ?? '',
 })
 
 const LEGAL_SUFFIX = /\b(private|pvt\.?|limited|ltd\.?|llp|inc\.?|co\.?|company|corporation|corp\.?|&)\b/gi
@@ -372,6 +376,13 @@ export function PartyFormDialog({ open, onOpenChange, kind, editing, companyId, 
           <Field label={form.kind === 'both' && !editing ? 'Opening Balance (receivable)' : 'Opening Balance'}>
             <TextInput {...input('openingBalance')} type="number" />
             <Hint>{(editing ? kind : form.kind) === 'supplier' ? 'Amount you owe the supplier (₹), carried forward' : 'Amount the party owes you (₹), carried forward'}</Hint>
+          </Field>
+          <Field label="Tally ledger name" className="sm:col-span-2">
+            <TextInput {...input('tallyLedgerName')} aria-label="Tally ledger name" maxLength={100} placeholder={form.name.trim() || 'Same as the party name'} />
+            <Hint>
+              The account this party is posted to in Tally — used by the Tally import file and the masters download.
+              Leave blank to use the party name.
+            </Hint>
           </Field>
           {form.kind === 'both' && !editing && (
             <Field label="Opening Balance (payable)">

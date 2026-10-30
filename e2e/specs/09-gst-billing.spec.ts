@@ -41,4 +41,25 @@ test.describe('GST billing options', () => {
     await dialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(dialog).toBeHidden()
   })
+
+  test('the line editor suggests the GST rate from the item HSN', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'Sales Invoices')
+    const dialog = await openCreate(page, 'Invoice')
+
+    // "Flange Coupling FC-90" is billed at 12% but HSN 8483 is an 18% code.
+    await dialog.getByPlaceholder('Search or add item…').first().click()
+    await dialog.getByRole('button', { name: /FG-FLG/ }).click()
+
+    const gstField = dialog.getByPlaceholder('GST %').first()
+    await expect(gstField).toHaveValue('12')
+
+    const hint = dialog.getByRole('button', { name: 'HSN 8483 → 18%' })
+    await expect(hint).toBeVisible()
+    await hint.click()
+    await expect(gstField).toHaveValue('18')
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(dialog).toBeHidden()
+  })
 })

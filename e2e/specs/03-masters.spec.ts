@@ -47,9 +47,14 @@ test.describe('Masters', () => {
 
     const dialog = await openCreate(page, 'Customer')
     await dialog.getByPlaceholder('Precision Tools Pvt Ltd').fill('E2E Traders')
+    // The Tally ledger name is what the Tally export / masters file posts this party to.
+    await dialog.getByLabel('Tally ledger name').fill('E2E TRADERS')
     await dialog.getByRole('button', { name: 'Save' }).click()
     await expect(dialog).toBeHidden()
     await expect(page.getByText('E2E Traders')).toBeVisible()
+
+    const saved = (store.collections.customers as { name: string; tallyLedgerName?: string }[]).find((c) => c.name === 'E2E Traders')
+    expect(saved?.tallyLedgerName).toBe('E2E TRADERS')
 
     await openTab(page, 'Suppliers')
     await expect(page.getByText('Bharat Steel Depot')).toBeVisible()

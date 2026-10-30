@@ -4,6 +4,7 @@ import { POSTED_EXPENSE, accountBalances, moneyPaymentWhere, type AccountBalance
 import { istDay } from '@/lib/business-date'
 import { partyCreditsAsOf } from '@/lib/party-credits'
 import { GST_STATES } from '@/lib/erp-constants'
+import { fxToInr, toInrAmount } from '@/lib/gst-reports'
 
 /**
  * Shared accounting computations for the financial reports (P&L, Balance Sheet, Cash Flow,
@@ -285,17 +286,32 @@ export function stateCodeOf(v?: string | null): string | null {
  * Output and input tax for a date range.
  * Output = sales invoice GST + cess − credit-note GST. Input = bill GST + cess − debit-note GST
  * + GST on ITC-eligible expenses (split CGST/SGST, or IGST when the vendor GSTIN is from another state).
- * `registeredOnly` limits bill ITC to suppliers with a GSTIN (GSTR-3B view).
+ * `registeredOnly` limits bill ITC to suppliers with a GSTIN (GSTR-3B view), but a reverse-charge
+ * bill is always included: the tax is self-assessed, so credit is available even without a GSTIN.
+ *
+ * Sales invoices are stored in their document currency, so every amount is converted to INR at
+ * the invoice's recorded exchange rate. The reverse-charge invoices are also returned on their own
+ * (`reverseCharge`) for the GSTR-3B 3.1(d) / 4(A)(3) rows.
  */
 export async function gstTotals(companyId: string, date: { gte?: Date; lte: Date }, opts: { registeredOnly?: boolean } = {}) {
   const heads = { cgst: true, sgst: true, igst: true } as const
-  const [company, si, sr, pi, pr, exp] = await Promise.all([
+  // Rows (not aggregates) because sales amounts are in the document currency and have to be
+  // converted one by one, and because reverse-charge bills need to be told apart.
+  // Only sales invoices carry a currency — a purchase bill is always recorded in INR.
+  const saleRow = {
+    cgst: true, sgst: true, igst: true, cess: true, grandTotal: true, currency: true, fxRate: true, reverseCharge: true,
+  } as const
+  const billRow = { cgst: true, sgst: true, igst: true, cess: true, grandTotal: true, reverseCharge: true } as const
+  const [company, siRows, sr, piRows, pr, exp] = await Promise.all([
     db.company.findUnique({ where: { id: companyId }, select: { stateCode: true, state: true, gstin: true } }),
-    db.salesInvoice.aggregate({ where: { companyId, status: NOT_CANCELLED, date }, _sum: { ...heads, cess: true } }),
+    db.salesInvoice.findMany({ where: { companyId, status: NOT_CANCELLED, date }, select: saleRow }),
     db.salesReturn.aggregate({ where: { companyId, status: NOT_CANCELLED, date }, _sum: heads }),
-    db.purchaseInvoice.aggregate({
-      where: { companyId, status: NOT_CANCELLED, date, ...(opts.registeredOnly ? { supplier: { gstin: { not: null } } } : {}) },
-      _sum: { ...heads, cess: true },
+    db.purchaseInvoice.findMany({
+      where: {
+        companyId, status: NOT_CANCELLED, date,
+        ...(opts.registeredOnly ? { OR: [{ supplier: { gstin: { not: null } } }, { reverseCharge: true }] } : {}),
+      },
+      select: billRow,
     }),
     db.purchaseReturn.aggregate({ where: { companyId, status: NOT_CANCELLED, date }, _sum: heads }),
     db.expense.findMany({
@@ -303,12 +319,20 @@ export async function gstTotals(companyId: string, date: { gte?: Date; lte: Date
       select: { gstAmount: true, vendorGstin: true },
     }),
   ])
+  type BillRow = { cgst?: number | null; sgst?: number | null; igst?: number | null; cess?: number | null; grandTotal?: number | null; currency?: string | null; fxRate?: number | null; reverseCharge?: boolean | null }
+  const sales = siRows as unknown as BillRow[]
+  const bills = piRows as unknown as BillRow[]
+  // Ordinary outward tax; a reverse-charge invoice is reported on its own (the buyer pays that tax).
+  const salesNonRcm = sales.filter((r) => !r.reverseCharge)
+  const inrSales = (pick: (r: BillRow) => number | null | undefined) =>
+    salesNonRcm.reduce((total, r) => total + toInrAmount(pick(r), fxToInr(r.currency, r.fxRate)), 0)
+
   const own = company?.stateCode || company?.gstin?.slice(0, 2) || stateCodeOf(company?.state)
   const output: TaxHeads = {
-    cgst: sum(si._sum.cgst) - sum(sr._sum.cgst),
-    sgst: sum(si._sum.sgst) - sum(sr._sum.sgst),
-    igst: sum(si._sum.igst) - sum(sr._sum.igst),
-    cess: sum(si._sum.cess),
+    cgst: inrSales((r) => r.cgst) - sum(sr._sum.cgst),
+    sgst: inrSales((r) => r.sgst) - sum(sr._sum.sgst),
+    igst: inrSales((r) => r.igst) - sum(sr._sum.igst),
+    cess: inrSales((r) => r.cess),
   }
   const expenseItc = zeroHeads()
   for (const e of exp) {
@@ -316,11 +340,14 @@ export async function gstTotals(companyId: string, date: { gte?: Date; lte: Date
     if (vendorState && own && vendorState !== own) expenseItc.igst += e.gstAmount
     else { expenseItc.cgst += e.gstAmount / 2; expenseItc.sgst += e.gstAmount / 2 }
   }
+  // A purchase bill is always in INR, so no rate is applied.
+  const billSum = (pick: (r: BillRow) => number | null | undefined) =>
+    bills.reduce((total, r) => total + (Number(pick(r)) || 0), 0)
   const billItc: TaxHeads = {
-    cgst: sum(pi._sum.cgst) - sum(pr._sum.cgst),
-    sgst: sum(pi._sum.sgst) - sum(pr._sum.sgst),
-    igst: sum(pi._sum.igst) - sum(pr._sum.igst),
-    cess: sum(pi._sum.cess),
+    cgst: billSum((r) => r.cgst) - sum(pr._sum.cgst),
+    sgst: billSum((r) => r.sgst) - sum(pr._sum.sgst),
+    igst: billSum((r) => r.igst) - sum(pr._sum.igst),
+    cess: billSum((r) => r.cess),
   }
   const input: TaxHeads = {
     cgst: billItc.cgst + expenseItc.cgst, sgst: billItc.sgst + expenseItc.sgst,
@@ -328,6 +355,26 @@ export async function gstTotals(companyId: string, date: { gte?: Date; lte: Date
   }
   const o = roundHeads(output)
   const i = roundHeads(input)
+
+  // Reverse-charge documents: the recipient pays the tax, so they are reported on their own
+  // (GSTR-3B 3.1(d) outward / 4(A)(3) self-assessed ITC) instead of looking like ordinary tax.
+  const rcmBlock = (rows: BillRow[]) => {
+    const sumOf = (pick: (r: BillRow) => number | null | undefined) =>
+      rows.reduce((total, r) => total + toInrAmount(pick(r), fxToInr(r.currency, r.fxRate)), 0)
+    // (bills carry no currency — fxToInr returns 1 for them)
+    const tax = roundHeads({ cgst: sumOf((r) => r.cgst), sgst: sumOf((r) => r.sgst), igst: sumOf((r) => r.igst), cess: sumOf((r) => r.cess) })
+    const taxable = r2(rows.reduce((total, r) => {
+      const fx = fxToInr(r.currency, r.fxRate)
+      const net = (r.grandTotal || 0) - (r.cgst || 0) - (r.sgst || 0) - (r.igst || 0) - (r.cess || 0)
+      return total + toInrAmount(net, fx)
+    }, 0))
+    return { docs: rows.length, taxable, tax, totalTax: headsTotal(tax) }
+  }
+
+  const reverseCharge = {
+    outward: rcmBlock(sales.filter((r) => r.reverseCharge)),
+    inward: rcmBlock(bills.filter((r) => r.reverseCharge)),
+  }
   return {
     output: o,
     input: i,
@@ -335,8 +382,13 @@ export async function gstTotals(companyId: string, date: { gte?: Date; lte: Date
     expenseItc: roundHeads(expenseItc),
     outputTotal: headsTotal(o),
     inputTotal: headsTotal(i),
-    /** + = payable to government, − = credit */
-    net: r2(headsTotal(o) - headsTotal(i)),
+    /**
+     * + = payable to government, − = credit.
+     * The inward reverse-charge tax is added back: it is self-assessed (3.1(d)) and paid in cash,
+     * while the same amount is claimed as ITC, so leaving it out would understate the liability.
+     */
+    net: r2(headsTotal(o) - headsTotal(i) + reverseCharge.inward.totalTax),
+    reverseCharge,
   }
 }
 

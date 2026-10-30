@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, r2, requireRead } from '@/lib/erp-helpers'
 import { fyRange, gstTotals, headsTotal, type TaxHeads } from '@/lib/accounting'
+import { fxToInr, toInrAmount } from '@/lib/gst-reports'
 
 // GET /api/reports/gstr9?companyId=&fy=YYYY   (FY = 1 Apr YYYY → 31 Mar YYYY+1; default current FY)
 // GSTR-9 annual return HELPER summary — computed from the same documents as GSTR-1 / GSTR-3B:
@@ -30,6 +31,7 @@ export async function GET(req: Request) {
         where: { companyId, status: { not: 'CANCELLED' }, date },
         select: {
           grandTotal: true, cgst: true, sgst: true, igst: true, cess: true, roundOff: true, isInterState: true,
+          currency: true, fxRate: true,
           customer: { select: { gstin: true } },
           items: { select: { itemId: true, hsn: true, qty: true, gstRate: true, cessRate: true, lineTotal: true } },
         },
@@ -40,7 +42,8 @@ export async function GET(req: Request) {
       }),
       gstTotals(companyId, date, { registeredOnly: true }),
       db.purchaseInvoice.aggregate({
-        where: { companyId, status: { not: 'CANCELLED' }, date, supplier: { gstin: null } },
+        // reverse-charge tax is self-assessed, so that ITC is not ineligible
+        where: { companyId, status: { not: 'CANCELLED' }, date, supplier: { gstin: null }, NOT: { reverseCharge: true } },
         _sum: { cgst: true, sgst: true, igst: true, cess: true },
       }),
     ])
@@ -59,20 +62,22 @@ export async function GET(req: Request) {
     const b2c = zero()
     const hsnMap = new Map<string, { hsn: string; desc: string; uqc: string; rate: number; qty: number; taxable: number; igst: number; cgst: number; sgst: number; cess: number }>()
     for (const inv of invoices) {
+      // The annual return is in INR, but invoices are stored in their document currency.
+      const fx = fxToInr(inv.currency, inv.fxRate)
       const row = inv.customer?.gstin ? b2b : b2c
       row.count += 1
-      row.taxable += (inv.grandTotal || 0) - (inv.cgst || 0) - (inv.sgst || 0) - (inv.igst || 0) - (inv.cess || 0) - (inv.roundOff || 0)
-      row.igst += inv.igst || 0
-      row.cgst += inv.cgst || 0
-      row.sgst += inv.sgst || 0
-      row.cess += inv.cess || 0
+      row.taxable += toInrAmount((inv.grandTotal || 0) - (inv.cgst || 0) - (inv.sgst || 0) - (inv.igst || 0) - (inv.cess || 0) - (inv.roundOff || 0), fx)
+      row.igst += toInrAmount(inv.igst, fx)
+      row.cgst += toInrAmount(inv.cgst, fx)
+      row.sgst += toInrAmount(inv.sgst, fx)
+      row.cess += toInrAmount(inv.cess, fx)
       for (const l of inv.items) {
         const master = itemMap.get(l.itemId)
         const hsn = l.hsn || master?.hsn || 'NA'
         const rate = l.gstRate || 0
         const key = `${hsn}|${rate}`
         const h = hsnMap.get(key) ?? { hsn, desc: master?.name || '', uqc: (master?.uom || 'OTH').slice(0, 3).toUpperCase(), rate, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 }
-        const txval = l.lineTotal || 0
+        const txval = toInrAmount(l.lineTotal, fx)
         const tax = (txval * rate) / 100
         h.qty += l.qty || 0
         h.taxable += txval

@@ -68,6 +68,9 @@ test.describe('GST reporting', () => {
 
     await openTab(page, 'GSTR-3B')
     await expect(page.getByText(/3B|Outward|ITC/i).first()).toBeVisible()
+    // Reverse-charge documents get their own rows instead of being mixed into 3.1(a) / 4(A)(5).
+    await expect(page.getByText('3.1(d) Inward supplies liable to reverse charge')).toBeVisible()
+    await expect(page.getByText('Outward reverse-charge invoices')).toBeVisible()
 
     await openTab(page, 'GSTR-9 (Annual)')
     await expect(page.getByText(/2026-27|Annual/i).first()).toBeVisible()

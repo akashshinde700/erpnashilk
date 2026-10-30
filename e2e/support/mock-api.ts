@@ -249,6 +249,11 @@ function gstr3b() {
       totalTax: 6372,
       ineligible: heads(0), ineligibleTotal: 0,
     },
+    // Mirrors the real route: reverse-charge documents are reported on their own.
+    reverseCharge: {
+      outward: { docs: 1, taxable: 12000, tax: { taxable: 0, cgst: 0, sgst: 0, igst: 2160, cess: 0 }, totalTax: 2160 },
+      inward: { docs: 1, taxable: 8000, tax: { taxable: 0, cgst: 720, sgst: 720, igst: 0, cess: 0 }, totalTax: 1440 },
+    },
     net: { taxable: 13200, cgst: 2664, sgst: 2664, igst: 7200, cess: 0 },
     payable: { taxable: 0, cgst: 2664, sgst: 2664, igst: 7200, cess: 0 },
     credit: heads(0),
@@ -288,7 +293,10 @@ function gstr1Json(store: Store) {
       b2cs: [{ sply_ty: 'INTRA', rt: 18, txval: 25000, camt: 2250, samt: 2250 }],
       hsn: { data: [{ hsn_sc: '8483', uqc: 'NOS', qty: 40, txval: 50000, camt: 4500, samt: 4500 }] },
     },
-    summary: { invoices: rows.length, b2bInvoices: rows.length, b2clInvoices: 0, b2csRows: 1, creditNotes: 0, hsnRows: 1, missingGstin: false },
+    summary: {
+      invoices: rows.length, b2bInvoices: rows.length, b2clInvoices: 0, b2csRows: 1, creditNotes: 0, hsnRows: 1,
+      reverseChargeInvoices: 1, foreignCurrencyInvoices: 1, missingGstin: false,
+    },
   }
 }
 

@@ -35,6 +35,22 @@ test.describe('Purchase cycle', () => {
     await expect(page.getByText('DN/26-27/0001')).toBeVisible()
   })
 
+  test('a purchase bill can be marked as reverse charge', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'Purchase Invoices')
+    const dialog = await openCreate(page, /^Invoice$/)
+
+    // The buyer self-assesses the GST: GSTR-3B reports it under 3.1(d) and the ITC stays claimable.
+    await expect(dialog.getByText(/Reverse charge \(Sec 9\(3\)\/9\(4\)\)/)).toBeVisible()
+    const rcm = dialog.getByRole('checkbox', { name: 'Reverse charge' })
+    await expect(rcm).not.toBeChecked()
+    await rcm.click()
+    await expect(rcm).toBeChecked()
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(dialog).toBeHidden()
+  })
+
   test('a purchase bill can be started from the dialog', async ({ page, store }) => {
     await loginFast(page, store)
     await openModule(page, 'Purchase Invoices')

@@ -100,6 +100,12 @@ export function partyData(body: Body, mode: 'create' | 'update') {
     if (a && !/^\d{6,18}$/.test(a)) throw new ApiError('Bank account number must be 6–18 digits', 400)
     out.bankAccountNo = a
   }
+  // Tally ledger name: the account this party is posted to in Tally (blank = use the party name).
+  if (has('tallyLedgerName')) {
+    const ledger = text(body.tallyLedgerName)
+    if (ledger && ledger.length > 100) throw new ApiError('Tally ledger name must be 100 characters or fewer', 400)
+    out.tallyLedgerName = ledger
+  }
   if (has('paymentTermsDays')) out.paymentTermsDays = body.paymentTermsDays === undefined || body.paymentTermsDays === '' || body.paymentTermsDays === null ? 30 : num(body.paymentTermsDays, 'Credit days', { min: 0, int: true })
   if (has('creditLimit')) out.creditLimit = body.creditLimit === undefined || body.creditLimit === '' || body.creditLimit === null ? 0 : num(body.creditLimit, 'Credit limit', { min: 0 })
   if (has('openingBalance')) out.openingBalance = body.openingBalance === undefined || body.openingBalance === '' || body.openingBalance === null ? 0 : num(body.openingBalance, 'Opening balance')
@@ -168,7 +174,7 @@ export const PROFILE_KEYS = [
   'name', 'nickName', 'gstin', 'pan', 'contactPerson', 'phone', 'altPhone', 'email',
   'addressLine', 'addressLine2', 'city', 'state', 'stateCode', 'pincode', 'country',
   'bankIfsc', 'bankName', 'bankAccountNo', 'bankBranch', 'paymentTermsDays', 'notes',
-  'gstType', 'shippingAddress',
+  'gstType', 'shippingAddress', 'tallyLedgerName',
 ] as const
 
 /** The company's walk-in "Cash Sale" customer (created on first use). */

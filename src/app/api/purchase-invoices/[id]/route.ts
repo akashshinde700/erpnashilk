@@ -167,6 +167,7 @@ async function editInvoice(body: any, companyId: string, pinv: Awaited<ReturnTyp
         supplierInvDate: body.supplierInvDate === undefined ? pinv.supplierInvDate : toDate(body.supplierInvDate),
         dueDate,
         isInterState: interState,
+        reverseCharge: body.reverseCharge === undefined ? pinv.reverseCharge : !!body.reverseCharge,
         subtotal: totals.subtotal,
         discountTotal: totals.discountTotal,
         cgst: totals.cgst,
