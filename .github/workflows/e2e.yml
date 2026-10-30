@@ -27,7 +27,6 @@ jobs:
       # only have to satisfy module-scope env checks during the production build.
       DATABASE_URL: 'mysql://root@127.0.0.1:3306/manuflow_e2e'
       SESSION_SECRET: 'ci-only-session-secret-please-override-0123456789'
-      NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ''
 
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +47,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Build the app
-        run: npm run build
+        env:
+          # Same build invocation the suite is validated against: webpack compiler,
+          # with type checking delegated to the dedicated API type test.
+          NEXT_SKIP_TYPECHECK: '1'
+        run: npx next build --webpack
 
       - name: Run Playwright tests
         run: npx playwright test --reporter=list,html
