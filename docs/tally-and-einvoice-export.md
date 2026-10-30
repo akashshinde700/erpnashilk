@@ -134,7 +134,7 @@ envelope carries `REMOTEID="MANUFLOW-INV-<id>"`.
 | `tallyCompanyName` | Company (Settings) | `SVCURRENTCOMPANY` in the import envelope — must match the open Tally company exactly |
 | `tallySalesLedger`, `tallyCgstLedger`, `tallySgstLedger`, `tallyIgstLedger`, `tallyFreightLedger`, `tallyRoundOffLedger` | Company (Settings) | Ledger names for the export |
 | `TALLY_LEDGER_SALES`, `TALLY_LEDGER_CGST`, `TALLY_LEDGER_SGST`, `TALLY_LEDGER_IGST`, `TALLY_LEDGER_FREIGHT`, `TALLY_LEDGER_ROUNDOFF`, `TALLY_LEDGER_CESS` | env | Fallback ledger names |
-| `tallyLedgerName` | Customer / Supplier | Ledger name when Tally spells the party differently |
+| `tallyLedgerName` | Customer / Supplier (party form → Commercial) | Ledger name when Tally spells the party differently; blank = the party name |
 | `TALLY_HTTP_URL` | env | Only for the connectivity check / direct-import connector |
 
 ## Tests

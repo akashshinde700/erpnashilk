@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, ApiError, r2, requireRead } from '@/lib/erp-helpers'
 import { endOfDayStr, stateCodeOf } from '@/lib/accounting'
+import { fxToInr, rchrgFlag, toInrAmount } from '@/lib/gst-reports'
 
 // GET /api/reports/gstr1-json?companyId=&month=YYYY-MM
 // Best-effort GSTR-1 JSON shaped like the GSTN offline tool import:
@@ -11,7 +12,9 @@ import { endOfDayStr, stateCodeOf } from '@/lib/accounting'
 //   b2cs — all other unregistered sales grouped by place of supply + rate
 //   cdnr — credit notes (sales returns) to registered customers
 //   hsn  — HSN-wise summary of outward supplies
-// Freight / packing are added as taxable value at their own GST rate. Review in the offline tool before upload.
+// Freight / packing are added as taxable value at their own GST rate.
+// Foreign-currency invoices are converted to INR at the invoice's recorded exchange rate, and
+// reverse-charge invoices carry rchrg: "Y" instead of the hard-coded "N". Review in the offline tool before upload.
 
 /**
  * B2CL limit: inter-state B2C invoices with an invoice value ABOVE this go to table 5 (b2cl).
@@ -88,38 +91,47 @@ export async function GET(req: Request) {
     const b2csMap = new Map<string, { sply_ty: string; pos: string; typ: string; rt: number; txval: number; iamt: number; camt: number; samt: number; csamt: number }>()
     const hsnMap = new Map<string, { hsn_sc: string; desc: string; uqc: string; qty: number; rt: number; txval: number; iamt: number; camt: number; samt: number; csamt: number }>()
 
+    let reverseChargeInvoices = 0
+    let foreignCurrencyInvoices = 0
     for (const inv of invoices) {
       const inter = inv.isInterState
+      // Amounts are stored in the document currency; the return is filed in INR.
+      const fx = fxToInr(inv.currency, inv.fxRate)
+      if (fx !== 1) foreignCurrencyInvoices += 1
+      if (inv.reverseCharge) reverseChargeInvoices += 1
+      const rchrg = rchrgFlag(inv.reverseCharge)
+      const grandTotal = toInrAmount(inv.grandTotal, fx)
       const rates = new Map<number, Bucket>()
       for (const l of inv.items) {
-        const cess = ((l.lineTotal || 0) * (l.cessRate || 0)) / 100
-        addTo(rates, l.gstRate || 0, l.lineTotal || 0, inter, cess)
+        const lineTotal = toInrAmount(l.lineTotal, fx)
+        const cess = (lineTotal * (l.cessRate || 0)) / 100
+        addTo(rates, l.gstRate || 0, lineTotal, inter, cess)
         const master = itemMap.get(l.itemId)
         const hsn = l.hsn || master?.hsn || 'NA'
         const key = `${hsn}|${l.gstRate || 0}`
         const h = hsnMap.get(key) ?? { hsn_sc: hsn, desc: master?.name || '', uqc: (master?.uom || 'OTH').slice(0, 3).toUpperCase(), qty: 0, rt: l.gstRate || 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 }
-        const tax = ((l.lineTotal || 0) * (l.gstRate || 0)) / 100
+        const tax = (lineTotal * (l.gstRate || 0)) / 100
         h.qty += l.qty || 0
-        h.txval += l.lineTotal || 0
+        h.txval += lineTotal
         if (inter) h.iamt += tax
         else { h.camt += tax / 2; h.samt += tax / 2 }
         h.csamt += cess
         hsnMap.set(key, h)
       }
-      if (inv.freightCharge > 0) addTo(rates, inv.freightGstRate, inv.freightCharge, inter)
-      if (inv.packingCharge > 0) addTo(rates, inv.packingGstRate, inv.packingCharge, inter)
+      if (inv.freightCharge > 0) addTo(rates, inv.freightGstRate, toInrAmount(inv.freightCharge, fx), inter)
+      if (inv.packingCharge > 0) addTo(rates, inv.packingGstRate, toInrAmount(inv.packingCharge, fx), inter)
       const pos = posOf(inv.customer, inv.placeOfSupply)
       const gstin = inv.customer?.gstin
       if (gstin) {
         const g = b2bMap.get(gstin) ?? { ctin: gstin, inv: [] }
-        g.inv.push({ inum: inv.number, idt: ddmmyyyy(inv.date), val: r2(inv.grandTotal), pos, rchrg: 'N', inv_typ: 'R', itms: itms(rates) })
+        g.inv.push({ inum: inv.number, idt: ddmmyyyy(inv.date), val: r2(grandTotal), pos, rchrg, inv_typ: 'R', itms: itms(rates) })
         b2bMap.set(gstin, g)
-      } else if (inter && inv.grandTotal > B2CL_THRESHOLD) {
+      } else if (inter && grandTotal > B2CL_THRESHOLD) {
         // No GSTIN → unregistered buyer (gstType UNREGISTERED / CONSUMER). The registered test stays GSTIN-based like b2b:
         // gstType defaults to UNREGISTERED, so older customers with a GSTIN may still carry it.
         const g = b2clMap.get(pos) ?? { pos, inv: [] }
         g.inv.push({
-          inum: inv.number, idt: ddmmyyyy(inv.date), val: r2(inv.grandTotal),
+          inum: inv.number, idt: ddmmyyyy(inv.date), val: r2(grandTotal),
           itms: itms(rates).map((x) => ({ num: x.num, itm_det: { rt: x.itm_det.rt, txval: x.itm_det.txval, iamt: x.itm_det.iamt, csamt: x.itm_det.csamt } })),
         })
         b2clMap.set(pos, g)
@@ -169,6 +181,8 @@ export async function GET(req: Request) {
         creditNotes: returns.length - unregisteredCreditNotes,
         unregisteredCreditNotes,
         hsnRows: json.hsn.data.length,
+        reverseChargeInvoices,
+        foreignCurrencyInvoices,
         missingGstin: !company?.gstin,
       },
     })

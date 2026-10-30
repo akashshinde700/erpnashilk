@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, r2, requireRead } from '@/lib/erp-helpers'
 import { gstTotals, headsTotal, parsePeriod, type TaxHeads } from '@/lib/accounting'
+import { fxToInr, toInrAmount } from '@/lib/gst-reports'
 
 // GET /api/reports/gstr3b?companyId=&from=&to=   (UI passes a month)
 // GSTR-3B summary (best effort, from documents):
@@ -8,6 +9,9 @@ import { gstTotals, headsTotal, parsePeriod, type TaxHeads } from '@/lib/account
 //   4(A)(5) ITC = GST on bills from registered suppliers − debit-note GST + GST on ITC-eligible expenses
 //   4(D) ineligible = GST on bills from suppliers without a GSTIN
 //   6.1 net payable per head = output − ITC (negative = credit carried forward; cross-head set-off not applied)
+//   3.1(d) / 4(A)(3) reverse charge: inward supply tax is self-assessed (added to the liability) and
+//          claimed back as ITC; outward reverse-charge invoices are shown separately with the tax the
+//          buyer has to pay. Sales invoices in a foreign currency are converted to INR at their rate.
 export async function GET(req: Request) {
   try {
     requireRead(req, 'gst-report') // Phase 5: financial read permission
@@ -15,19 +19,26 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const { fromStr, toStr, from, to } = parsePeriod(searchParams)
     const date = { gte: from, lte: to }
-    const billSum = { grandTotal: true, cgst: true, sgst: true, igst: true, cess: true, roundOff: true } as const
+    const billSum = { grandTotal: true, cgst: true, sgst: true, igst: true, cess: true, roundOff: true, currency: true, fxRate: true } as const
 
-    const [gst, si, sr, unreg] = await Promise.all([
+    const [gst, siRows, sr, unreg] = await Promise.all([
       gstTotals(companyId, date, { registeredOnly: true }),
-      db.salesInvoice.aggregate({ where: { companyId, status: { not: 'CANCELLED' }, date }, _sum: billSum, _count: { _all: true } }),
+      db.salesInvoice.findMany({ where: { companyId, status: { not: 'CANCELLED' }, date }, select: billSum }),
       db.salesReturn.aggregate({ where: { companyId, status: { not: 'CANCELLED' }, date }, _sum: { subtotal: true }, _count: { _all: true } }),
       db.purchaseInvoice.aggregate({
-        where: { companyId, status: { not: 'CANCELLED' }, date, supplier: { gstin: null } },
+        // A reverse-charge bill without a GSTIN still gives ITC — it is not "ineligible".
+        where: { companyId, status: { not: 'CANCELLED' }, date, supplier: { gstin: null }, NOT: { reverseCharge: true } },
         _sum: { cgst: true, sgst: true, igst: true, cess: true },
       }),
     ])
-    const s = si._sum
-    const salesTaxable = (s.grandTotal || 0) - (s.cgst || 0) - (s.sgst || 0) - (s.igst || 0) - (s.cess || 0) - (s.roundOff || 0)
+    type SaleRow = { grandTotal?: number | null; cgst?: number | null; sgst?: number | null; igst?: number | null; cess?: number | null; roundOff?: number | null; currency?: string | null; fxRate?: number | null }
+    const si = siRows as unknown as SaleRow[]
+    const inrSale = (pick: (r: SaleRow) => number | null | undefined) =>
+      si.reduce((total, r) => total + toInrAmount(pick(r), fxToInr(r.currency, r.fxRate)), 0)
+    const salesTaxable = r2(
+      inrSale((r) => r.grandTotal) - inrSale((r) => r.cgst) - inrSale((r) => r.sgst)
+      - inrSale((r) => r.igst) - inrSale((r) => r.cess) - inrSale((r) => r.roundOff),
+    )
     const outwardTaxable = r2(salesTaxable - (sr._sum.subtotal || 0))
 
     const ineligible: TaxHeads = {
@@ -45,7 +56,7 @@ export async function GET(req: Request) {
         taxable: outwardTaxable,
         salesTaxable: r2(salesTaxable),
         returnsTaxable: r2(sr._sum.subtotal || 0),
-        invoices: si._count._all,
+        invoices: si.length,
         creditNotes: sr._count._all,
         tax: gst.output,
         totalTax: gst.outputTotal,
@@ -58,6 +69,7 @@ export async function GET(req: Request) {
         ineligible,
         ineligibleTotal: headsTotal(ineligible),
       },
+      reverseCharge: gst.reverseCharge,
       net,
       payable,
       credit,

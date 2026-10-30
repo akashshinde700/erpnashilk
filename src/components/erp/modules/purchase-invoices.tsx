@@ -4,6 +4,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 import { BadgeIndianRupee, Pencil, Plus, Redo2, Trash2, X } from 'lucide-react'
 import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
@@ -24,6 +25,7 @@ interface PiRow {
   subtotal: number; grandTotal: number; paidAmount: number; supplierInvNo?: string | null; notes?: string | null
   supplierInvDate?: string | null; dueDate?: string | null; grnId?: string | null; poId?: string | null
   supplier?: { name?: string | null } | null
+  reverseCharge?: boolean | null
 }
 interface DraftLine {
   itemId: string; qty: number; rate: number; gstRate: number
@@ -107,6 +109,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
   const [dueTouched, setDueTouched] = React.useState(false) // user edited the due date — stop auto-filling
   const [grnId, setGrnId] = React.useState('')
   const [notes, setNotes] = React.useState('')
+  const [reverseCharge, setReverseCharge] = React.useState(false)
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
   // Bill-level discount & charges
   const [billDiscount, setBillDiscount] = React.useState(0)
@@ -146,7 +149,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
   const poOpts = (pos.data?.items ?? []).filter((p) => INVOICEABLE.includes(p.status)).map((p) => ({ value: p.id, label: `${p.number} (${p.status.replaceAll('_', ' ')})` }))
 
   function resetForm() {
-    setSupplierId(''); setPoId(''); setDate(today()); setSupplierInvNo(''); setNotes(''); setLines([emptyLine()])
+    setSupplierId(''); setPoId(''); setDate(today()); setSupplierInvNo(''); setNotes(''); setReverseCharge(false); setLines([emptyLine()])
     setReceiveStock(true); setStockWh('')
     setSupplierInvDate(''); setDueDate(''); setDueTouched(false); setGrnId('')
     setBillDiscount(0); setFreightCharge(0); setFreightGstRate(18); setPackingCharge(0); setPackingGstRate(18)
@@ -171,6 +174,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
       setSupplierInvDate(b.supplierInvDate ? String(b.supplierInvDate).slice(0, 10) : '')
       if (b.dueDate) { setDueDate(String(b.dueDate).slice(0, 10)); setDueTouched(true) }
       setNotes(b.notes || '')
+      setReverseCharge(!!b.reverseCharge)
       setBillDiscount(b.billDiscount || 0)
       setFreightCharge(b.freightCharge || 0); setFreightGstRate(b.freightGstRate ?? 18)
       setPackingCharge(b.packingCharge || 0); setPackingGstRate(b.packingGstRate ?? 18)
@@ -282,6 +286,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
           action: 'edit', companyId, supplierId, date,
           supplierInvNo: supplierInvNo || '', supplierInvDate: supplierInvDate || '',
           dueDate: effectiveDue || '', notes: notes || '', items: payloadLines,
+          reverseCharge,
           billDiscount, freightCharge, freightGstRate, packingCharge, packingGstRate,
           receiveStock: receiving, ...(receiving ? { warehouseId: stockWh || undefined } : {}),
         })
@@ -295,6 +300,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
         companyId, supplierId, poId: poId || undefined, grnId: grnId || undefined, date,
         supplierInvNo: supplierInvNo || undefined, supplierInvDate: supplierInvDate || undefined,
         dueDate: effectiveDue || undefined, notes: notes || undefined, items: payloadLines,
+        reverseCharge,
         billDiscount, freightCharge, freightGstRate, packingCharge, packingGstRate,
         ...(paidNow > 0 ? {
           paidNow, paymentMode: paidMode, accountId: paidAccountId || undefined,
@@ -524,6 +530,10 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
               <Field label="Packing (₹)"><NumberInput value={packingCharge} min={0} onChange={setPackingCharge} /></Field>
               <Field label="Packing GST %"><NumberInput value={packingGstRate} min={0} onChange={setPackingGstRate} /></Field>
             </div>
+            <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={reverseCharge} aria-label="Reverse charge" onCheckedChange={(v) => setReverseCharge(v === true)} />
+              Reverse charge (Sec 9(3)/9(4)) — you pay the GST and claim it as ITC
+            </label>
             {!editing && <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <Field label="Paid now (₹)"><NumberInput value={paidNow} min={0} onChange={setPaidNow} /></Field>
               <Field label="Mode">
