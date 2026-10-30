@@ -61,3 +61,4 @@ deploy_config*.json
 
 # this repo installs with bun; the sandbox npm install writes its own lockfile
 /package-lock.json
+__pycache__/

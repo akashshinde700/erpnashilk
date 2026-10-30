@@ -70,7 +70,7 @@ fixes listed below.
 | `eslint src e2e playwright.config.ts` | **PASS** — 0 errors, 2 pre-existing `no-location-assign` warnings |
 | `tsc --noEmit` | No errors in the changed files. The sandbox cannot run `prisma generate` (no engine download), so data-layer files type-check only in CI. |
 | `e2e/specs/11-mobile.spec.ts` (CI, real Chromium) | **PASS** — 320×568, 360×800, 375×812, 390×844, 412×915, 667×375 (landscape), 768×1024, 1024×768, 1366×768 |
-| Full Playwright suite (CI) | **PASS** — 145 tests (132 existing + 13 mobile) |
+| Full Playwright suite (CI) | **PASS** — 148 tests (132 existing + 16 mobile) |
 | PWA assets served by the standalone build | **PASS** — `/offline` 200, `/sw.js` 200 `application/javascript`, `/manifest.webmanifest` 200 `application/manifest+json`, `viewport-fit=cover` + manifest link in the HTML |
 | Manifest shape + worker registration in a production build | **PASS** — asserted in the browser (name, short_name, start_url, scope, display, colours, 192/512/maskable icons, `navigator.serviceWorker.getRegistration('/')`) |
 | Offline banner on disconnect / clears on reconnect | **PASS** — asserted with `context.setOffline(true/false)` |

@@ -108,7 +108,7 @@ Run it against the production server, as CI does. The default web command (`npm 
 `127.0.0.1`, which Next 16 dev blocks as a cross-origin dev request, so every UI spec hangs on "Loading ManuFlow
 ERP…". Make sure nothing else is listening on port 3000 first: `reuseExistingServer` silently reuses it.
 
-Expected: **151 passed** (`e2e/specs` 11 files + `e2e/unit` 7 files). Run it twice if any flake appears and note which
+Expected: **151 passed** (`e2e/specs` 11 files + `e2e/unit` 7 files; 16 of them are the mobile viewport suite). Run it twice if any flake appears and note which
 test flaked — flaky tests are a finding, not a pass.
 
 ## Gate 4 — API suite against real MySQL (this is the one that needs my machine)
