@@ -7,7 +7,7 @@ staging database kaun sa hai. Baaki sab Claude khud chalayega aur end me report 
 Ye prompt specifically un 3 guarantees ko verify karta hai jo release ke liye zaroori hain — **inventory integrity**,
 **billing accuracy**, **transaction safety** — plus backup/restore drill aur pichhle audit me fix hui cheezein.
 
-Expected green state (aaj ke code par): Playwright **132 passed**, `bun test` **27 files pass**, `npm run lint`
+Expected green state (aaj ke code par): Playwright **151 passed**, `bun test` **27 files / 325 tests pass**, `npm run lint`
 **0 errors**, `npx tsc --noEmit` **0 errors** (local par real Prisma client generate hota hai, isliye 0 — koi error aaye
 to wo asli bug hai).
 
@@ -61,7 +61,7 @@ mysql -u root -p -e "GRANT ALL ON manuflow_test.* TO 'manuflow_test'@'127.0.0.1'
 
 export TEST_DATABASE_URL='mysql://manuflow_test:CHANGE_ME@127.0.0.1:3306/manuflow_test'
 
-# Dev/app database (fresh, for the manual scenarios + live E2E)
+# Dev/app database (fresh, for the manual scenarios in Gate 6)
 export DATABASE_URL='mysql://root:CHANGE_ME@127.0.0.1:3306/manuflow_dev'
 export SESSION_SECRET="$(openssl rand -base64 48)"
 
@@ -100,10 +100,15 @@ npm run build                # next build; must finish with all pages generated
 ## Gate 3 — Playwright suite (UI + pure functions, no DB needed)
 
 ```bash
-npx playwright test --reporter=list
+npm run build
+E2E_WEB_COMMAND="npx next start -p 3000" npx playwright test --reporter=list
 ```
 
-Expected: **132 passed** (`e2e/specs` 10 files + `e2e/unit` 6 files). Run it twice if any flake appears and note which
+Run it against the production server, as CI does. The default web command (`npm run dev`) loads the app from
+`127.0.0.1`, which Next 16 dev blocks as a cross-origin dev request, so every UI spec hangs on "Loading ManuFlow
+ERP…". Make sure nothing else is listening on port 3000 first: `reuseExistingServer` silently reuses it.
+
+Expected: **151 passed** (`e2e/specs` 11 files + `e2e/unit` 7 files). Run it twice if any flake appears and note which
 test flaked — flaky tests are a finding, not a pass.
 
 ## Gate 4 — API suite against real MySQL (this is the one that needs my machine)
@@ -154,12 +159,13 @@ this ERP has **work orders / material issues / production entries**, not job car
 3. Vendor + PO for **100 KG** `RM-1` @ ₹10 → GRN against it (inward 100 KG). Check Stock Balance: `RM-1 = 100.000 KG`,
    value ₹1000.
 4. Two work orders: **WO-A** planned 10 NOS, **WO-B** planned 5 NOS (both for FG-1).
-5. Issue material: **30 KG to WO-A** and **15 KG to WO-B** (split of the same inward).
-   *Expected:* `RM-1` balance **55 KG**; two material-issue documents; a stock-ledger `ISSUE_OUT` row for each; the sum
-   of ledger `qtyOut` for RM-1 = 45.
-6. Produce on WO-A: report **10 NOS**, 0 rejected. BOM need = 20 KG, already issued 30 KG → backflush must consume
-   **0 KG** (already more than needed). Check: entry succeeds, FG-1 +10, RM-1 stays 55.
-7. Produce on WO-B: report **5 NOS** → need 10 KG, issued 15 → backflush **0**. RM-1 stays 55.
+5. Issue material: **21 KG to WO-A** and **10.5 KG to WO-B** (split of the same inward; that is each work order's
+   requirement + the 5 % cap — 30 KG against a 20 KG requirement is refused, see step 9).
+   *Expected:* `RM-1` balance **68.5 KG**; two material-issue documents; a stock-ledger `ISSUE_OUT` row for each; the sum
+   of ledger `qtyOut` for RM-1 = 31.5.
+6. Produce on WO-A: report **10 NOS**, 0 rejected. BOM need = 20 KG, already issued 21 KG → backflush must consume
+   **0 KG** (already more than needed). Check: entry succeeds, FG-1 +10, RM-1 stays 68.5.
+7. Produce on WO-B: report **5 NOS** → need 10 KG, issued 10.5 → backflush **0**. RM-1 stays 68.5.
 8. Now the double-consumption check, fresh pair of work orders: **WO-C** planned 10, issue only **10 KG**, then report
    10 NOS. Need is 20, issued 10 → backflush exactly **10 KG** → RM-1 drops by 10, and **total consumed for WO-C = 20 KG
    = BOM requirement** (not 30). This is the "remaining qty never wrong" check.
@@ -167,6 +173,9 @@ this ERP has **work orders / material issues / production entries**, not job car
    message, stock unchanged.
 10. Reconcile: for every item, `SUM(StockLedger.qtyIn - qtyOut)` == `StockBalance.qty` per warehouse, and no negative
     balance anywhere. Paste the SQL you used and the result set.
+11. Also probe the cap itself: send `requiredQty` larger than the BOM need, and issue the full requirement twice on one
+    work order. Today both go through (the cap trusts the client's `requiredQty` and is per request) — see
+    `docs/LOCAL-TEST-REPORT-2026-10-31.md`.
 
 ### 6B. Billing accuracy — per-kg, per-piece and lot charges, one set of numbers everywhere
 
@@ -175,7 +184,7 @@ Create three invoices and check that **preview → saved row → printed documen
 * **Invoice 1 — per kg:** 12.5 KG × ₹480.50, line discount 2.5 %, GST 18 % intra-state.
 * **Invoice 2 — per piece with a secondary unit:** an item sold in BOX = 24 PCS, qty 3 BOX at a per-box rate
   (the line must convert to base qty, and the line total must not drift — this is what `r4()` exists for).
-* **Invoice 3 — bill-level charges:** three lines ₹100 each (qty 1, 18 %), **bill discount ₹100**, **freight ₹250 @18 %**,
+* **Invoice 3 — bill-level charges:** three lines ₹100 each (qty 1, 18 %), **bill discount ₹1**, **freight ₹250 @18 %**,
   **packing ₹75 @12 %**, round-off ON.
 
 For each invoice verify, in this order:
@@ -193,7 +202,7 @@ Acceptance (compute these by hand, in paise, and compare):
 * `CGST + SGST` == `Σ(line tax)` exactly (IGST for inter-state);
 * `grandTotal` == `Σ line taxable` + freight + packing + tax + cess ± `roundOff`, and with round-off ON the grand total
   is a whole rupee with `|roundOff| ≤ 0.50`;
-* for invoice 3: three lines of ₹100 with ₹100 bill discount → taxable **299.00**, not 299.01, and the grand total equals
+* for invoice 3: three lines of ₹100 with ₹1 bill discount → taxable **299.00**, not 299.01, and the grand total equals
   the sum of its own printed lines. (This is the exact bug fixed in `computeBillTotals`; if you ever see 299.01 the fix
   regressed.)
 * GSTR-1 monthly totals == sum of the invoices' tax heads; Tally XML balances (party debit == Σ credits);
@@ -212,7 +221,7 @@ invoice balance drops, GSTR-1 shows it in the credit-note section.
    `Idempotency-Key` header → exactly one document; replay returns the original body. Then reuse that key with a
    different payload → **422**.
 3. **Real race:** fire two `POST /api/production-entries` for the same work order with `curl &` at the same time
-   (full planned qty in both) → one 200 + one 400 "exceeds planned qty", FG stock `+planned` (not doubled), RM consumed
+   (full planned qty in both) → one 200 + one 400 (the loser waits on the work-order lock and sees it COMPLETED), FG stock `+planned` (not doubled), RM consumed
    exactly once. Repeat for two `POST /api/material-issues` that together exceed the available stock → one succeeds.
 4. **Cancel gives it all back:** cancel the invoice from (1) after a successful save → stock returns, ledger has the
    reversing rows, party balance back to the previous value, and the invoice is `CANCELLED` (not deleted).
