@@ -103,7 +103,7 @@ describe('push to Tally (the only write)', () => {
       id: 'job_1', type: 'push-voucher', xml: pushXml(),
     })
     expect(out.ok).toBe(true)
-    expect(out.records[0]).toMatchObject({ name: 'INV/26-27/0001', status: 'created' })
+    expect(out.records?.[0]).toMatchObject({ name: 'INV/26-27/0001', status: 'created' })
     // Exactly the document it was given — no rebuild, no extra request.
     expect(tallyBodies.at(-1)).toBe(pushXml())
   })
@@ -112,7 +112,7 @@ describe('push to Tally (the only write)', () => {
     tallyMode = 'import-duplicate'
     const out = await connector.pushVoucher(tallyUrl(), { id: 'job_2', type: 'push-voucher', xml: pushXml() })
     expect(out.ok).toBe(true)
-    expect(out.records[0].status).toBe('exists')
+    expect(out.records?.[0]?.status).toBe('exists')
   })
 
   test('Tally refusing the voucher fails the job with a fixable message', async () => {
