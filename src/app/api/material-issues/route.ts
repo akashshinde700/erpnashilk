@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, nextDocNumber, postStock, availableQty, logAudit, ApiError, r2, requireWrite } from '@/lib/erp-helpers'
 import { batchNote, consumeBatches } from '@/lib/batches'
 import { claimIdempotency, type Idempotency } from '@/lib/idempotency'
+import { componentNeed, consumedByItem } from '@/lib/manufacturing'
 
 // MaterialIssueItem has no item relation in the schema — join in JS.
 async function attachIssueItems(issues: any[]) {
@@ -98,10 +99,36 @@ export async function POST(req: Request) {
         if (!itemMap.has(l.itemId)) throw new ApiError(`Item not found: ${l.itemId}`, 404)
       }
 
-      // Over-issue guard: max 5% above requirement
-      for (const l of validLines) {
-        if (l.issuedQty > r2(l.requiredQty * 1.05) + 0.0001) {
-          throw new ApiError('Issued qty exceeds requirement for line', 400)
+      // Over-issue guard, worked out on the server: the BOM requirement for the planned quantity, less
+      // what this work order already took (earlier issues + production backflush), with a 5 % margin.
+      // The client's requiredQty is display only — trusting it let any caller lift the cap, and checking
+      // each issue on its own let repeated issues take the requirement many times over.
+      const bom = wo.bomId ? await tx.bom.findFirst({ where: { id: wo.bomId, companyId }, include: { items: true } }) : null
+      if (bom && bom.items.length) {
+        const need = new Map<string, number>()
+        for (const c of bom.items) need.set(c.itemId, r2((need.get(c.itemId) || 0) + componentNeed(wo.plannedQty, bom, c)))
+        const taken = await consumedByItem(tx, companyId, wo.id)
+        const asked = new Map<string, number>()
+        for (const l of validLines) asked.set(l.itemId, r2((asked.get(l.itemId) || 0) + l.issuedQty))
+        for (const [itemId, qty] of asked) {
+          const item = itemMap.get(itemId)!
+          const required = need.get(itemId)
+          if (required === undefined) throw new ApiError(`${item.code} ${item.name} is not on this work order's BOM`, 400)
+          const already = taken[itemId] || 0
+          const cap = r2(required * 1.05)
+          if (already + qty > cap + 0.0001) {
+            const left = r2(Math.max(0, cap - already))
+            throw new ApiError(`Issued qty exceeds requirement for ${item.code}: BOM needs ${required} ${item.uom} (+5 % = ${cap}), already issued ${r2(already)}, at most ${left} more`, 400)
+          }
+        }
+        // store the server's view of what was still pending, not the client's
+        for (const l of validLines) l.requiredQty = r2(Math.max(0, (need.get(l.itemId) || 0) - (taken[l.itemId] || 0)))
+      } else {
+        // No BOM on the work order: the requirement can only come from the request
+        for (const l of validLines) {
+          if (l.issuedQty > r2(l.requiredQty * 1.05) + 0.0001) {
+            throw new ApiError('Issued qty exceeds requirement for line', 400)
+          }
         }
       }
 
