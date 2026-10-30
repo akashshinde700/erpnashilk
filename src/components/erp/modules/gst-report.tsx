@@ -144,7 +144,7 @@ function TypeChip({ gstin }: { gstin?: string | null }) {
   return (
     <span
       className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${
-        b2b ? 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300' : 'bg-muted text-muted-foreground'
+        b2b ? 'bg-info-soft text-info ring-1 ring-inset ring-info-border' : 'bg-muted text-muted-foreground'
       }`}
     >
       {b2b ? 'B2B' : 'B2C'}
@@ -433,14 +433,14 @@ export default function GstReportModule({ companyId }: { companyId: string }) {
           value={fmtMoney(inputTax)}
           sub={`${purchaseRows.length} invoices`}
           icon={<ArrowDownToLine className="h-4 w-4" />}
-          toneClass="bg-sky-100 text-sky-600"
+          toneClass="bg-info-soft text-info"
         />
         <StatCard
           title={netPayable >= 0 ? 'Net GST Payable' : 'Net GST Credit'}
           value={fmtMoney(Math.abs(netPayable))}
           sub={netPayable >= 0 ? 'Payable to government' : 'Credit carried forward'}
           icon={<Scale className="h-4 w-4" />}
-          toneClass={netPayable >= 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}
+          toneClass={netPayable >= 0 ? 'bg-danger-soft text-destructive' : 'bg-success-soft text-success'}
         />
       </div>
       <div className="space-y-4">
@@ -582,14 +582,14 @@ function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; load
       key: 'reverseCharge', header: 'RCM', hideOnMobile: true,
       render: (r) => (
         r.reverseCharge
-          ? <span className="inline-flex whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300" title="Reverse charge — self-assessed tax, claim under 3.1(d)">RCM</span>
+          ? <span className="inline-flex whitespace-nowrap rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-medium text-warning" title="Reverse charge — self-assessed tax, claim under 3.1(d)">RCM</span>
           : <span className="text-muted-foreground">—</span>
       ),
     },
     {
       key: 'itcEligible', header: 'ITC',
       render: (r) => (
-        <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${r.itcEligible ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
+        <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${r.itcEligible ? 'bg-success-soft text-success ring-1 ring-inset ring-success-border' : 'bg-muted text-muted-foreground'}`}>
           {r.itcEligible ? 'Eligible' : 'No GSTIN'}
         </span>
       ),
@@ -610,7 +610,7 @@ function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; load
       render: (r) => (
         <span className="tabular-nums">
           {r.bills}
-          {r.rcmBills ? <span className="ml-1 text-[11px] text-amber-700 dark:text-amber-400">({r.rcmBills} RCM)</span> : null}
+          {r.rcmBills ? <span className="ml-1 text-[11px] text-warning">({r.rcmBills} RCM)</span> : null}
         </span>
       ),
     },
@@ -630,12 +630,12 @@ function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; load
     <>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Bills" value={t ? t.bills : '—'} sub={monthLabel} icon={<ArrowDownToLine className="h-4 w-4" />} />
-        <StatCard title="Taxable Value" value={t ? fmtMoney(t.taxable) : '—'} sub="Net of bill discounts" icon={<Scale className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-600" />
-        <StatCard title="ITC Eligible Tax" value={t ? fmtMoney(t.itcEligibleTax) : '—'} sub="Bills from registered suppliers" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-600" />
-        <StatCard title="Ineligible Tax" value={t ? fmtMoney(t.itcIneligibleTax) : '—'} sub={t ? `Debit notes ${t.debitNotes} · tax ${fmtMoney(t.debitNoteTax)}` : 'Unregistered suppliers'} icon={<ArrowUpFromLine className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-600" />
+        <StatCard title="Taxable Value" value={t ? fmtMoney(t.taxable) : '—'} sub="Net of bill discounts" icon={<Scale className="h-4 w-4" />} toneClass="bg-info-soft text-info" />
+        <StatCard title="ITC Eligible Tax" value={t ? fmtMoney(t.itcEligibleTax) : '—'} sub="Bills from registered suppliers" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-success-soft text-success" />
+        <StatCard title="Ineligible Tax" value={t ? fmtMoney(t.itcIneligibleTax) : '—'} sub={t ? `Debit notes ${t.debitNotes} · tax ${fmtMoney(t.debitNoteTax)}` : 'Unregistered suppliers'} icon={<ArrowUpFromLine className="h-4 w-4" />} toneClass="bg-warning-soft text-warning" />
       </div>
       {t && t.rcmBills > 0 && (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+        <p className="rounded-lg border border-warning-border bg-warning-soft px-3 py-2 text-xs text-warning dark:border-warning-border dark:bg-warning-soft">
           <strong>{t.rcmBills} reverse-charge bill(s)</strong> this month · taxable {fmtMoney(t.rcmTaxable)} · self-assessed tax {fmtMoney(t.rcmTax)} —
           credit is claimed under 3.1(d) / 4(A)(3), not as ordinary ITC.
         </p>
@@ -698,13 +698,13 @@ function Gstr3bView({ data, loading, monthLabel }: { data: Gstr3bData | null; lo
     <>
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard title="Output Tax" value={fmtMoney(data.outward.totalTax)} sub={`Taxable ${fmtMoney(data.outward.taxable)}`} icon={<ArrowUpFromLine className="h-4 w-4" />} />
-        <StatCard title="Net ITC" value={fmtMoney(data.itc.totalTax)} sub="Bills + eligible expenses" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-600" />
+        <StatCard title="Net ITC" value={fmtMoney(data.itc.totalTax)} sub="Bills + eligible expenses" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-info-soft text-info" />
         <StatCard
           title={data.netTotal >= 0 ? 'Net GST Payable' : 'Net GST Credit'}
           value={fmtMoney(Math.abs(data.netTotal))}
           sub={`Payable ${fmtMoney(data.totalPayable)} · credit ${fmtMoney(data.totalCredit)}`}
           icon={<Scale className="h-4 w-4" />}
-          toneClass={data.netTotal >= 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}
+          toneClass={data.netTotal >= 0 ? 'bg-danger-soft text-destructive' : 'bg-success-soft text-success'}
         />
       </div>
       <SectionCard title={`GSTR-3B summary (${monthLabel})`}>
@@ -821,13 +821,13 @@ function Gstr9View({ data, loading }: { data: Gstr9Data | null; loading: boolean
     <>
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard title="Net Outward Taxable" value={fmtMoney(t4.net.taxable)} sub={`Tax ${fmtMoney(t4.totalTax)} · FY ${data.fyLabel}`} icon={<ArrowUpFromLine className="h-4 w-4" />} />
-        <StatCard title="ITC Availed" value={fmtMoney(data.table6.totalTax)} sub="Bills + eligible expenses" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-600" />
+        <StatCard title="ITC Availed" value={fmtMoney(data.table6.totalTax)} sub="Bills + eligible expenses" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-info-soft text-info" />
         <StatCard
           title="Net Cash Payable"
           value={fmtMoney(t9.totalCash)}
           sub={`Credit left ${fmtMoney(t9.totalCredit)} (per head)`}
           icon={<Scale className="h-4 w-4" />}
-          toneClass={t9.totalCash > 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}
+          toneClass={t9.totalCash > 0 ? 'bg-danger-soft text-destructive' : 'bg-success-soft text-success'}
         />
       </div>
 
@@ -934,7 +934,7 @@ function Gstr9View({ data, loading }: { data: Gstr9Data | null; loading: boolean
         />
       </SectionCard>
 
-      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+      <p className="rounded-lg border border-warning-border bg-warning-soft px-3 py-2 text-xs text-warning dark:border-warning-border dark:bg-warning-soft">
         {GSTR9_NOTE}
       </p>
     </>

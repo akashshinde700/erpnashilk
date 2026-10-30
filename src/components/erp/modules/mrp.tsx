@@ -119,9 +119,9 @@ export default function MrpModule({ companyId }: { companyId: string }) {
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-3 mb-4">
-            <StatCard title="Items Short" value={stats.short} sub="Shortage > 0" toneClass="bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" icon={<TriangleAlert className="h-4 w-4" />} />
-            <StatCard title="Below Reorder" value={stats.belowReorder} sub="Reached reorder level" toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
-            <StatCard title="Total Suggested Qty" value={fmtNum(stats.suggested)} sub="Across all suggested rows" toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" icon={<ShoppingCart className="h-4 w-4" />} />
+            <StatCard title="Items Short" value={stats.short} sub="Shortage > 0" toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" icon={<TriangleAlert className="h-4 w-4" />} />
+            <StatCard title="Below Reorder" value={stats.belowReorder} sub="Reached reorder level" toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
+            <StatCard title="Total Suggested Qty" value={fmtNum(stats.suggested)} sub="Across all suggested rows" toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" icon={<ShoppingCart className="h-4 w-4" />} />
           </div>
 
           {selected.size > 0 && (
@@ -192,13 +192,13 @@ export default function MrpModule({ companyId }: { companyId: string }) {
                         <TableCell className="text-right tabular-nums">{fmtNum(required)}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtNum(r.onHand)}</TableCell>
                         <TableCell className="text-right tabular-nums hidden md:table-cell">{fmtNum(r.incoming)}</TableCell>
-                        <TableCell className={`text-right tabular-nums font-bold ${shortage > 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
+                        <TableCell className={`text-right tabular-nums font-bold ${shortage > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
                           {fmtNum(shortage)}
                         </TableCell>
                         <TableCell className="text-right tabular-nums font-medium">{fmtNum(r.suggestedQty)}</TableCell>
                         <TableCell className="hidden md:table-cell">
                           {r.belowReorder ? (
-                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                            <span className="inline-flex items-center rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-medium text-warning">
                               BELOW REORDER
                             </span>
                           ) : (
@@ -212,7 +212,7 @@ export default function MrpModule({ companyId }: { companyId: string }) {
               </TableBody>
             </Table>
           </div>
-          {mrp.error && <p className="text-sm text-red-600 mt-2">{mrp.error}</p>}
+          {mrp.error && <p className="text-sm text-destructive mt-2">{mrp.error}</p>}
         </>
       )}
 

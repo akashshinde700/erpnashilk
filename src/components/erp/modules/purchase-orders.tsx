@@ -321,12 +321,12 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           )}
           {r.status === 'PENDING_APPROVAL' && (
             <>
-              <Button variant="outline" size="sm" className="h-7 text-emerald-700"
+              <Button variant="outline" size="sm" className="h-7 text-success"
                 onClick={() => void act(r, { action: 'approve' }, `PO ${r.number} approved`)}>
                 <Check className="h-3.5 w-3.5 mr-0.5" />Approve
               </Button>
               <ConfirmAction
-                trigger={<Button variant="outline" size="sm" className="h-7 text-red-600">Reject</Button>}
+                trigger={<Button variant="outline" size="sm" className="h-7 text-destructive">Reject</Button>}
                 title="Reject PO?" message={`Send ${r.number} back as rejected? The buyer can revise and raise a new PO.`} tone="destructive"
                 onConfirm={() => act(r, { action: 'reject' }, `PO ${r.number} rejected`)}
               />
@@ -344,7 +344,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           )}
           {!['CANCELLED', 'INVOICED'].includes(r.status) && (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><X className="h-3.5 w-3.5" /></Button>}
               title="Cancel PO?" message={`Cancel ${r.number}? This cannot be undone.`} tone="destructive" onConfirm={() => cancelPo(r)}
             />
           )}
@@ -431,7 +431,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
               <div className="col-span-1 flex justify-end">
                 <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                   onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               </div>
             </div>

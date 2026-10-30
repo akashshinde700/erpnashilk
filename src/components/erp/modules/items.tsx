@@ -518,7 +518,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         const tip = (r.stockByStore ?? []).map((w) => `${w.code}: ${w.qty}`).join('\n') || 'No stock in any store'
         return (
           <span title={`${tip}${r.stockValue ? `\nValue ≈ ₹${r.stockValue.toLocaleString('en-IN')}` : ''}`}
-            className={cn('tabular-nums font-medium', qty <= 0 ? 'text-red-600' : low ? 'text-amber-600' : 'text-emerald-700 dark:text-emerald-400')}>
+            className={cn('tabular-nums font-medium', qty <= 0 ? 'text-destructive' : low ? 'text-warning' : 'text-success')}>
             {qty} <span className="text-xs font-normal text-muted-foreground">{r.uom}</span>
             {low && qty > 0 && <span className="ml-1 text-[10px] font-normal">low</span>}
           </span>
@@ -555,7 +555,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
           </Button>
           <ConfirmAction
             trigger={
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" title="Delete">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" title="Delete">
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             }
@@ -710,7 +710,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
                   </Field>
                 </div>
                 {form.altUom.trim() && form.altUom.trim().toUpperCase() === form.uom ? (
-                  <p className="text-xs text-amber-600">Secondary unit must differ from the UOM.</p>
+                  <p className="text-xs text-warning">Secondary unit must differ from the UOM.</p>
                 ) : form.altUom.trim() && Number(form.altFactor) > 0 ? (
                   <p className="text-xs text-muted-foreground">1 {form.altUom.trim().toUpperCase()} = {Number(form.altFactor)} {form.uom}</p>
                 ) : null}
@@ -775,7 +775,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
                 </p>
               )}
               {form.mrp.trim() !== '' && Number(form.mrp) > 0 && form.sellingPrice > Number(form.mrp) && (
-                <p className="text-xs text-amber-600 sm:col-span-2">Selling price is above the MRP.</p>
+                <p className="text-xs text-warning sm:col-span-2">Selling price is above the MRP.</p>
               )}
             </div>
           </TabsContent>
@@ -840,7 +840,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
                     </Field>
                   </div>
                   {form.openingQty > 0 && !form.openingWarehouseId && (
-                    <p className="text-xs text-amber-600">Select a warehouse to post the opening stock.</p>
+                    <p className="text-xs text-warning">Select a warehouse to post the opening stock.</p>
                   )}
                 </div>
               )}
@@ -872,7 +872,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 shrink-0 text-red-600 hover:text-red-700"
+                className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
                 onClick={() => setVariantAttrs((as) => as.filter((x) => x.key !== a.key))}
                 aria-label="Remove attribute"
               >

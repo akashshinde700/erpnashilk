@@ -49,8 +49,8 @@ export default function MoneyConfirmDialog() {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {duplicate
-              ? <><Copy className="h-5 w-5 text-amber-600" /> Possible duplicate</>
-              : <><AlertTriangle className="h-5 w-5 text-red-600" /> Cash will go below zero</>}
+              ? <><Copy className="h-5 w-5 text-warning" /> Possible duplicate</>
+              : <><AlertTriangle className="h-5 w-5 text-destructive" /> Cash will go below zero</>}
           </DialogTitle>
           <DialogDescription className="text-left">{ask?.message}</DialogDescription>
         </DialogHeader>
@@ -64,7 +64,7 @@ export default function MoneyConfirmDialog() {
           <Button
             type="button"
             onClick={() => answer(true)}
-            className={duplicate ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}
+            className={duplicate ? 'bg-brand-accent text-brand-accent-foreground hover:bg-brand-accent/90' : 'bg-destructive text-destructive-foreground hover:bg-destructive/90'}
           >
             {duplicate ? 'Save anyway' : 'Save anyway (admin override)'}
           </Button>

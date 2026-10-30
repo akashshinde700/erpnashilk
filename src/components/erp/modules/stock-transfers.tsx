@@ -51,7 +51,7 @@ function LineSerialPick({ companyId, itemId, warehouseId, qty, value, onChange }
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <span className={entered.length === need ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-amber-600 uppercase'}>
+        <span className={entered.length === need ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-warning uppercase'}>
           Serial nos — {entered.length} of {need} entered · {avail.length} in stock
         </span>
         {avail.length > 0 && (
@@ -205,7 +205,7 @@ export default function StockTransfersModule({ companyId }: { companyId: string 
                 <Field label={idx === 0 ? 'Qty' : ''} className="sm:w-36">
                   <NumberInput value={l.qty} min={0} step="any" onChange={(n) => updateLine(l.key, { qty: n })} placeholder="0" />
                 </Field>
-                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-red-600 hover:text-red-700 shrink-0" onClick={() => removeLine(l.key)} aria-label="Remove line">
+                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive shrink-0" onClick={() => removeLine(l.key)} aria-label="Remove line">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>

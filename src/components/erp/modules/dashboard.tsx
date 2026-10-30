@@ -14,6 +14,7 @@ import {
   Landmark,
   FileText,
   HandCoins,
+  Inbox,
   IndianRupee,
   Layers3,
   PackageCheck,
@@ -106,11 +107,22 @@ const TEAL = '#0d9488'
 const AMBER = '#f59e0b'
 
 const TONE = {
-  emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  violet: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-  sky: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-  rose: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
-  amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+  emerald: 'bg-success-soft text-success',
+  violet: 'bg-info-soft text-info',
+  sky: 'bg-info-soft text-info',
+  rose: 'bg-danger-soft text-destructive',
+  amber: 'bg-warning-soft text-warning',
+}
+
+/** Recharts draws SVG outside the Tailwind cascade — hand it the live token values. */
+const CHART_TOOLTIP: React.CSSProperties = {
+  background: 'var(--popover)',
+  border: '1px solid var(--border)',
+  borderRadius: 10,
+  boxShadow: 'var(--shadow-2)',
+  color: 'var(--popover-foreground)',
+  fontSize: 12,
+  padding: '8px 10px',
 }
 
 function compact(n: number): string {
@@ -139,20 +151,25 @@ function trendKeyFromChartDatum(datum: unknown): string | undefined {
 function levelDotCls(level?: string): string {
   switch ((level || '').toUpperCase()) {
     case 'CRITICAL':
-      return 'bg-red-500'
+      return 'bg-destructive'
     case 'WARNING':
-      return 'bg-amber-500'
+      return 'bg-brand-accent'
     case 'INFO':
-      return 'bg-sky-500'
+      return 'bg-info'
     case 'SUCCESS':
-      return 'bg-emerald-500'
+      return 'bg-success'
     default:
-      return 'bg-zinc-400'
+      return 'bg-muted-foreground'
   }
 }
 
 const EmptyList = ({ text }: { text: string }) => (
-  <p className="py-10 text-center text-sm text-muted-foreground">{text}</p>
+  <div className="flex flex-col items-center gap-1.5 py-9 text-center">
+    <div className="grid h-9 w-9 place-items-center rounded-full bg-muted">
+      <Inbox className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+    </div>
+    <p className="text-sm text-muted-foreground">{text}</p>
+  </div>
 )
 
 // ---------- quick actions (role-filtered, navigate via erp:goto) ----------
@@ -186,9 +203,9 @@ function QuickActions({ role }: { role: string }) {
           <button
             key={a.id ?? a.key}
             onClick={() => (a.create ? openCreate(a.key, a.preset) : window.dispatchEvent(new CustomEvent('erp:goto', { detail: a.key })))}
-            className="flex flex-col items-center gap-1.5 rounded-lg border bg-card px-2 py-3 text-center transition-colors hover:border-emerald-300 hover:bg-emerald-50 dark:hover:border-emerald-800 dark:hover:bg-emerald-950/40"
+            className="group flex cursor-pointer flex-col items-center gap-1.5 rounded-lg border bg-card px-2 py-3 text-center transition-all duration-150 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary/5 hover:elev-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            <span className="rounded-md bg-emerald-100 p-1.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{a.icon}</span>
+            <span className="rounded-md bg-primary/10 p-1.5 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground" aria-hidden="true">{a.icon}</span>
             <span className="text-[11px] font-medium leading-tight">{a.label}</span>
           </button>
         ))}
@@ -214,7 +231,7 @@ function TrendSpanControl({ span, onChange }: { span: TrendSpan; onChange: (s: T
             size="sm"
             variant={s === span ? 'default' : 'outline'}
             aria-pressed={s === span}
-            className={s === span ? 'h-8 bg-emerald-600 text-white hover:bg-emerald-600' : 'h-8'}
+            className="h-8 min-w-11"
             onClick={() => onChange(s)}
           >
             {s}M
@@ -301,10 +318,12 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
     return (
       <SectionCard>
         <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <AlertTriangle className="h-8 w-8 text-amber-500" />
+          <div className="grid h-11 w-11 place-items-center rounded-full bg-warning-soft">
+          <AlertTriangle className="h-5 w-5 text-warning" aria-hidden="true" />
+          </div>
           <p className="max-w-md text-sm text-muted-foreground">{error}</p>
           <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            <RefreshCw className="h-4 w-4 mr-1.5" /> Retry
+          <RefreshCw className="mr-1.5 h-4 w-4" aria-hidden="true" /> Retry
           </Button>
         </div>
       </SectionCard>
@@ -335,11 +354,11 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-4">
       {error && data && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300">
-          <span className="truncate">{error}</span>
-          <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            <RefreshCw className="h-4 w-4 mr-1.5" /> Retry
-          </Button>
+        <div role="status" className="flex items-center justify-between gap-3 rounded-lg border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning">
+        <span className="truncate">Showing the last successful data — refresh failed: {error}</span>
+        <Button variant="outline" size="sm" onClick={() => void refetch()}>
+        <RefreshCw className="mr-1.5 h-4 w-4" aria-hidden="true" /> Retry
+        </Button>
         </div>
       )}
 
@@ -351,7 +370,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
               key={c.title}
               type="button"
               onClick={() => openModule(c.to)}
-              className="text-left w-full rounded-xl transition hover:ring-2 hover:ring-emerald-300 dark:hover:ring-emerald-700 focus:outline-none focus-visible:ring-2 cursor-pointer"
+              className="group w-full cursor-pointer rounded-xl text-left transition-transform duration-150 hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               title={`Open ${c.to.replace('-', ' & ')}`}
             >
               <StatCard title={c.title} value={c.value} sub={c.sub} icon={c.icon} toneClass={c.cls} />
@@ -367,7 +386,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
             key={s.title}
             type="button"
             onClick={() => openModule(s.to)}
-            className="text-left w-full rounded-xl transition hover:ring-2 hover:ring-emerald-300 dark:hover:ring-emerald-700 focus:outline-none focus-visible:ring-2 cursor-pointer"
+            className="group w-full cursor-pointer rounded-xl text-left transition-transform duration-150 hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             aria-label={s.hint}
             title={s.hint}
           >
@@ -395,7 +414,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
           {salesTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={salesTrend} margin={{ top: 8, right: 8, left: -4, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                 <YAxis
                   tick={{ fontSize: 11 }}
@@ -404,7 +423,12 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                   width={48}
                   tickFormatter={(v) => compact(Number(v))}
                 />
-                <Tooltip cursor={{ fill: 'rgba(5, 150, 105, 0.08)' }} formatter={(v) => fmtMoney(Number(v))} />
+                <Tooltip
+  cursor={{ fill: 'color-mix(in oklab, var(--primary) 10%, transparent)' }}
+  formatter={(v) => fmtMoney(Number(v))}
+  contentStyle={CHART_TOOLTIP}
+  labelStyle={{ color: 'var(--foreground)', fontWeight: 600 }}
+/>
                 <Bar
                   dataKey="value"
                   name="Sales"
@@ -420,7 +444,16 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">No sales data yet</div>
+            <div className="flex h-[260px] flex-col items-center justify-center gap-2 text-center">
+              <div className="grid h-11 w-11 place-items-center rounded-full bg-muted">
+                <BarChart3 className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              </div>
+              <p className="text-sm font-medium">No sales billed yet</p>
+              <p className="max-w-[240px] text-xs text-muted-foreground">Sales invoices you raise will chart here month by month.</p>
+              <Button variant="outline" size="sm" className="mt-1" onClick={() => openModule('sales-invoices')}>
+                Open sales invoices
+              </Button>
+            </div>
           )}
         </SectionCard>
 
@@ -436,7 +469,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                     <stop offset="100%" stopColor={TEAL} stopOpacity={0.03} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                 <YAxis
                   tick={{ fontSize: 11 }}
@@ -445,7 +478,12 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                   width={48}
                   tickFormatter={(v) => compact(Number(v))}
                 />
-                <Tooltip cursor={{ stroke: AMBER, strokeDasharray: '3 3' }} formatter={(v) => `${fmtNum(Number(v))} qty`} />
+                <Tooltip
+  cursor={{ stroke: 'var(--brand-accent)', strokeDasharray: '3 3' }}
+  formatter={(v) => `${fmtNum(Number(v))} qty`}
+  contentStyle={CHART_TOOLTIP}
+  labelStyle={{ color: 'var(--foreground)', fontWeight: 600 }}
+/>
                 <Area
                   type="monotone"
                   dataKey="qty"
@@ -462,7 +500,16 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">No production data yet</div>
+            <div className="flex h-[260px] flex-col items-center justify-center gap-2 text-center">
+              <div className="grid h-11 w-11 place-items-center rounded-full bg-muted">
+                <Factory className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              </div>
+              <p className="text-sm font-medium">No production recorded yet</p>
+              <p className="max-w-[240px] text-xs text-muted-foreground">Finished quantities from work orders appear here.</p>
+              <Button variant="outline" size="sm" className="mt-1" onClick={() => openModule('work-orders')}>
+                Open work orders
+              </Button>
+            </div>
           )}
         </SectionCard>
         )}
@@ -481,7 +528,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                   key={o.id}
                   type="button"
                   onClick={() => openWithHighlight('sales-orders', o.id)}
-                  className="flex w-full items-center justify-between gap-3 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                  className="flex w-full cursor-pointer items-center justify-between gap-3 border-b py-2 text-left transition-colors last:border-0 hover:bg-primary/5 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
                   aria-label={`Open sales order ${o.number ?? ''}`}
                   title="Open this sales order"
                 >
@@ -509,7 +556,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
           title="Pending Approvals"
           actions={
             approvals.length > 0 ? (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+              <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-medium text-warning ring-1 ring-inset ring-warning-border">
                 {approvals.length} waiting
               </span>
             ) : undefined
@@ -524,7 +571,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                 const body = (
                   <>
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                      <span className="shrink-0 rounded bg-info-soft px-1.5 py-0.5 text-[10px] font-semibold text-info ring-1 ring-inset ring-info-border">
                         {kind}
                       </span>
                       <div className="min-w-0">
@@ -543,7 +590,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                     key={a.id}
                     type="button"
                     onClick={() => (kind === 'PO' ? openWithHighlight('purchase-orders', a.id) : openModule('requisitions'))}
-                    className="flex w-full items-center justify-between gap-3 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                    className="flex w-full cursor-pointer items-center justify-between gap-3 border-b py-2 text-left transition-colors last:border-0 hover:bg-primary/5 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
                     aria-label={`Open ${kind === 'PO' ? 'purchase order' : 'requisition'} ${a.number ?? ''}`}
                     title={kind === 'PO' ? 'Open purchase order' : 'Open requisition'}
                   >
@@ -572,7 +619,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                       key={r.item?.code || r.id || r.item?.name || Math.random()}
                       type="button"
                       onClick={() => (code ? openModule('stock', { q: code }) : openModule('stock'))}
-                      className="flex w-full items-center justify-between gap-3 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                      className="flex w-full cursor-pointer items-center justify-between gap-3 border-b py-2 text-left transition-colors last:border-0 hover:bg-primary/5 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
                       aria-label={`Check stock for ${r.item?.name ?? 'item'}`}
                       title="Check stock for this item"
                     >
@@ -582,7 +629,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                           {r.item?.code ?? ''} · reorder at {fmtNum(r.reorderLevel)}
                         </p>
                       </div>
-                      <span className={cn('shrink-0 text-sm font-semibold tabular-nums', onHand <= 0 ? 'text-red-600' : 'text-amber-600')}>
+                      <span className={cn('shrink-0 text-sm font-semibold tabular', onHand <= 0 ? 'text-destructive' : 'text-warning')}>
                         {fmtNum(onHand)}
                       </span>
                     </button>
@@ -604,7 +651,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
                     key={n.id}
                     type="button"
                     onClick={() => openModule('notifications')}
-                    className="flex w-full items-start gap-2.5 border-b py-2 text-left last:border-0 transition-colors hover:bg-muted/50 cursor-pointer"
+                    className="flex w-full cursor-pointer items-start gap-2.5 border-b py-2 text-left transition-colors last:border-0 hover:bg-primary/5 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
                     aria-label="Open notifications"
                     title="Open notifications"
                   >

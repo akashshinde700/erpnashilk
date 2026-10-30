@@ -3,6 +3,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * ManuFlow design tokens
+ * ----------------------
+ * One source of truth for colour, elevation, motion and density. Screens must use these
+ * tokens (bg-card, text-muted-foreground, bg-success-soft, …) instead of raw palette
+ * classes, so light/dark parity and brand consistency are enforced in one place.
+ *
+ * Brand: deep emerald (matches the login panel, app icon and print headings) with an
+ * amber accent for attention/CTA. Neutrals are slate — cooler than pure grey, which keeps
+ * dense numeric tables readable without the washed-out look.
+ */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -25,6 +37,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -37,105 +50,304 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+
+  /* Status tones — one pair per meaning, identical shape in both themes */
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-border: var(--info-border);
+  --color-danger: var(--destructive);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-border: var(--danger-border);
+  /* Amber accent: favourites, spot highlights, "needs attention" numbers */
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-soft: var(--brand-accent-soft);
+  --color-brand-accent-foreground: var(--brand-accent-foreground);
+  --color-warning-foreground: var(--warning-foreground);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Geometry & rhythm */
+  --radius: 0.75rem;
+
+  /* Surfaces */
+  --background: oklch(0.984 0.003 247.9); /* slate-50 — app canvas */
+  --foreground: oklch(0.208 0.042 265.8); /* slate-900 */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.208 0.042 265.8);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.208 0.042 265.8);
+
+  /* Brand */
+  --primary: oklch(0.508 0.118 165.6); /* emerald-700 */
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --secondary: oklch(0.968 0.007 247.9); /* slate-100 */
+  --secondary-foreground: oklch(0.279 0.041 260); /* slate-800 */
+  --muted: oklch(0.968 0.007 247.9);
+  --muted-foreground: oklch(0.446 0.043 257.3); /* slate-600 — 7.4:1 on white */
+  --accent: oklch(0.968 0.007 247.9); /* hover surface */
+  --accent-foreground: oklch(0.279 0.041 260);
+
+  /* Lines & focus */
+  --border: oklch(0.929 0.013 255.5); /* slate-200 */
+  --input: oklch(0.869 0.022 252.9); /* slate-300 — visible field boundary */
+  --ring: oklch(0.596 0.145 163.2); /* emerald-600 — 3:1 focus ring */
+
+  /* Meaning */
+  --destructive: oklch(0.565 0.235 27.3); /* between red-600 and red-700: 4.6:1 as pill text, 4.85:1 white label on solid */
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.508 0.118 165.6); /* emerald-700 */
+  --success-soft: oklch(0.979 0.021 166.1); /* emerald-50 */
+  --success-border: oklch(0.905 0.093 164.2); /* emerald-200 */
+  --warning: oklch(0.555 0.163 48.998); /* amber-700 */
+  --warning-soft: oklch(0.987 0.022 95.3); /* amber-50 */
+  --warning-border: oklch(0.924 0.12 95.7); /* amber-200 */
+  --info: oklch(0.5 0.134 242.7); /* sky-700 */
+  --info-soft: oklch(0.977 0.013 236.6); /* sky-50 */
+  --info-border: oklch(0.901 0.058 230.9); /* sky-200 */
+  --danger-soft: oklch(0.971 0.013 17.4); /* red-50 */
+  --danger-border: oklch(0.885 0.062 18.3); /* red-200 */
+  --brand-accent: oklch(0.666 0.179 58.3); /* amber-600 — icons/accents only (3.2:1 vs card) */
+  --brand-accent-soft: oklch(0.987 0.022 95.3);
+  --brand-accent-foreground: oklch(0.279 0.041 260); /* ink on solid amber (4.6:1) */
+  --warning-foreground: oklch(0.985 0 0); /* white on solid amber-700 (5.05:1) */
+
+  /* Data visualisation — coherent with the brand, distinguishable in both themes */
+  --chart-1: oklch(0.596 0.145 163.2); /* emerald */
+  --chart-2: oklch(0.769 0.188 70.1); /* amber */
+  --chart-3: oklch(0.588 0.158 241.9); /* sky */
+  --chart-4: oklch(0.606 0.25 292.7); /* violet */
+  --chart-5: oklch(0.645 0.246 16.4); /* rose */
+
+  /* Sidebar: same family as the canvas, one step lighter to read as a surface */
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.208 0.042 265.8);
+  --sidebar-primary: oklch(0.508 0.118 165.6);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: oklch(0.968 0.007 247.9);
+  --sidebar-accent-foreground: oklch(0.279 0.041 260);
+  --sidebar-border: oklch(0.929 0.013 255.5);
+  --sidebar-ring: oklch(0.596 0.145 163.2);
+
+  /* Elevation — soft, low-contrast; dense tables should not look like a stack of cards */
+  --shadow-1: 0 1px 2px 0 oklch(0.208 0.042 265.8 / 6%), 0 1px 3px 0 oklch(0.208 0.042 265.8 / 8%);
+  --shadow-2: 0 2px 4px -1px oklch(0.208 0.042 265.8 / 8%), 0 8px 20px -6px oklch(0.208 0.042 265.8 / 12%);
+
+  /* Motion — one scale for the whole product */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
+  --background: oklch(0.129 0.042 264.7); /* slate-950 */
+  --foreground: oklch(0.968 0.007 247.9); /* slate-100 */
+  --card: oklch(0.208 0.042 265.8); /* slate-900 */
+  --card-foreground: oklch(0.968 0.007 247.9);
+  --popover: oklch(0.208 0.042 265.8);
+  --popover-foreground: oklch(0.968 0.007 247.9);
+
+  --primary: oklch(0.765 0.153 163.2); /* emerald-400 — reads as brand on dark */
+  --primary-foreground: oklch(0.216 0.045 172.6); /* emerald-950 — 9.6:1 on emerald-400 */
+  --secondary: oklch(0.279 0.041 260); /* slate-800 */
+  --secondary-foreground: oklch(0.968 0.007 247.9);
+  --muted: oklch(0.279 0.041 260);
+  --muted-foreground: oklch(0.704 0.04 256.8); /* slate-400 — 6.2:1 on slate-900 */
+  --accent: oklch(0.279 0.041 260);
+  --accent-foreground: oklch(0.968 0.007 247.9);
+
   --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.765 0.153 163.2);
+
+  --destructive: oklch(0.704 0.191 22.216); /* red-400 */
+  --destructive-foreground: oklch(0.208 0.042 265.8);
+  --success: oklch(0.845 0.143 164.9); /* emerald-300 */
+  --success-soft: oklch(0.262 0.051 172.6 / 60%);
+  --success-border: oklch(0.432 0.095 166.9);
+  --warning: oklch(0.879 0.169 91.6); /* amber-300 */
+  --warning-soft: oklch(0.279 0.077 45.6 / 60%);
+  --warning-border: oklch(0.473 0.137 46.2);
+  --info: oklch(0.828 0.111 230.3); /* sky-300 */
+  --info-soft: oklch(0.293 0.066 243.2 / 60%);
+  --info-border: oklch(0.443 0.11 240.8);
+  --danger-soft: oklch(0.258 0.092 26.0 / 60%);
+  --danger-border: oklch(0.444 0.177 26.9);
+  --brand-accent: oklch(0.828 0.189 84.4); /* amber-300 */
+  --brand-accent-soft: oklch(0.279 0.077 45.6 / 60%);
+  --brand-accent-foreground: oklch(0.216 0.045 50); /* ink on amber-300 (10.3:1) */
+  --warning-foreground: oklch(0.216 0.045 50); /* ink on solid amber-300 (12.3:1) */
+
+  --chart-1: oklch(0.765 0.153 163.2);
+  --chart-2: oklch(0.828 0.189 84.4);
+  --chart-3: oklch(0.746 0.16 232.7);
+  --chart-4: oklch(0.714 0.203 305.5);
+  --chart-5: oklch(0.712 0.194 13.4);
+
+  --sidebar: oklch(0.208 0.042 265.8);
+  --sidebar-foreground: oklch(0.968 0.007 247.9);
+  --sidebar-primary: oklch(0.765 0.153 163.2);
+  --sidebar-primary-foreground: oklch(0.262 0.051 172.6);
+  --sidebar-accent: oklch(0.279 0.041 260);
+  --sidebar-accent-foreground: oklch(0.968 0.007 247.9);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.765 0.153 163.2);
+
+  --shadow-1: 0 1px 2px 0 oklch(0 0 0 / 40%), 0 1px 3px 0 oklch(0 0 0 / 30%);
+  --shadow-2: 0 2px 6px -1px oklch(0 0 0 / 45%), 0 12px 28px -8px oklch(0 0 0 / 55%);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
   body {
     @apply bg-background text-foreground;
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Numbers are the product: anything that can align in a column uses tabular figures. */
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One visible focus treatment for every operable control (WCAG 2.4.7 / 2.4.11). */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* The table search ships its own clear button — hide the WebKit one so there is only one ✕. */
+  input[type='search']::-webkit-search-cancel-button,
+  input[type='search']::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
+    color: var(--foreground);
+  }
+
+  /* Headings: tighter tracking, balanced wrapping for the short titles used in this app. */
+  h1, h2, h3 {
+    letter-spacing: -0.011em;
+    text-wrap: balance;
+  }
+
+  /* Respect the OS motion preference for every transition/animation in the product
+     (the Tailwind `animate-*` utilities all funnel through these properties). */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
-/* Sidebar module list: thin, always-visible scrollbar */
-.sidebar-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+/* Custom utilities are registered with @utility so variants like hover:/focus: apply to them. */
+
+/* Dense data surface: sticky column headers that stay legible while the body scrolls. */
+@utility erp-table-head {
+  & th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in oklab, var(--card) 88%, var(--muted));
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
 }
-.sidebar-scroll::-webkit-scrollbar {
-  width: 6px;
+
+/* Row hover that reads on both themes without shifting layout. */
+@utility erp-row-hover {
+  &:hover {
+    background: color-mix(in oklab, var(--primary) 5%, transparent);
+  }
 }
-.sidebar-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
-  border-radius: 9999px;
+
+/* Soft brand wash used behind KPI tiles, empty states and the login panel. */
+@utility brand-wash {
+  background-image:
+    radial-gradient(1000px 420px at 12% -10%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 60%),
+    radial-gradient(760px 340px at 96% 0%, color-mix(in oklab, var(--brand-accent) 10%, transparent), transparent 62%);
 }
-.sidebar-scroll::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+
+@utility elev-1 {
+  box-shadow: var(--shadow-1);
 }
-.sidebar-scroll::-webkit-scrollbar-track {
-  background: transparent;
+
+@utility elev-2 {
+  box-shadow: var(--shadow-2);
+}
+
+@layer utilities {
+
+  /* Sidebar module list: thin, always-visible scrollbar */
+  .sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+  }
+  .sidebar-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+    background-clip: content-box;
+  }
+  .sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* Skip link: first tab stop, visible only while focused. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  transform: translateY(-200%);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.skip-link:focus-visible {
+  transform: translateY(0);
 }

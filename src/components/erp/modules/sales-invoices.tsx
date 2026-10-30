@@ -78,7 +78,7 @@ function LineSerialPick({ companyId, itemId, warehouseId, qty, value, onChange }
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <span className={entered.length === need ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-amber-600 uppercase'}>
+        <span className={entered.length === need ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-warning uppercase'}>
           Serial nos — {entered.length} of {need} entered · {avail.length} in stock
         </span>
         {avail.length > 0 && (
@@ -1048,13 +1048,13 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
       render: (r) => (
         <span className="inline-flex items-center gap-1.5">
           {r.customer?.name || '—'}
-          {r.isCashSale && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Cash Sale</span>}
+          {r.isCashSale && <span className="rounded-full bg-success-soft px-1.5 py-0.5 text-[10px] font-medium text-success">Cash Sale</span>}
         </span>
       ),
     },
     { key: 'total', header: 'Grand Total', sortValue: (r) => r.grandTotal || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
     { key: 'paid', header: 'Paid', hideOnMobile: true, sortValue: (r) => r.paidAmount || 0, sum: true, sumFormat: 'money', render: (r) => <Money value={r.paidAmount} /> },
-    { key: 'outstanding', header: 'Outstanding', sortValue: (r) => r2((r.grandTotal || 0) - (r.paidAmount || 0)), sum: true, sumFormat: 'money', render: (r) => <Money value={r2((r.grandTotal || 0) - (r.paidAmount || 0))} className={r2((r.grandTotal || 0) - (r.paidAmount || 0)) > 0 ? 'text-amber-600 font-medium' : 'text-emerald-600'} /> },
+    { key: 'outstanding', header: 'Outstanding', sortValue: (r) => r2((r.grandTotal || 0) - (r.paidAmount || 0)), sum: true, sumFormat: 'money', render: (r) => <Money value={r2((r.grandTotal || 0) - (r.paidAmount || 0))} className={r2((r.grandTotal || 0) - (r.paidAmount || 0)) > 0 ? 'text-warning font-medium' : 'text-success'} /> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'actions', header: 'Actions',
@@ -1083,7 +1083,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send on WhatsApp" onClick={() => void shareInvoice(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7 text-success hover:text-success/80" title="Send on WhatsApp" onClick={() => void shareInvoice(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="sm" className="h-7" title="Email invoice" onClick={() => void emailInvoice(r)}><Mail className="h-3.5 w-3.5" /></Button>
           {r.status !== 'CANCELLED' && (
             <DropdownMenu>
@@ -1097,7 +1097,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
                 {r.shareToken && (
                   <>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem className="text-red-600" onSelect={() => void revokeShareLink(r)}><Link2Off className="h-3.5 w-3.5 mr-2" />Revoke link</DropdownMenuItem>
+                    <DropdownMenuItem className="text-destructive" onSelect={() => void revokeShareLink(r)}><Link2Off className="h-3.5 w-3.5 mr-2" />Revoke link</DropdownMenuItem>
                   </>
                 )}
               </DropdownMenuContent>
@@ -1118,7 +1118,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-7" title="Tally / e-Invoice export">
-                {r.tallySentAt ? <BookOpenCheck className="h-3.5 w-3.5 text-emerald-600" /> : <Download className="h-3.5 w-3.5" />}
+                {r.tallySentAt ? <BookOpenCheck className="h-3.5 w-3.5 text-success" /> : <Download className="h-3.5 w-3.5" />}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -1168,7 +1168,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
           </DropdownMenu>
           {r.status !== 'CANCELLED' && (r.paidAmount || 0) <= 0 && (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><X className="h-3.5 w-3.5" /></Button>}
               title="Cancel invoice?" message={`Cancel ${r.number}? Only unpaid invoices can be cancelled.`} tone="destructive"
               onConfirm={() => cancelInvoice(r)}
             />
@@ -1347,7 +1347,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
                   if (!hint || hint.rate === l.gstRate) return null
                   const code = String(itemRow(l.itemId)?.hsn || '')
                   return (
-                    <button type="button" className="w-fit text-left text-[10px] leading-tight text-emerald-700 underline decoration-dotted dark:text-emerald-400"
+                    <button type="button" className="w-fit text-left text-[10px] leading-tight text-success underline decoration-dotted"
                       title={`${code.startsWith('99') ? 'SAC' : 'HSN'} ${code} — ${hint.label}. Click to use ${hint.rate}%.`}
                       onClick={() => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, gstRate: hint.rate } : x)))}>
                       {code.startsWith('99') ? 'SAC' : 'HSN'} {code} → {hint.rate}%
@@ -1363,7 +1363,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
               <div className="col-span-12 sm:col-span-1 flex justify-end">
                 <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                   onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               </div>
               {directSale && deductStock && l.itemId && (itemFlag(l.itemId).batchTracked || itemFlag(l.itemId).trackSerial) && (
@@ -1414,7 +1414,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
                   <label className="grid gap-0.5"><span className="text-[11px] text-muted-foreground">Cheque date</span>
                     <DateInput value={receivedChequeDate} onChange={setReceivedChequeDate} /></label>
                   {receivedChequeDate > today() && (
-                    <p className="col-span-2 text-[11px] text-amber-700 dark:text-amber-400">Post-dated cheque — the invoice is settled now; the money counts in the account once the cheque is cleared.</p>
+                    <p className="col-span-2 text-[11px] text-warning">Post-dated cheque — the invoice is settled now; the money counts in the account once the cheque is cleared.</p>
                   )}
                 </>
               )}
@@ -1423,7 +1423,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
                   <SelectInput value={effectiveAccountId} onChange={setReceivedAccountId} options={accountOpts} placeholder={`No ${forMode.type === 'BANK' ? 'bank' : 'cash'} account`} /></label>
               )}
               {accounts.length > 0 && !forMode.matching.length && (
-                <p className="col-span-2 text-[11px] text-red-600">No {forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to record {receivedMode} receipts.</p>
+                <p className="col-span-2 text-[11px] text-destructive">No {forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to record {receivedMode} receipts.</p>
               )}
               <p className="col-span-2 text-[11px] text-muted-foreground">
                 {isCashSale && receivedAmount <= 0

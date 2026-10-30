@@ -44,11 +44,11 @@ const ENTRY: Record<ImportEntry, { title: string; source: string; emoji: string 
 const STEPS = ['Source', 'Connection / File', 'Data Type', 'Preview', 'Confirm', 'Result']
 
 const STATUS_STYLE: Record<RunRowStatus, { cls: string; icon: typeof CheckCircle2 }> = {
-  ready: { cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300', icon: CheckCircle2 },
-  imported: { cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300', icon: CheckCircle2 },
-  duplicate: { cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300', icon: Ban },
-  error: { cls: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300', icon: XCircle },
-  failed: { cls: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300', icon: XCircle },
+  ready: { cls: 'bg-success-soft text-success ring-1 ring-inset ring-success-border', icon: CheckCircle2 },
+  imported: { cls: 'bg-success-soft text-success ring-1 ring-inset ring-success-border', icon: CheckCircle2 },
+  duplicate: { cls: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border', icon: Ban },
+  error: { cls: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border', icon: XCircle },
+  failed: { cls: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border', icon: XCircle },
 }
 
 interface Parsed {
@@ -75,7 +75,7 @@ function Working({ label }: { label: string }) {
     <div className="space-y-2" role="status" aria-live="polite">
       <div className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" /> {label}</div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-        <div className="h-full w-1/3 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-emerald-600" />
+        <div className="h-full w-1/3 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
       </div>
     </div>
   )
@@ -95,17 +95,17 @@ function Choice({ selected, disabled, onSelect, icon: Icon, title, text, badge, 
       title={tooltip}
       onClick={onSelect}
       className={cn(
-        'flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600',
-        disabled ? 'cursor-not-allowed opacity-60' : 'hover:border-emerald-400',
-        selected && 'border-emerald-600 ring-1 ring-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/30',
+        'flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        disabled ? 'cursor-not-allowed opacity-60' : 'hover:border-success-border',
+        selected && 'border-primary ring-1 ring-ring bg-success-soft dark:bg-success-soft',
       )}
     >
-      <Icon className={cn('mt-0.5 h-6 w-6 shrink-0', selected ? 'text-emerald-600' : 'text-muted-foreground')} aria-hidden />
+      <Icon className={cn('mt-0.5 h-6 w-6 shrink-0', selected ? 'text-success' : 'text-muted-foreground')} aria-hidden />
       <span className="min-w-0">
         <span className="flex flex-wrap items-center gap-2 font-medium">{title}{badge && <Badge variant="outline" className="font-normal">{badge}</Badge>}</span>
         <span className="mt-0.5 block text-sm text-muted-foreground">{text}</span>
       </span>
-      {selected && <CheckCircle2 className="ml-auto h-5 w-5 shrink-0 text-emerald-600" aria-label="Selected" />}
+      {selected && <CheckCircle2 className="ml-auto h-5 w-5 shrink-0 text-success" aria-label="Selected" />}
     </button>
   )
 }
@@ -330,7 +330,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   const nameOf = (r: RunRow) => r.values.name || r.values.itemName || r.values.itemCode || (typeof r.extra?.item === 'string' ? r.extra.item : '') || '—'
 
   const blockClose = importing
-  const title = `${meta.emoji} ${meta.title}`
+  const title = meta.title
 
   // ---------- render ----------
   return (
@@ -348,7 +348,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
             return (
               <li key={s} aria-current={n === step ? 'step' : undefined} className="flex flex-col items-center gap-1 text-center">
                 <span className={cn('grid h-7 w-7 place-items-center rounded-full border text-xs font-semibold',
-                  n < step ? 'border-emerald-600 bg-emerald-600 text-white' : n === step ? 'border-emerald-600 text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+                  n < step ? 'border-primary bg-primary text-primary-foreground' : n === step ? 'border-primary text-success' : 'text-muted-foreground')}>
                   {n < step ? <CheckCircle2 className="h-4 w-4" aria-hidden /> : n}
                 </span>
                 <span className={cn('hidden text-[11px] leading-tight sm:block', n === step ? 'font-medium' : 'text-muted-foreground')}>{s}</span>
@@ -402,7 +402,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
               <TallyConnectorPanel companyId={companyId} />
               <p className="text-xs text-muted-foreground">Only for ManuFlow installed on a computer in your own office (not the online service):</p>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className={cn('gap-1.5 py-1 text-sm', tally?.status === 'connected' ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground')}>
+                <Badge variant="outline" className={cn('gap-1.5 py-1 text-sm', tally?.status === 'connected' ? 'border-success-border text-success' : 'text-muted-foreground')}>
                   {tally?.status === 'connected' ? <PlugZap className="h-4 w-4" aria-hidden /> : <Unplug className="h-4 w-4" aria-hidden />}
                   {tally?.status === 'connected' ? 'Tally server found' : 'Not connected'}
                 </Badge>
@@ -452,14 +452,14 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {step === 2 && route === 'file' && (
             <section className="space-y-4">
               <h3 className="text-base font-semibold">Step 2 · Choose a file</h3>
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center hover:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-600">
-                <Upload className="h-8 w-8 text-emerald-600" aria-hidden />
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center hover:border-success-border focus-within:ring-2 focus-within:ring-ring">
+                <Upload className="h-8 w-8 text-success" aria-hidden />
                 <span className="font-medium">{file ? file.name : 'Click here to choose a file'}</span>
                 <span className="text-xs text-muted-foreground">.xlsx or .csv · up to {IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB · up to {IMPORT_LIMITS.maxDataRows} rows</span>
                 <Input type="file" accept={ACCEPT} className="sr-only" aria-label="Choose the file to import" onChange={(e) => chooseFile(e.target.files?.[0] ?? null)} />
               </label>
-              {file && !fileProblem && <p className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4" /> {file.name} · {(file.size / 1024).toFixed(0)} KB — the file is only read to check it; it is not stored.</p>}
-              {fileProblem && <p className="flex items-center gap-1.5 text-sm text-red-700 dark:text-red-400" role="alert"><XCircle className="h-4 w-4" /> {fileProblem}</p>}
+              {file && !fileProblem && <p className="flex items-center gap-1.5 text-sm text-success"><CheckCircle2 className="h-4 w-4" /> {file.name} · {(file.size / 1024).toFixed(0)} KB — the file is only read to check it; it is not stored.</p>}
+              {fileProblem && <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert"><XCircle className="h-4 w-4" /> {fileProblem}</p>}
               <Alert>
                 <Info className="h-4 w-4" />
                 <AlertTitle>{entry === 'tally' ? 'How to export a file from Tally' : entry === 'vyapar' ? 'How to export a file from Vyapar' : 'Supported files'}</AlertTitle>
@@ -477,7 +477,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
             <section className="space-y-4">
               <h3 className="text-base font-semibold">Step 3 · Choose the company and data type</h3>
               <div className="flex items-center gap-2 rounded-lg border p-3 text-sm">
-                <Building2 className="h-5 w-5 text-emerald-600" aria-hidden />
+                <Building2 className="h-5 w-5 text-success" aria-hidden />
                 <span>Data will be imported into: <span className="font-semibold">{companyName || '—'}</span></span>
                 <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">To use another company, switch it in the tenant selector at the top</span>
               </div>
@@ -504,7 +504,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
               {parsing && <Working label="Reading the file…" />}
               {parsed && dataType && (
                 <div className="space-y-3 rounded-lg border p-3">
-                  <p className="flex items-center gap-1.5 text-sm"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> {parsed.fileName} · {dataRowCount} rows found</p>
+                  <p className="flex items-center gap-1.5 text-sm"><CheckCircle2 className="h-4 w-4 text-success" /> {parsed.fileName} · {dataRowCount} rows found</p>
                   {parsed.sheetNames.length > 1 && (
                     <div className="max-w-xs">
                       <Field label="Excel sheet">
@@ -537,7 +537,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                       </Field>
                     </div>
                   )}
-                  {optionProblem && <p className="text-sm text-amber-700 dark:text-amber-400" role="status">{optionProblem}</p>}
+                  {optionProblem && <p className="text-sm text-warning" role="status">{optionProblem}</p>}
                 </div>
               )}
             </section>
@@ -552,10 +552,10 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                 <>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <SummaryCard label="Total records" value={preview.counts.total} tone="" icon={FileSpreadsheet} />
-                    <SummaryCard label="Ready to import" value={preview.counts.ready} tone="border-emerald-300 text-emerald-800 dark:text-emerald-300" icon={CheckCircle2} />
-                    <SummaryCard label="Warnings" value={preview.counts.withWarnings} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={AlertTriangle} />
-                    <SummaryCard label="Errors" value={preview.counts.errors} tone="border-red-300 text-red-800 dark:text-red-300" icon={XCircle} />
-                    <SummaryCard label="Duplicates" value={preview.counts.duplicates} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={Ban} />
+                    <SummaryCard label="Ready to import" value={preview.counts.ready} tone="border-success-border text-success" icon={CheckCircle2} />
+                    <SummaryCard label="Warnings" value={preview.counts.withWarnings} tone="border-warning-border text-warning" icon={AlertTriangle} />
+                    <SummaryCard label="Errors" value={preview.counts.errors} tone="border-danger-border text-destructive" icon={XCircle} />
+                    <SummaryCard label="Duplicates" value={preview.counts.duplicates} tone="border-warning-border text-warning" icon={Ban} />
                   </div>
                   {!!preview.notes.length && (
                     <Alert><Info className="h-4 w-4" /><AlertTitle>Please note</AlertTitle><AlertDescription><ul className="list-disc pl-4">{preview.notes.map((n) => <li key={n}>{n}</li>)}</ul></AlertDescription></Alert>
@@ -613,7 +613,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                     <Button variant="outline" onClick={() => void runPreview()} disabled={previewing || !!optionProblem}>
                       <RefreshCw className="h-4 w-4 mr-2" /> Preview again
                     </Button>
-                    {optionProblem && <p className="text-xs text-amber-700 dark:text-amber-400">{optionProblem}</p>}
+                    {optionProblem && <p className="text-xs text-warning">{optionProblem}</p>}
                   </div>
                 )}
               </div>
@@ -653,7 +653,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
               <ul className="space-y-1 rounded-lg border p-3 text-sm">
                 <li>Company: <span className="font-medium">{companyName}</span></li>
                 <li>Data: <span className="font-medium">{DATA_TYPE_UI[dataType.key]?.name}</span> · File: {parsed?.fileName}</li>
-                <li className="text-emerald-700 dark:text-emerald-400">Rows to import: <span className="font-semibold">{preview.counts.ready}</span></li>
+                <li className="text-success">Rows to import: <span className="font-semibold">{preview.counts.ready}</span></li>
                 <li className="text-muted-foreground">Rows left out: {preview.counts.errors} with errors + {preview.counts.duplicates} already existing</li>
                 {kind === 'opening-stock' && goLive?.goLiveDate && <li>Stock date: {fmtDate(goLive.openingDate)} (go-live {fmtDate(goLive.goLiveDate)}) — the go-live date cannot be changed after this import</li>}
               </ul>
@@ -661,7 +661,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                 <Working label={`Importing ${preview.counts.ready} rows… Please do not close this window.`} />
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  <Button size="lg" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => void runImport()}>
+                  <Button size="lg" onClick={() => void runImport()}>
                     <CheckCircle2 className="h-5 w-5 mr-2" /> {error ? 'Try again' : 'Yes, import'}
                   </Button>
                   <Button size="lg" variant="outline" onClick={goBack}><ArrowLeft className="h-5 w-5 mr-2" /> Back</Button>
@@ -675,15 +675,15 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {/* ---------------- Step 6: result ---------------- */}
           {step === 6 && result && dataType && (
             <section className="space-y-4">
-              <h3 className={cn('flex items-center gap-2 text-xl font-semibold', result.counts.failed + result.counts.errors ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>
+              <h3 className={cn('flex items-center gap-2 text-xl font-semibold', result.counts.failed + result.counts.errors ? 'text-warning' : 'text-success')}>
                 {result.counts.failed + result.counts.errors ? <AlertTriangle className="h-6 w-6" aria-hidden /> : <CheckCircle2 className="h-6 w-6" aria-hidden />}
                 {result.counts.failed + result.counts.errors ? 'Import finished — some rows were not imported' : 'Import complete!'}
               </h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <SummaryCard label="Imported" value={result.counts.imported} tone="border-emerald-300 text-emerald-800 dark:text-emerald-300" icon={CheckCircle2} />
-                <SummaryCard label="Failed" value={result.counts.failed + result.counts.errors} tone="border-red-300 text-red-800 dark:text-red-300" icon={XCircle} />
-                <SummaryCard label="Skipped duplicates" value={result.counts.duplicates} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={Ban} />
-                <SummaryCard label="Warnings" value={result.counts.withWarnings} tone="border-amber-300 text-amber-800 dark:text-amber-300" icon={AlertTriangle} />
+                <SummaryCard label="Imported" value={result.counts.imported} tone="border-success-border text-success" icon={CheckCircle2} />
+                <SummaryCard label="Failed" value={result.counts.failed + result.counts.errors} tone="border-danger-border text-destructive" icon={XCircle} />
+                <SummaryCard label="Skipped duplicates" value={result.counts.duplicates} tone="border-warning-border text-warning" icon={Ban} />
+                <SummaryCard label="Warnings" value={result.counts.withWarnings} tone="border-warning-border text-warning" icon={AlertTriangle} />
               </div>
               {result.reconciliation && (
                 <div className="rounded-lg border p-3 text-sm">
@@ -757,8 +757,8 @@ function RowsTable({ rows, keyCols, nameOf, cellOf }: {
                 {keyCols.map(([k]) => <TableCell key={k} className="max-w-40 truncate whitespace-nowrap">{cellOf(r, k) || '—'}</TableCell>)}
                 <TableCell className="text-xs">
                   {r.messages.length === 0 && r.warnings.length === 0 && <span className="text-muted-foreground">—</span>}
-                  {r.messages.map((m) => <div key={m} className="text-red-700 dark:text-red-400">{m}</div>)}
-                  {r.warnings.map((w) => <div key={w} className="text-amber-700 dark:text-amber-400">{w}</div>)}
+                  {r.messages.map((m) => <div key={m} className="text-destructive">{m}</div>)}
+                  {r.warnings.map((w) => <div key={w} className="text-warning">{w}</div>)}
                 </TableCell>
               </TableRow>
             )

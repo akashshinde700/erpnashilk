@@ -293,7 +293,7 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
       header: '',
       render: (row) => (
         <span
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-100 text-xs font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-success-soft text-xs font-bold text-success"
           aria-hidden="true"
         >
           {row.logoText || row.name.slice(0, 2).toUpperCase()}
@@ -308,7 +308,7 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
           <p className="font-medium truncate">
             {row.name}
             {row.isHome && !isPlatformAdmin && (
-              <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">HOME</span>
+              <span className="ml-1.5 rounded bg-success-soft px-1.5 py-0.5 text-[10px] font-semibold text-success">HOME</span>
             )}
           </p>
           <p className="text-xs text-muted-foreground truncate">
@@ -435,13 +435,13 @@ export default function CompanySetupModule({ companyId }: { companyId: string })
       />
 
       <div className="grid gap-4 sm:grid-cols-3 mb-4">
-        <StatCard title="Total Tenants" value={totals.tenants} icon={<Building2 className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Total Users" value={totals.users} icon={<Users className="h-4 w-4" />} toneClass="bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300" />
-        <StatCard title="Total Items" value={totals.items} icon={<Boxes className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
+        <StatCard title="Total Tenants" value={totals.tenants} icon={<Building2 className="h-4 w-4" />} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Total Users" value={totals.users} icon={<Users className="h-4 w-4" />} toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" />
+        <StatCard title="Total Items" value={totals.items} icon={<Boxes className="h-4 w-4" />} toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-3">
+        <p role="alert" className="text-sm text-destructive mb-3">
           {error}{' '}
           <button type="button" className="underline" onClick={() => void refetch()}>
             Retry

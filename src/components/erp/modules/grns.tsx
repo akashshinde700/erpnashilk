@@ -184,7 +184,7 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
                 onConfirm={() => post(r)}
               />
               <ConfirmAction
-                trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><Trash2 className="h-3.5 w-3.5" /></Button>}
+                trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>}
                 title="Delete GRN?" message={`Delete GRN ${r.number}?`} tone="destructive" onConfirm={() => remove(r)}
               />
             </>
@@ -244,7 +244,7 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
               <div className="col-span-2 sm:col-span-2 flex justify-end">
                 <Button type="button" variant="ghost" size="sm"
                   onClick={() => setRows((rs) => rs.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               </div>
               {r.batchTracked && (
@@ -270,7 +270,7 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
                   </span>
                   <Textarea rows={3} value={r.serials} onChange={(e) => updateRow(idx, { serials: e.target.value })}
                     placeholder="One serial number per line (scan or paste)"
-                    className={serialList(r.serials).length !== r.acceptedQty ? 'border-amber-500' : ''} />
+                    className={serialList(r.serials).length !== r.acceptedQty ? 'border-warning-border' : ''} />
                 </div>
               )}
             </div>
@@ -317,8 +317,8 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
                         </td>
                         <td className="p-2 text-right tabular-nums">{it.orderedQty}</td>
                         <td className="p-2 text-right tabular-nums">{it.receivedQty}</td>
-                        <td className="p-2 text-right tabular-nums text-emerald-700">{it.acceptedQty}</td>
-                        <td className="p-2 text-right tabular-nums text-red-600">{it.rejectedQty}</td>
+                        <td className="p-2 text-right tabular-nums text-success">{it.acceptedQty}</td>
+                        <td className="p-2 text-right tabular-nums text-destructive">{it.rejectedQty}</td>
                         <td className="p-2 text-right"><StatusBadge status={it.qcStatus || 'PENDING'} /></td>
                       </tr>
                     ))}

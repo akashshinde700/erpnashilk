@@ -30,7 +30,7 @@ const fyStartISO = () => {
 }
 const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const r2 = (n: number) => Math.round(n * 100) / 100
-const MARGIN_CLS = (v: number) => (v >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')
+const MARGIN_CLS = (v: number) => (v >= 0 ? 'text-success' : 'text-destructive')
 
 type PresetKey = 'today' | 'month' | 'lastMonth' | 'quarter' | 'fy' | 'custom'
 const PRESETS: { key: PresetKey; label: string }[] = [
@@ -83,7 +83,7 @@ function DateRangeBar({ from, to, onChange, asOf, onAsOf }: {
             key={p.key}
             size="sm"
             variant={preset === p.key ? 'default' : 'outline'}
-            className={cn('h-8', preset === p.key && 'bg-emerald-600 text-white hover:bg-emerald-600')}
+            className={cn('h-8', preset === p.key && 'bg-primary text-primary-foreground hover:bg-primary')}
             onClick={() => pick(p.key)}
           >
             {p.label}
@@ -185,7 +185,7 @@ function StatementTable({ rows, amountHeader = 'Amount' }: { rows: SRow[]; amoun
                   </div>
                   {r.note && <p className="text-[11px] font-normal text-muted-foreground">{r.note}</p>}
                 </TableCell>
-                <TableCell className={cn('text-right tabular-nums whitespace-nowrap', (r.amount ?? 0) < 0 && 'text-red-600 dark:text-red-400')}>
+                <TableCell className={cn('text-right tabular-nums whitespace-nowrap', (r.amount ?? 0) < 0 && 'text-destructive')}>
                   {r.amount === undefined ? '' : fmtMoney(r.amount)}
                 </TableCell>
               </TableRow>
@@ -377,13 +377,13 @@ function Gallery({ onOpen }: { onOpen: (r: ReportDef) => void }) {
                     key={r.key}
                     type="button"
                     onClick={() => onOpen(r)}
-                    className="flex items-start gap-3 rounded-xl border bg-card p-4 text-left transition hover:border-emerald-300 hover:bg-emerald-50/60 focus:outline-none focus-visible:ring-2 dark:hover:border-emerald-800 dark:hover:bg-emerald-950/30"
+                    className="flex items-start gap-3 rounded-xl border bg-card p-4 text-left transition hover:border-success-border hover:bg-primary/5/60 focus:outline-none focus-visible:ring-2 dark:hover:border-primary/40 dark:hover:bg-primary/10"
                   >
-                    <span className="rounded-lg bg-emerald-100 p-2 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{r.icon}</span>
+                    <span className="rounded-lg bg-success-soft p-2 text-success">{r.icon}</span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold">{r.title}</span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">{r.description}</span>
-                      {r.goto && <span className="mt-1 block text-[11px] text-emerald-700 dark:text-emerald-400">Opens module →</span>}
+                      {r.goto && <span className="mt-1 block text-[11px] text-success">Opens module →</span>}
                     </span>
                   </button>
                 ))}
@@ -496,9 +496,9 @@ function ProfitLossView({ companyId, from, to }: PeriodProps) {
     <div className={cn('space-y-4', loading && 'opacity-60')}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Net Sales" value={fmtMoney(data.sales.net)} sub="Taxable, net of returns" icon={<IndianRupee className="h-4 w-4" />} />
-        <StatCard title="Gross Profit" value={fmtMoney(data.grossProfit)} sub={data.sales.net ? `${fmtNum(r2((data.grossProfit / data.sales.net) * 100))}% of sales` : '—'} icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" />
-        <StatCard title="Expenses" value={fmtMoney(r2(data.indirectExpenses.total + data.stockLoss + data.loanInterest + data.processingFees))} sub="Indirect + loss + finance" icon={<Wallet className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
-        <StatCard title={data.netProfit >= 0 ? 'Net Profit' : 'Net Loss'} value={fmtMoney(data.netProfit)} sub={`${fmtDate(data.from)} – ${fmtDate(data.to)}`} icon={<PiggyBank className="h-4 w-4" />} toneClass={data.netProfit >= 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'} />
+        <StatCard title="Gross Profit" value={fmtMoney(data.grossProfit)} sub={data.sales.net ? `${fmtNum(r2((data.grossProfit / data.sales.net) * 100))}% of sales` : '—'} icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" />
+        <StatCard title="Expenses" value={fmtMoney(r2(data.indirectExpenses.total + data.stockLoss + data.loanInterest + data.processingFees))} sub="Indirect + loss + finance" icon={<Wallet className="h-4 w-4" />} toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
+        <StatCard title={data.netProfit >= 0 ? 'Net Profit' : 'Net Loss'} value={fmtMoney(data.netProfit)} sub={`${fmtDate(data.from)} – ${fmtDate(data.to)}`} icon={<PiggyBank className="h-4 w-4" />} toneClass={data.netProfit >= 0 ? 'bg-success-soft text-success ring-1 ring-inset ring-success-border' : 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border'} />
       </div>
       <SectionCard
         title={`Profit & Loss · ${fmtDate(data.from)} – ${fmtDate(data.to)}`}
@@ -529,7 +529,7 @@ function ProfitLossView({ companyId, from, to }: PeriodProps) {
                         <span className="tabular-nums whitespace-nowrap">{fmtMoney(c.amount)}</span>
                       </div>
                       <div className="mt-0.5 h-1.5 rounded-full bg-muted">
-                        <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                        <div className="h-1.5 rounded-full bg-success" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
                   )
@@ -576,9 +576,9 @@ function BalanceSheetView({ companyId, asOf }: { companyId: string; asOf: string
     <div className={cn('space-y-4', loading && 'opacity-60')}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total Assets" value={fmtMoney(data.totalAssets)} sub={`As of ${fmtDate(data.asOf)}`} icon={<Boxes className="h-4 w-4" />} />
-        <StatCard title="Liabilities" value={fmtMoney(data.totalLiabilities)} sub="Payables, loans, GST" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" />
-        <StatCard title="Profit to Date" value={fmtMoney(data.netProfitToDate)} sub="Retained profit" icon={<PiggyBank className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Opening Bal. Difference" value={fmtMoney(diff)} sub="Balancing figure" icon={<Scale className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
+        <StatCard title="Liabilities" value={fmtMoney(data.totalLiabilities)} sub="Payables, loans, GST" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" />
+        <StatCard title="Profit to Date" value={fmtMoney(data.netProfitToDate)} sub="Retained profit" icon={<PiggyBank className="h-4 w-4" />} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Opening Bal. Difference" value={fmtMoney(diff)} sub="Balancing figure" icon={<Scale className="h-4 w-4" />} toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
       </div>
       <SectionCard
         title={`Balance Sheet as of ${fmtDate(data.asOf)}`}
@@ -628,9 +628,9 @@ function CashFlowView({ companyId, from, to }: PeriodProps) {
     <div className={cn('space-y-4', loading && 'opacity-60')}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Opening" value={fmtMoney(data.opening)} sub={`Before ${fmtDate(data.from)}`} icon={<Wallet className="h-4 w-4" />} />
-        <StatCard title="Inflows" value={fmtMoney(data.totalIn)} sub="Money in" icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Outflows" value={fmtMoney(data.totalOut)} sub="Money out" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" />
-        <StatCard title="Closing" value={fmtMoney(data.closing)} sub={`As of ${fmtDate(data.to)}`} icon={<PiggyBank className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" />
+        <StatCard title="Inflows" value={fmtMoney(data.totalIn)} sub="Money in" icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Outflows" value={fmtMoney(data.totalOut)} sub="Money out" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" />
+        <StatCard title="Closing" value={fmtMoney(data.closing)} sub={`As of ${fmtDate(data.to)}`} icon={<PiggyBank className="h-4 w-4" />} toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" />
       </div>
       <SectionCard
         title={`Cash Flow · ${fmtDate(data.from)} – ${fmtDate(data.to)}`}
@@ -724,7 +724,7 @@ function TrialBalanceView({ companyId, asOf }: { companyId: string; asOf: string
             <TableCell className="text-right tabular-nums">{fmtMoney(data.totalCredit)}</TableCell>
           </TableRow>
           {unbalanced && (
-            <TableRow className="text-amber-700 dark:text-amber-400">
+            <TableRow className="text-warning">
               <TableCell className="hidden sm:table-cell" />
               <TableCell>Difference (opening balances)</TableCell>
               <TableCell className="text-right tabular-nums">{data.difference < 0 ? fmtMoney(-data.difference) : ''}</TableCell>
@@ -746,12 +746,12 @@ function TrialBalanceView({ companyId, asOf }: { companyId: string; asOf: string
 // ============================================================
 
 const TYPE_TONE: Record<string, string> = {
-  SALE: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  PAYMENT_IN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  PURCHASE: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-  PAYMENT_OUT: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
-  EXPENSE: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
-  CHEQUE_CLEARED: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+  SALE: 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
+  PAYMENT_IN: 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
+  PURCHASE: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
+  PAYMENT_OUT: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border',
+  EXPENSE: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border',
+  CHEQUE_CLEARED: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
 }
 
 const TXN_HEADERS = ['Date', 'Type', 'Number', 'Party', 'Description', 'Mode', 'Account', 'Money In', 'Money Out', 'Amount']
@@ -773,8 +773,8 @@ const txnColumns: Column<TxnRow>[] = [
       </div>
     ),
   },
-  { key: 'moneyIn', header: 'Money In', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyIn ? <Money value={r.moneyIn} className="text-emerald-700 dark:text-emerald-400" /> : <span className="text-muted-foreground">—</span>) },
-  { key: 'moneyOut', header: 'Money Out', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyOut ? <Money value={r.moneyOut} className="text-red-600 dark:text-red-400" /> : <span className="text-muted-foreground">—</span>) },
+  { key: 'moneyIn', header: 'Money In', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyIn ? <Money value={r.moneyIn} className="text-success" /> : <span className="text-muted-foreground">—</span>) },
+  { key: 'moneyOut', header: 'Money Out', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyOut ? <Money value={r.moneyOut} className="text-destructive" /> : <span className="text-muted-foreground">—</span>) },
   {
     key: 'amount', header: 'Amount', className: 'text-right',
     render: (r) => <span className={cn(r.status === 'CANCELLED' && 'line-through text-muted-foreground')}><Money value={r.amount} className="font-medium" /></span>,
@@ -794,9 +794,9 @@ function DaybookView({ companyId, from, to }: PeriodProps) {
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Transactions" value={t ? t.count : '—'} sub={data ? `${fmtDate(data.from)} – ${fmtDate(data.to)}` : ''} icon={<ReceiptText className="h-4 w-4" />} />
-        <StatCard title="Money In" value={t ? fmtMoney(t.moneyIn) : '—'} sub="Into cash & bank" icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Money Out" value={t ? fmtMoney(t.moneyOut) : '—'} sub="From cash & bank" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" />
-        <StatCard title="Net" value={t ? fmtMoney(t.net) : '—'} sub="In − out" icon={<Scale className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" />
+        <StatCard title="Money In" value={t ? fmtMoney(t.moneyIn) : '—'} sub="Into cash & bank" icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Money Out" value={t ? fmtMoney(t.moneyOut) : '—'} sub="From cash & bank" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" />
+        <StatCard title="Net" value={t ? fmtMoney(t.net) : '—'} sub="In − out" icon={<Scale className="h-4 w-4" />} toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" />
       </div>
       <SectionCard
         title="Daybook"
@@ -847,9 +847,9 @@ function TransactionsView({ companyId, from, to }: PeriodProps) {
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Transactions" value={t ? t.count : '—'} sub="Matching filters" icon={<ReceiptText className="h-4 w-4" />} />
-        <StatCard title="Total Amount" value={t ? fmtMoney(t.amount) : '—'} sub="Document value" icon={<IndianRupee className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" />
-        <StatCard title="Money In" value={t ? fmtMoney(t.moneyIn) : '—'} sub="Into cash & bank" icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Money Out" value={t ? fmtMoney(t.moneyOut) : '—'} sub="From cash & bank" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" />
+        <StatCard title="Total Amount" value={t ? fmtMoney(t.amount) : '—'} sub="Document value" icon={<IndianRupee className="h-4 w-4" />} toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" />
+        <StatCard title="Money In" value={t ? fmtMoney(t.moneyIn) : '—'} sub="Into cash & bank" icon={<TrendingUp className="h-4 w-4" />} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Money Out" value={t ? fmtMoney(t.moneyOut) : '—'} sub="From cash & bank" icon={<CreditCard className="h-4 w-4" />} toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" />
       </div>
       {data && data.byType.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -912,7 +912,7 @@ function PartyReportView({ companyId, from, to, kind }: PeriodProps & { kind: 's
     { key: paidKey, header: paidLabel, className: 'text-right', render: (r) => <Money value={r[paidKey]} /> },
     {
       key: 'outstanding', header: 'Outstanding', className: 'text-right',
-      render: (r) => <Money value={r.outstanding} className={r.outstanding > 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'font-medium'} />,
+      render: (r) => <Money value={r.outstanding} className={r.outstanding > 0 ? 'font-medium text-warning' : 'font-medium'} />,
     },
   ]
   const headers = [isSales ? 'Customer' : 'Supplier', 'Invoices', 'Taxable', 'GST', 'Grand Total', paidLabel, 'Outstanding']
@@ -933,9 +933,9 @@ function PartyReportView({ companyId, from, to, kind }: PeriodProps & { kind: 's
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Grand Total" value={t ? fmtMoney(t.grand) : '—'} sub="Invoiced in period (incl. GST)" icon={<IndianRupee className="h-4 w-4" />} />
-        <StatCard title={paidLabel} value={t ? fmtMoney(t[paidKey]) : '—'} sub={isSales ? 'Payments against invoices' : 'Payments to suppliers'} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" icon={isSales ? <BadgeCheck className="h-4 w-4" /> : <Wallet className="h-4 w-4" />} />
-        <StatCard title="Outstanding" value={t ? fmtMoney(t.outstanding) : '—'} sub={`Grand total − ${paidLabel.toLowerCase()}`} toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" icon={<Clock className="h-4 w-4" />} />
-        <StatCard title="Invoices" value={t ? t.invoices : '—'} sub="Non-cancelled in period" toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" icon={<ReceiptText className="h-4 w-4" />} />
+        <StatCard title={paidLabel} value={t ? fmtMoney(t[paidKey]) : '—'} sub={isSales ? 'Payments against invoices' : 'Payments to suppliers'} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" icon={isSales ? <BadgeCheck className="h-4 w-4" /> : <Wallet className="h-4 w-4" />} />
+        <StatCard title="Outstanding" value={t ? fmtMoney(t.outstanding) : '—'} sub={`Grand total − ${paidLabel.toLowerCase()}`} toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" icon={<Clock className="h-4 w-4" />} />
+        <StatCard title="Invoices" value={t ? t.invoices : '—'} sub="Non-cancelled in period" toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" icon={<ReceiptText className="h-4 w-4" />} />
       </div>
       <SectionCard title={title} actions={<PrintButton label="Print / PDF" onClick={print} />}>
         <DataTable
@@ -988,10 +988,10 @@ function ProfitabilityView({ companyId, from, to }: PeriodProps) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="Revenue" value={t ? fmtMoney(t.revenue) : '—'} sub="Taxable invoice value" toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" icon={<TrendingUp className="h-4 w-4" />} />
-        <StatCard title="Cost" value={t ? fmtMoney(t.cost) : '—'} sub="Standard cost × qty" toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" icon={<Calculator className="h-4 w-4" />} />
-        <StatCard title="Margin" value={t ? fmtMoney(t.margin) : '—'} sub="Revenue − standard cost" toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" icon={<PiggyBank className="h-4 w-4" />} />
-        <StatCard title="Margin %" value={t ? `${fmtNum(t.marginPct)}%` : '—'} sub="Margin / revenue" toneClass="bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300" icon={<ReceiptText className="h-4 w-4" />} />
+        <StatCard title="Revenue" value={t ? fmtMoney(t.revenue) : '—'} sub="Taxable invoice value" toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" icon={<TrendingUp className="h-4 w-4" />} />
+        <StatCard title="Cost" value={t ? fmtMoney(t.cost) : '—'} sub="Standard cost × qty" toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" icon={<Calculator className="h-4 w-4" />} />
+        <StatCard title="Margin" value={t ? fmtMoney(t.margin) : '—'} sub="Revenue − standard cost" toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" icon={<PiggyBank className="h-4 w-4" />} />
+        <StatCard title="Margin %" value={t ? `${fmtNum(t.marginPct)}%` : '—'} sub="Margin / revenue" toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" icon={<ReceiptText className="h-4 w-4" />} />
       </div>
       <SectionCard title="Item profitability" actions={<PrintButton label="Print / PDF" onClick={print} />}>
         <DataTable
@@ -1049,7 +1049,7 @@ function StockValuationView({ companyId, lowOnly }: { companyId: string; lowOnly
       render: (r) => (
         <div className="flex items-center justify-end gap-2">
           <span className="tabular-nums text-muted-foreground">{r.reorderLevel > 0 ? fmtNum(r.reorderLevel) : '—'}</span>
-          {r.low && <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-950 dark:text-red-300">LOW</span>}
+          {r.low && <span className="inline-flex items-center rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-destructive">LOW</span>}
         </div>
       ),
     },
@@ -1069,9 +1069,9 @@ function StockValuationView({ companyId, lowOnly }: { companyId: string; lowOnly
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Stock Value" value={t ? fmtMoney(t.value) : '—'} sub="At moving average cost" toneClass="bg-primary/10 text-primary" icon={<Boxes className="h-4 w-4" />} />
-        <StatCard title="SKUs" value={t ? t.skus : '—'} sub="Distinct items" toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" icon={<Package className="h-4 w-4" />} />
-        <StatCard title="Low Stock" value={t ? t.lowStock : '—'} sub="At / below reorder level" toneClass="bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" icon={<AlertTriangle className="h-4 w-4" />} />
-        <StatCard title="Total Qty" value={t ? fmtNum(t.totalQty) : '—'} sub="Across all warehouses" toneClass="bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300" icon={<Layers className="h-4 w-4" />} />
+        <StatCard title="SKUs" value={t ? t.skus : '—'} sub="Distinct items" toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" icon={<Package className="h-4 w-4" />} />
+        <StatCard title="Low Stock" value={t ? t.lowStock : '—'} sub="At / below reorder level" toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" icon={<AlertTriangle className="h-4 w-4" />} />
+        <StatCard title="Total Qty" value={t ? fmtNum(t.totalQty) : '—'} sub="Across all warehouses" toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" icon={<Layers className="h-4 w-4" />} />
       </div>
       {!lowOnly && data && data.byType.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -1129,8 +1129,8 @@ function ItemDetailView({ companyId, from, to }: PeriodProps) {
     { key: 'type', header: 'Type', render: (r) => <span className="text-xs whitespace-nowrap">{r.type.replaceAll('_', ' ')}</span> },
     { key: 'refNumber', header: 'Reference', render: (r) => <div><p className="font-mono text-xs">{r.refNumber || '—'}</p>{r.notes && <p className="text-[11px] text-muted-foreground truncate max-w-48">{r.notes}</p>}</div> },
     { key: 'warehouse', header: 'Store', hideOnMobile: true, render: (r) => <span className="text-xs">{r.warehouse}</span> },
-    { key: 'qtyIn', header: 'In', className: 'text-right', sum: true, render: (r) => (r.qtyIn ? <span className="tabular-nums text-emerald-700 dark:text-emerald-400">{fmtNum(r.qtyIn)}</span> : <span className="text-muted-foreground">—</span>) },
-    { key: 'qtyOut', header: 'Out', className: 'text-right', sum: true, render: (r) => (r.qtyOut ? <span className="tabular-nums text-red-600 dark:text-red-400">{fmtNum(r.qtyOut)}</span> : <span className="text-muted-foreground">—</span>) },
+    { key: 'qtyIn', header: 'In', className: 'text-right', sum: true, render: (r) => (r.qtyIn ? <span className="tabular-nums text-success">{fmtNum(r.qtyIn)}</span> : <span className="text-muted-foreground">—</span>) },
+    { key: 'qtyOut', header: 'Out', className: 'text-right', sum: true, render: (r) => (r.qtyOut ? <span className="tabular-nums text-destructive">{fmtNum(r.qtyOut)}</span> : <span className="text-muted-foreground">—</span>) },
     { key: 'runningQty', header: 'Balance', className: 'text-right', render: (r) => <Qty value={r.runningQty} uom={uom} /> },
     { key: 'rate', header: 'Rate', className: 'text-right', hideOnMobile: true, render: (r) => <Money value={r.rate} /> },
   ]
@@ -1162,9 +1162,9 @@ function ItemDetailView({ companyId, from, to }: PeriodProps) {
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard title="Opening Qty" value={`${fmtNum(data.openingQty)} ${data.item.uom}`} sub={`On ${fmtDate(data.from)} · ${fmtMoney(data.openingValue)}`} icon={<Package className="h-4 w-4" />} />
-            <StatCard title="In / Out" value={`${fmtNum(data.totals.in)} / ${fmtNum(data.totals.out)}`} sub="Movements in period" icon={<ArrowLeftRight className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" />
-            <StatCard title="Closing Qty" value={`${fmtNum(data.closingQty)} ${data.item.uom}`} sub={`Value ${fmtMoney(data.closingValue)} @ ${fmtMoney(data.avgRate)}`} icon={<Boxes className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-            <StatCard title="Sales / Purchases" value={`${fmtNum(data.sales.qty)} / ${fmtNum(data.purchases.qty)}`} sub={`${fmtMoney(data.sales.value)} / ${fmtMoney(data.purchases.value)}`} icon={<IndianRupee className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
+            <StatCard title="In / Out" value={`${fmtNum(data.totals.in)} / ${fmtNum(data.totals.out)}`} sub="Movements in period" icon={<ArrowLeftRight className="h-4 w-4" />} toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" />
+            <StatCard title="Closing Qty" value={`${fmtNum(data.closingQty)} ${data.item.uom}`} sub={`Value ${fmtMoney(data.closingValue)} @ ${fmtMoney(data.avgRate)}`} icon={<Boxes className="h-4 w-4" />} toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+            <StatCard title="Sales / Purchases" value={`${fmtNum(data.sales.qty)} / ${fmtNum(data.purchases.qty)}`} sub={`${fmtMoney(data.sales.value)} / ${fmtMoney(data.purchases.value)}`} icon={<IndianRupee className="h-4 w-4" />} toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
           </div>
           {(data.salesReturns.qty > 0 || data.purchaseReturns.qty > 0) && (
             <p className="text-xs text-muted-foreground">

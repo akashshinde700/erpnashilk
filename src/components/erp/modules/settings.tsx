@@ -166,7 +166,7 @@ function ImageUpload({ label, hint, value, maxSide, onChange }: {
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">{hint}</p>
         {value && (
-          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-600" onClick={() => onChange('')}>
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive" onClick={() => onChange('')}>
             <Trash2 className="h-3.5 w-3.5 mr-1" />Remove
           </Button>
         )}
@@ -244,7 +244,7 @@ function SecuritySection({ companyId, enabled, isAdmin, onSaved }: {
     >
       <label className="flex cursor-pointer items-center justify-between gap-4">
         <span className="flex items-center gap-2 text-sm">
-          <ShieldCheck className="h-4 w-4 text-emerald-600" /> Require a security PIN for changes to saved documents
+          <ShieldCheck className="h-4 w-4 text-success" /> Require a security PIN for changes to saved documents
         </span>
         <Switch checked={on} onCheckedChange={(v) => setOn(v === true)} disabled={!isAdmin} />
       </label>
@@ -821,7 +821,7 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
         <Dialog open={!!restoreFile} onOpenChange={(o) => { if (!o && !restoring) setRestoreFile(null) }}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-red-600"><AlertTriangle className="h-5 w-5" />Restore backup?</DialogTitle>
+              <DialogTitle className="flex items-center gap-2 text-destructive"><AlertTriangle className="h-5 w-5" />Restore backup?</DialogTitle>
               <DialogDescription>
                 All current items, parties, documents, stock and payments of this company will be <b>replaced</b> by the backup. This cannot be undone
                 (a copy of the current data downloads first).
@@ -924,7 +924,7 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
             <div className="divide-y rounded-lg border">
               {notificationItems.map((n) => (
                 <div key={n.id} className="flex items-start gap-3 px-3 py-2.5">
-                  <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${n.read ? 'bg-muted-foreground/30' : 'bg-sky-500'}`} />
+                  <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${n.read ? 'bg-muted-foreground/30' : 'bg-info'}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium truncate">{n.title}</span>

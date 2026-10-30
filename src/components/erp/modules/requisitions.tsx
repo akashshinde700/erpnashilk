@@ -82,10 +82,10 @@ export default function RequisitionsModule({ companyId }: { companyId: string })
       key: 'actions', header: 'Actions',
       render: (r) => r.status === 'PENDING' ? (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button variant="outline" size="sm" className="h-7 text-emerald-700" onClick={() => void act(r, 'approve', `PR ${r.number} approved`)}>
+          <Button variant="outline" size="sm" className="h-7 text-success" onClick={() => void act(r, 'approve', `PR ${r.number} approved`)}>
             <Check className="h-3.5 w-3.5 mr-0.5" />Approve
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 text-red-600" onClick={() => void act(r, 'reject', `PR ${r.number} rejected`)}>
+          <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => void act(r, 'reject', `PR ${r.number} rejected`)}>
             <X className="h-3.5 w-3.5 mr-0.5" />Reject
           </Button>
           <ConfirmAction
@@ -145,7 +145,7 @@ export default function RequisitionsModule({ companyId }: { companyId: string })
               />
               <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                 onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                <Trash2 className="h-3.5 w-3.5 text-destructive" />
               </Button>
             </div>
           ))}

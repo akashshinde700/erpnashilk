@@ -17,10 +17,10 @@ const POLL_MS = 10_000
 const BADGE: Record<ConnectorState, { label: string; tone: string; icon: React.ElementType }> = {
   unavailable: { label: 'Connector not available', tone: 'text-muted-foreground', icon: Unplug },
   not_paired: { label: 'Not connected', tone: 'text-muted-foreground', icon: Unplug },
-  pairing: { label: 'Waiting for pairing', tone: 'border-amber-500 text-amber-700 dark:text-amber-300', icon: Clock },
-  connected: { label: 'Connected to Tally', tone: 'border-emerald-500 text-emerald-700 dark:text-emerald-300', icon: PlugZap },
-  tally_error: { label: 'Connector online · Tally not reachable', tone: 'border-red-500 text-red-700 dark:text-red-300', icon: XCircle },
-  offline: { label: 'Connector offline', tone: 'border-red-500 text-red-700 dark:text-red-300', icon: XCircle },
+  pairing: { label: 'Waiting for pairing', tone: 'border-warning-border text-warning', icon: Clock },
+  connected: { label: 'Connected to Tally', tone: 'border-success-border text-success', icon: PlugZap },
+  tally_error: { label: 'Connector online · Tally not reachable', tone: 'border-danger-border text-destructive', icon: XCircle },
+  offline: { label: 'Connector offline', tone: 'border-danger-border text-destructive', icon: XCircle },
 }
 
 /**
@@ -82,7 +82,7 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
 
   if (!status) {
     return error
-      ? <p className="text-sm text-red-700 dark:text-red-400" role="alert">{error}</p>
+      ? <p className="text-sm text-destructive" role="alert">{error}</p>
       : <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Checking the Tally connector…</p>
   }
 
@@ -97,7 +97,7 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
         </Badge>
         <span className="flex-1" />
         {status.state === 'not_paired' && isAdmin && (
-          <Button onClick={() => void connect()} disabled={busy} className="bg-emerald-600 text-white hover:bg-emerald-700">
+          <Button onClick={() => void connect()} disabled={busy} className="bg-primary text-primary-foreground hover:bg-primary/90">
             {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <KeyRound className="h-4 w-4 mr-2" />} Connect Tally
           </Button>
         )}
@@ -124,7 +124,7 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
       </div>
 
       <p className="text-sm" role="status">{status.message}</p>
-      {error && <p className="text-sm text-red-700 dark:text-red-400" role="alert">{error}</p>}
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       {status.state !== 'unavailable' && !isAdmin && !paired && (
         <p className="text-sm text-muted-foreground">Ask an administrator to connect Tally.</p>
       )}

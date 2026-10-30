@@ -316,7 +316,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
             <>
               <Button variant="outline" size="sm" className="h-7" onClick={() => void action(r, 'confirm', `Sales order ${r.number} confirmed`)}>Confirm</Button>
               <ConfirmAction
-                trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
+                trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><X className="h-3.5 w-3.5" /></Button>}
                 title="Cancel sales order?" message={`Cancel ${r.number}? This cannot be undone.`} tone="destructive"
                 onConfirm={() => action(r, 'cancel', `Sales order ${r.number} cancelled`)}
               />
@@ -416,7 +416,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
               <div className="col-span-1 flex justify-end">
                 <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                   onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               </div>
             </div>

@@ -180,7 +180,7 @@ export default function MaterialIssuesModule({ companyId }: { companyId: string 
         return (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600" title="Cancel issue (returns the stock to store)"><Ban className="h-3.5 w-3.5 mr-0.5" />Cancel</Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive" title="Cancel issue (returns the stock to store)"><Ban className="h-3.5 w-3.5 mr-0.5" />Cancel</Button>}
               title="Cancel material issue?" tone="destructive" onConfirm={() => cancelIssue(r)}
               message={`Cancel ${r.number}? The issued quantities go back into the store (and batches) they were taken from.`}
             />

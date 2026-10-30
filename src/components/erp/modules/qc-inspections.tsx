@@ -36,9 +36,9 @@ const QC_STATUSES = ['PENDING', 'PASSED', 'FAILED', 'PARTIAL'] as const
 
 function TypeChip({ t }: { t: string }) {
   const cls: Record<string, string> = {
-    INCOMING: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-    IN_PROCESS: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-    FINAL: 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300',
+    INCOMING: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
+    IN_PROCESS: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
+    FINAL: 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
   }
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${cls[t] || 'bg-muted text-muted-foreground'}`}>
@@ -185,9 +185,9 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
     {
       key: 'accRej', header: 'Acc / Rej', className: 'text-right', render: (r) => (
         <span className="tabular-nums whitespace-nowrap">
-          <span className="text-emerald-600 dark:text-emerald-400">{fmtNum(r.qtyAccepted)}</span>
+          <span className="text-success">{fmtNum(r.qtyAccepted)}</span>
           {' / '}
-          <span className="text-red-600 dark:text-red-400">{fmtNum(r.qtyRejected)}</span>
+          <span className="text-destructive">{fmtNum(r.qtyRejected)}</span>
         </span>
       ),
     },
@@ -209,9 +209,9 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4">
         <StatCard title="Total Inspections" value={qcRows.length} sub="All records" />
-        <StatCard title="Pending" value={pendingCount} sub="Awaiting result" toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
-        <StatCard title="Passed" value={qcRows.filter((r) => r.status === 'PASSED').length} sub="Fully accepted" toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Failed" value={qcRows.filter((r) => r.status === 'FAILED').length} sub="Fully rejected" toneClass="bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" />
+        <StatCard title="Pending" value={pendingCount} sub="Awaiting result" toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
+        <StatCard title="Passed" value={qcRows.filter((r) => r.status === 'PASSED').length} sub="Fully accepted" toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Failed" value={qcRows.filter((r) => r.status === 'FAILED').length} sub="Fully rejected" toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" />
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -310,7 +310,7 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
               <div className="flex items-center gap-2 h-9 pb-0 sm:pb-0.5">
                 <Checkbox checked={p.ok} onCheckedChange={(v) => updateParam(p.key, { ok: v === true })} aria-label="Parameter OK" />
                 <span className="text-xs text-muted-foreground">OK</span>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => setParams((ps) => (ps.length > 1 ? ps.filter((x) => x.key !== p.key) : ps))} aria-label="Remove parameter">
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setParams((ps) => (ps.length > 1 ? ps.filter((x) => x.key !== p.key) : ps))} aria-label="Remove parameter">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>

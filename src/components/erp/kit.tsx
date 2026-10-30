@@ -23,10 +23,10 @@ import * as XLSX from 'xlsx'
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-        {description && <p className="text-sm text-muted-foreground mt-0.5">{description}</p>}
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <h2 className="text-xl font-semibold tracking-tight text-balance">{title}</h2>
+        {description && <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -37,31 +37,86 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 export function StatusBadge({ status }: { status?: string | null }) {
   const t = tone(status)
+  // Tone → token classes, in one place, so every status in the product has the same
+  // shape, contrast and dark-mode behaviour.
   const cls: Record<string, string> = {
-    gray: 'bg-muted text-muted-foreground',
-    green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
-    red: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
-    blue: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-    purple: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
-    teal: 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300',
+    gray: 'bg-muted text-muted-foreground ring-border',
+    green: 'bg-success-soft text-success ring-success-border',
+    amber: 'bg-warning-soft text-warning ring-warning-border',
+    red: 'bg-danger-soft text-destructive ring-danger-border',
+    blue: 'bg-info-soft text-info ring-info-border',
+    purple: 'bg-info-soft text-info ring-info-border',
+    teal: 'bg-success-soft text-success ring-success-border',
   }
   const label = (status || '—').replaceAll('_', ' ')
-  return <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap', cls[t])}>{label}</span>
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ring-1 ring-inset',
+        cls[t],
+      )}
+    >
+      {label}
+    </span>
+  )
 }
 
 // ---------- Stat card ----------
 
-export function StatCard({ title, value, sub, icon, toneClass }: { title: string; value: string | number; sub?: string; icon?: React.ReactNode; toneClass?: string }) {
+export function StatCard({ title, value, sub, icon, toneClass, delta, deltaLabel, hint }: {
+  title: string
+  value: string | number
+  sub?: string
+  icon?: React.ReactNode
+  toneClass?: string
+  /** Signed change, e.g. +12.4 or -3. The sign picks the tone; the caller formats the figure. */
+  delta?: number | null
+  deltaLabel?: string
+  hint?: string
+}) {
+  const up = (delta ?? 0) > 0
+  const flat = !delta
   return (
-    <Card className="py-4">
-      <CardContent className="flex items-start justify-between gap-2 px-4">
+    <Card className="group relative overflow-hidden py-3.5 elev-1 transition-shadow duration-200 hover:elev-2">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-primary/70 via-primary/30 to-transparent opacity-70"
+      />
+      <CardContent className="flex items-start justify-between gap-3 px-4">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
-          <p className="text-xl sm:text-2xl font-bold mt-1 truncate">{value}</p>
-          {sub && <p className="text-xs text-muted-foreground mt-0.5 truncate">{sub}</p>}
+          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{title}</p>
+          <p
+            className="mt-1.5 truncate text-2xl font-semibold tracking-tight tabular"
+            title={hint || (typeof value === 'string' ? value : String(value))}
+          >
+            {value}
+          </p>
+          <div className="mt-1 flex items-center gap-1.5">
+            {typeof delta === 'number' && !flat && (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular',
+                  up ? 'bg-success-soft text-success' : 'bg-danger-soft text-destructive',
+                )}
+              >
+                {up ? '▲' : '▼'} {Math.abs(delta).toLocaleString('en-IN')}
+              </span>
+            )}
+            {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
+            {deltaLabel && <p className="sr-only">{deltaLabel}</p>}
+          </div>
         </div>
-        {icon && <div className={cn('rounded-lg p-2 shrink-0', toneClass || 'bg-primary/10 text-primary')}>{icon}</div>}
+        {icon && (
+          <div
+            className={cn(
+              'shrink-0 rounded-xl p-2 ring-1 ring-inset ring-black/5 transition-transform duration-200 group-hover:scale-105 dark:ring-white/10',
+              toneClass || 'bg-primary/10 text-primary',
+            )}
+            aria-hidden="true"
+          >
+            {icon}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -533,11 +588,28 @@ export function DataTable<T extends { id: string }>({
   return (
     <div className="space-y-3">
       {(searchPlaceholder || csvExport || xlsxExport || savedViewsKey) && (
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           {searchPlaceholder ? (
             <div className="relative max-w-xs flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input value={q} onChange={(e) => { setQ(e.target.value); setAppliedView(null) }} placeholder={searchPlaceholder} className="pl-8 h-9" />
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              <Input
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setAppliedView(null) }}
+                placeholder={searchPlaceholder}
+                aria-label={searchPlaceholder}
+                type="search"
+                className="h-9 pl-8 pr-8"
+              />
+              {q && (
+                <button
+                  type="button"
+                  onClick={() => { setQ(''); setAppliedView(null) }}
+                  className="absolute right-1.5 top-1.5 grid h-6 w-6 cursor-pointer place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="Clear search box"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
             </div>
           ) : <div />}
           <div className="flex items-center gap-2 shrink-0">
@@ -548,7 +620,7 @@ export function DataTable<T extends { id: string }>({
                 className="h-9"
                 onClick={() => downloadCsv(csvExport.filename, csvExport.headers ?? columns.map((c) => c.header), filtered.map(csvExport.pick))}
               >
-                <Download className="h-4 w-4 mr-1.5" />CSV
+                <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />CSV
               </Button>
             )}
             {xlsxExport && rows.length > 0 && (
@@ -558,21 +630,21 @@ export function DataTable<T extends { id: string }>({
                 className="h-9"
                 onClick={() => downloadXlsx(xlsxExport.filename, xlsxExport.headers ?? columns.map((c) => c.header), filtered.map(xlsxExport.pick))}
               >
-                <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600 dark:text-emerald-400" />Excel
+                <FileSpreadsheet className="mr-1.5 h-4 w-4 text-success" aria-hidden="true" />Excel
               </Button>
             )}
             {savedViewsKey && (
               <div className="flex items-center gap-1.5">
                 {appliedView && (
                   <span
-                    className="inline-flex items-center gap-1 max-w-40 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 text-[11px] font-medium"
+                    className="inline-flex max-w-40 items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-medium text-warning ring-1 ring-inset ring-warning-border"
                     title={`Applied view: ${appliedView}`}
                   >
                     <span className="truncate">{appliedView}</span>
                     <button
                       type="button"
                       title="Clear applied view"
-                      className="rounded-full p-0.5 hover:bg-amber-200/70 dark:hover:bg-amber-900/60"
+                      className="cursor-pointer rounded-full p-0.5 hover:bg-warning-border/60" aria-label="Clear applied view"
                       onClick={() => { setQ(''); setAppliedView(null) }}
                     >
                       <X className="h-3 w-3" />
@@ -599,7 +671,7 @@ export function DataTable<T extends { id: string }>({
                           <button
                             type="button"
                             title={`Delete view “${v.name}”`}
-                            className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                            className="mt-0.5 cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-danger-soft hover:text-destructive"
                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteView(v.name) }}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -621,11 +693,17 @@ export function DataTable<T extends { id: string }>({
           </div>
         </div>
       )}
-      <div ref={wrapperRef} className="rounded-lg border overflow-hidden bg-card">
+      <div
+        ref={wrapperRef}
+        className="overflow-hidden rounded-xl border bg-card elev-1"
+        aria-busy={loading || undefined}
+        role="region"
+        aria-label={searchPlaceholder ? `${searchPlaceholder} table` : 'Records table'}
+      >
         <ScrollArea className={maxHeight !== 'auto' ? maxHeight : undefined} style={maxHeight !== 'auto' ? { height: maxHeight } : undefined}>
           <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50 hover:bg-muted/50">
+            <TableHeader className="erp-table-head">
+              <TableRow className="bg-transparent hover:bg-transparent">
                 {columns.map((c) => {
                   const canSort = !!sortable && sortableKeys.has(c.key)
                   const sortedDir = sort && sort.key === c.key ? sort.dir : null
@@ -638,7 +716,7 @@ export function DataTable<T extends { id: string }>({
                       {canSort ? (
                         <button
                           type="button"
-                          className="inline-flex items-center cursor-pointer select-none hover:text-foreground"
+                          className="inline-flex cursor-pointer select-none items-center rounded transition-colors hover:text-foreground"
                           onClick={() => setSort((cur) => (cur && cur.key === c.key ? (cur.dir === 'asc' ? { key: c.key, dir: 'desc' } : null) : { key: c.key, dir: 'asc' }))}
                         >
                           {c.header}
@@ -662,10 +740,22 @@ export function DataTable<T extends { id: string }>({
                 ))
               ) : pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={columns.length} className="h-40 text-center">
+                  <TableCell colSpan={columns.length} className="h-44 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                      <Inbox className="h-8 w-8" />
-                      <p className="text-sm">{emptyText}</p>
+                      <div className="grid h-11 w-11 place-items-center rounded-full bg-muted">
+                        <Inbox className="h-5 w-5" aria-hidden="true" />
+                      </div>
+                      <p className="text-sm font-medium text-foreground">
+                        {q.trim() ? `No matches for “${q.trim()}”` : emptyText}
+                      </p>
+                      <p className="text-xs">
+                        {q.trim() ? 'Try a shorter search, or clear it to see everything.' : 'New records appear here as soon as they are saved.'}
+                      </p>
+                      {q.trim() && (
+                        <Button variant="outline" size="sm" className="mt-1" onClick={() => { setQ(''); setAppliedView(null) }}>
+                          Clear search
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -677,9 +767,17 @@ export function DataTable<T extends { id: string }>({
                       key={row.id}
                       data-row-id={String(row.id)}
                       onClick={() => onRowClick?.(row)}
+                      tabIndex={onRowClick ? 0 : undefined}
+                      onKeyDown={onRowClick ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onRowClick(row)
+                        }
+                      } : undefined}
                       className={cn(
-                        onRowClick && 'cursor-pointer',
-                        highlighted && 'bg-amber-50 dark:bg-amber-500/10 ring-2 ring-inset ring-amber-300 dark:ring-amber-500/40',
+                        'erp-row-hover transition-colors duration-150',
+                        onRowClick && 'cursor-pointer focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring',
+                        highlighted && 'bg-warning-soft ring-2 ring-inset ring-warning-border',
                       )}
                     >
                       {columns.map((c) => (
@@ -703,7 +801,7 @@ export function DataTable<T extends { id: string }>({
                           </span>
                         )}
                         {c.sum && (
-                          <span className="whitespace-nowrap tabular-nums font-semibold">
+                          <span className="whitespace-nowrap font-semibold tabular">
                             {total === null ? '—' : c.sumFormat === 'money' ? fmtMoney(total) : fmtNum(total)}
                           </span>
                         )}
@@ -717,8 +815,10 @@ export function DataTable<T extends { id: string }>({
         </ScrollArea>
       </div>
       {pagerTotal > pagerPageSize && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>Showing {pagerPage * pagerPageSize + 1}–{Math.min((pagerPage + 1) * pagerPageSize, pagerTotal)} of {pagerTotal}</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+          <span className="tabular" aria-live="polite">
+            Showing {pagerPage * pagerPageSize + 1}–{Math.min((pagerPage + 1) * pagerPageSize, pagerTotal)} of {pagerTotal}
+          </span>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={pagerPage === 0} onClick={() => gotoPage(pagerPage - 1)}>Prev</Button>
             <Button variant="outline" size="sm" disabled={pagerPage >= totalPages - 1} onClick={() => gotoPage(pagerPage + 1)}>Next</Button>
@@ -756,7 +856,7 @@ export function DataTable<T extends { id: string }>({
 
 // ---------- Form dialog ----------
 
-export function FormDialog({ open, onOpenChange, title, description, children, onSubmit, submitLabel = 'Save', loading, wide }: {
+export function FormDialog({ open, onOpenChange, title, description, children, onSubmit, submitLabel = 'Save', loading, wide, error }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   title: string
@@ -766,7 +866,18 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
   submitLabel?: string
   loading?: boolean
   wide?: boolean
+  /**
+   * Form-level error (usually the API message). Rendered as a focusable alert at the top of the
+   * form and focused when it appears, so a screen-reader user hears why the save failed without
+   * hunting for red text — and keyboard users land on it in the tab order.
+   */
+  error?: string | null
 }) {
+  const errorRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    if (error) errorRef.current?.focus()
+  }, [error])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Phones: full-screen sheet so long forms scroll naturally; desktop: centred dialog */}
@@ -778,6 +889,17 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
+        {error && (
+          <div
+            ref={errorRef}
+            role="alert"
+            aria-live="assertive"
+            tabIndex={-1}
+            className="rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm font-medium text-destructive"
+          >
+            {error}
+          </div>
+        )}
         <form
           onSubmit={(e) => { e.preventDefault(); void onSubmit() }}
           // Ctrl/⌘ + Enter or Ctrl/⌘ + S saves from anywhere in the form (incl. textareas)
@@ -786,10 +908,16 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
           }}
         >
           <div className="grid gap-4 py-2">{children}</div>
-          <DialogFooter className="mt-4 items-center">
-            <span className="mr-auto hidden text-[11px] text-muted-foreground sm:inline">Ctrl + S to save</span>
+          {/* Solid, bordered footer: on long forms the actions stay reachable while the body scrolls,
+              and content never shows through the bar. */}
+          <DialogFooter className="sticky bottom-0 -mx-6 mt-4 items-center gap-2 border-t bg-popover px-6 py-3">
+            <span className="mr-auto hidden text-[11px] text-muted-foreground sm:inline">
+              <Kbd>Ctrl</Kbd> <span className="mx-0.5">+</span> <Kbd>S</Kbd> to save
+            </span>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={loading}>{loading ? 'Saving…' : submitLabel}</Button>
+            <Button type="submit" disabled={loading} aria-busy={loading || undefined}>
+              {loading ? 'Saving…' : submitLabel}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -799,13 +927,37 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
 
 // ---------- Fields ----------
 
-export function Field({ label, children, required, className }: { label: string; children: React.ReactNode; required?: boolean; className?: string }) {
+export function Field({ label, children, required, className, hint, error }: {
+  label: string
+  children: React.ReactNode
+  required?: boolean
+  className?: string
+  hint?: React.ReactNode
+  error?: string | null
+}) {
+  // Persistent help or the validation reason, linked to the control via aria-describedby so
+  // assistive tech reads the reason, not just the red ring.
+  const uid = React.useId()
+  const describedBy = hint || error ? `${uid}-desc` : undefined
+  const child = React.isValidElement(children)
+    ? React.cloneElement(children as React.ReactElement<{ 'aria-describedby'?: string; 'aria-invalid'?: boolean }>, {
+        'aria-describedby': describedBy,
+        ...(error ? { 'aria-invalid': true } : {}),
+      })
+    : children
+
   return (
     <div className={cn('grid gap-1.5', className)}>
       <Label className="text-xs font-medium text-muted-foreground">
-        {label}{required && <span className="text-red-500"> *</span>}
+        {label}{required && <span className="text-destructive" aria-hidden="true"> *</span>}
+        {required && <span className="sr-only"> (required)</span>}
       </Label>
-      {children}
+      {child}
+      {(hint || error) && (
+        <p id={describedBy} className={cn('text-xs', error ? 'font-medium text-destructive' : 'text-muted-foreground')}>
+          {error || hint}
+        </p>
+      )}
     </div>
   )
 }
@@ -871,7 +1023,7 @@ export function ConfirmAction({ trigger, title, message, onConfirm, tone = 'defa
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            className={tone === 'destructive' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
+            className={tone === 'destructive' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}
             onClick={(e) => { e.preventDefault(); void onConfirm() }}
           >
             Confirm
@@ -886,11 +1038,15 @@ export function ConfirmAction({ trigger, title, message, onConfirm, tone = 'defa
 
 export function SectionCard({ title, children, actions, className }: { title?: string; children: React.ReactNode; actions?: React.ReactNode; className?: string }) {
   return (
-    <Card className={className}>
+    <Card className={cn('gap-0 py-4 elev-1', className)}>
       {(title || actions) && (
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            {title && <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>}
+        <CardHeader className="gap-1 pb-3">
+          <div className="flex items-center justify-between gap-2">
+            {title && (
+              <CardTitle className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                {title}
+              </CardTitle>
+            )}
             {actions}
           </div>
         </CardHeader>

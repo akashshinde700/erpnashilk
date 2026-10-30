@@ -201,7 +201,7 @@ export default function ProductionEntriesModule({ companyId }: { companyId: stri
           <Field label={`Serial numbers — ${serialCount} of ${producedQty} entered`} required>
             <Textarea rows={3} value={serials} onChange={(e) => setSerials(e.target.value)}
               placeholder="One serial / IMEI per line (scan or paste)"
-              className={serialCount !== producedQty ? 'border-amber-500' : ''} />
+              className={serialCount !== producedQty ? 'border-warning-border' : ''} />
           </Field>
         )}
         {isBatched && producedQty > 0 && (

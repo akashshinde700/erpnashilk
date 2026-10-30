@@ -25,6 +25,7 @@ import { fmtDateTime, ROLE_LABEL, canAccessModule, MODULE_PARENT } from '@/lib/e
 import { apiGet, apiPatch, apiPost, useList, UNAUTHORIZED_EVENT } from '@/lib/use-api'
 import { MODULE_TAB_EVENT } from '@/components/erp/tab-group'
 import { MODULES, MODULE_GROUPS, findModule } from '@/components/erp/registry'
+import { defaultFilter } from 'cmdk'
 import { Kbd, NEW_DOC_EVENT, openCreate } from '@/components/erp/kit'
 import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp/login-screen'
 import ShortcutsDialog from '@/components/erp/shortcuts-help'
@@ -71,9 +72,9 @@ const RECENT_KEY = 'erp_recent_modules'
 const COLLAPSE_KEY = 'erp_sidebar_collapsed'
 
 const LEVEL_DOT: Record<string, string> = {
-  INFO: 'bg-sky-500',
-  WARNING: 'bg-amber-500',
-  CRITICAL: 'bg-red-500',
+  INFO: 'bg-info',
+  WARNING: 'bg-brand-accent',
+  CRITICAL: 'bg-destructive',
 }
 
 // The platform administrator can switch between every company; other users only between
@@ -129,6 +130,73 @@ function readJsonArray(key: string): string[] {
 
 function persistJson(key: string, value: string[]) {
   try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* private mode */ }
+}
+
+/**
+ * Extra words the command palette should match. Module labels are short ("Outstanding"), but people
+ * search with the domain words they know ("receivables", "dues") — without aliases those searches
+ * come back empty even though the screen exists. Kept next to the palette so it is one list to groom.
+ */
+const PALETTE_ALIASES: Record<string, string> = {
+  'dashboard': 'home overview kpi business',
+  'items': 'item master products sku raw material finished goods bom part',
+  'parties': 'customers suppliers vendors clients ledger',
+  'warehouses': 'store godown location',
+  'machines': 'machine shop floor capacity',
+  'boms': 'bill of materials bom recipe components',
+  'users-roles': 'users roles team staff permissions employees',
+  'enquiries-quotes': 'enquiry quotation quote estimate proposal rfq',
+  'sales-orders': 'so sales order po customer order booking',
+  'deliveries': 'delivery challan dispatch shipment',
+  'sales-invoices': 'invoice bill tax invoice gst billing sales',
+  'sales-returns': 'credit note return sales return',
+  'purchase-orders': 'purchase order po supplier order',
+  'grns': 'grn goods receipt inward material receipt',
+  'purchase-invoices': 'purchase invoice bill vendor bill expense',
+  'purchase-returns': 'debit note purchase return',
+  'requisitions': 'purchase requisition pr indenting',
+  'stock-hub': 'stock inventory balance on hand valuation',
+  'stock-movements': 'stock transfer adjustment issue correction',
+  'production': 'work order production shop floor wip manufacturing',
+  'mrp': 'mrp material requirement planning planning shortage',
+  'qc-inspections': 'qc quality inspection check rejection',
+  'outstanding': 'receivables payables outstanding dues ageing overdue collection',
+  'cash-bank': 'cash bank contra loan payment receipt accounts',
+  'expenses': 'expense spend purchase cost',
+  'gst-report': 'gst gstr tax report cgst sgst igst hsn',
+  'reports': 'reports analytics dashboard sales purchase profit',
+  'import-center': 'import tally vyapar excel csv migration',
+  'settings-hub': 'settings company profile numbering firm',
+  'activity': 'notifications audit log activity history',
+}
+
+/** Extra search terms for a module (cmdk `keywords`): its group, description and the domain aliases. */
+function paletteKeywords(m: (typeof MODULES)[number]): string[] {
+  return [m.group, m.description ?? '', ...(PALETTE_ALIASES[m.key] ?? '').split(' ')].filter(Boolean)
+}
+
+/**
+ * Ranking, not just filtering, for the command palette.
+ *
+ * Aliases (see PALETTE_ALIASES) make more screens findable — "receivables" now finds Outstanding — but an
+ * alias hit must never outrank a real label hit: someone who types "GST" and presses Enter has to land on
+ * GST Reports, not on a screen that merely mentions GST in its keywords. Anything that is not a palette
+ * entry (records, cross-module rows) keeps the stock cmdk score, so record search behaves as before.
+ *
+ * Pure function on purpose: it lives at module scope so it cannot be called conditionally.
+ */
+function paletteFilter(value: string, search: string, keywords?: string[]): number {
+  const base = defaultFilter(value, search, keywords)
+  if (base <= 0) return 0
+  const q = search.trim().toLowerCase()
+  if (!q) return 1
+  const labelled = /^(?:module|recent|action)-(.+)$/.exec(value)
+  if (!labelled) return base
+  const label = labelled[1].toLowerCase()
+  if (label === q) return 1
+  if (label.startsWith(q)) return 0.95
+  if (label.includes(q)) return 0.9
+  return Math.min(base, 0.4) // alias-only hit ranks below every label hit
 }
 
 export default function ErpApp() {
@@ -527,10 +595,18 @@ export default function ErpApp() {
   // ---------- auth gate ----------
   if (booting) {
     return (
-      <div className="min-h-screen grid place-items-center bg-background">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="h-7 w-7 animate-spin text-emerald-600" />
-          <p className="text-sm">Loading ManuFlow ERP…</p>
+      <div className="grid min-h-screen place-items-center bg-background" role="status" aria-live="polite">
+        <div className="flex flex-col items-center gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground elev-1">
+            <Factory className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+            <p className="text-sm">Loading ManuFlow ERP…</p>
+          </div>
+          <div className="h-1 w-32 overflow-hidden rounded-full bg-muted">
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-primary/60" />
+          </div>
         </div>
       </div>
     )
@@ -549,34 +625,36 @@ export default function ErpApp() {
       <div
         key={m.key}
         className={cn(
-          'group flex items-center rounded-md transition-colors',
-          active ? 'bg-emerald-600 text-white font-medium shadow-sm' : 'text-foreground/70 hover:bg-muted hover:text-foreground',
+        'group relative flex items-center rounded-lg transition-colors duration-150',
+        active
+        ? 'bg-primary font-medium text-primary-foreground shadow-sm'
+        : 'text-foreground/75 hover:bg-sidebar-accent hover:text-foreground',
         )}
       >
         <button
           onClick={() => goToModule(m.key)}
           title={opts.collapsed ? m.label : undefined}
           className={cn(
-            'flex flex-1 items-center gap-2.5 py-1.5 text-[13px] text-left min-w-0',
-            opts.collapsed ? 'justify-center px-0' : 'px-2.5',
+          'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-1.5 text-left text-[13px]',
+          opts.collapsed ? 'justify-center px-0' : 'px-2.5',
           )}
           aria-current={active ? 'page' : undefined}
         >
-          <m.icon className="h-4 w-4 shrink-0" />
+          <m.icon className={cn('h-4 w-4 shrink-0', active ? 'opacity-100' : 'text-muted-foreground group-hover:text-primary')} aria-hidden="true" />
           {!opts.collapsed && <span className="truncate">{m.label}</span>}
         </button>
         {opts.star && !opts.collapsed && (
           <button
             onClick={() => toggleFav(m.key)}
             className={cn(
-              'mr-1.5 rounded p-1 transition-opacity',
+              'mr-1.5 cursor-pointer rounded p-1 transition-opacity',
               isFav ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-              active ? 'hover:bg-white/20' : 'hover:bg-muted',
+              active ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted',
             )}
             aria-label={isFav ? `Unpin ${m.label}` : `Pin ${m.label} to favorites`}
             title={isFav ? 'Unpin' : 'Pin to favorites'}
           >
-            <Star className={cn('h-3.5 w-3.5', isFav ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground')} />
+            <Star className={cn('h-3.5 w-3.5', isFav ? 'fill-brand-accent text-brand-accent' : 'text-muted-foreground')} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -587,13 +665,13 @@ export default function ErpApp() {
     const favRows = favModules.filter((m) => m.group !== 'Dashboard')
     return (
       <div className="flex h-full flex-col bg-card">
-        <div className={cn('flex items-center gap-2.5 h-14 border-b shrink-0', isCollapsed ? 'justify-center px-0' : 'px-4')}>
-          <div className="h-8 w-8 rounded-lg bg-emerald-600 text-white grid place-items-center shrink-0">
-            <Factory className="h-4.5 w-4.5" />
-          </div>
-          {!isCollapsed && (
-            <div className="leading-tight min-w-0">
-              <p className="font-semibold text-sm">ManuFlow ERP</p>
+        <div className={cn('flex h-14 shrink-0 items-center gap-2.5 border-b', isCollapsed ? 'justify-center px-0' : 'px-4')}>
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground elev-1">
+        <Factory className="h-4 w-4" aria-hidden="true" />
+        </div>
+        {!isCollapsed && (
+        <div className="min-w-0 leading-tight">
+        <p className="text-sm font-semibold tracking-tight">ManuFlow ERP</p>
               <p className="text-[10px] text-muted-foreground">Manufacturing SaaS Suite</p>
             </div>
           )}
@@ -611,8 +689,8 @@ export default function ErpApp() {
                 {isCollapsed ? (
                   <div className="mx-2 my-2 border-t" />
                 ) : (
-                  <p className="px-2.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-1">
-                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> Favorites
+                  <p className="flex items-center gap-1 px-2.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Star className="h-3 w-3 fill-brand-accent text-brand-accent" aria-hidden="true" /> Favorites
                   </p>
                 )}
                 {favRows.map((m) => renderModuleRow(m, { collapsed: isCollapsed, star: true }))}
@@ -639,13 +717,13 @@ export default function ErpApp() {
                     onClick={() => setOpenGroup(open ? null : group)}
                     aria-expanded={open}
                     className={cn(
-                      'flex w-full items-center gap-1.5 rounded-md px-2.5 pt-2.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-foreground',
-                      hasActive && !open ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/70',
+                      'flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2.5 pb-1.5 pt-2.5 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:text-foreground',
+                      hasActive && !open ? 'text-primary' : 'text-muted-foreground',
                     )}
                   >
                     <span className="flex-1 text-left">{group}</span>
                     {!open && <span className="rounded bg-muted px-1.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground">{mods.length}</span>}
-                    <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
+                    <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-200', open && 'rotate-90')} aria-hidden="true" />
                   </button>
                   {open && mods.map((m) => renderModuleRow(m, { collapsed: false, star: true }))}
                 </div>
@@ -671,26 +749,27 @@ export default function ErpApp() {
     )
   }
 
+
   const dark = themeMounted && resolvedTheme === 'dark'
 
   return (
     <div className="min-h-screen flex bg-background">
       {/* Desktop sidebar */}
-      <aside className={cn('hidden lg:block border-r shrink-0 sticky top-0 h-screen transition-[width] duration-200', collapsed ? 'w-[56px]' : 'w-60')}>
+      <aside className={cn('sticky top-0 hidden h-screen shrink-0 border-r bg-sidebar transition-[width] duration-200 lg:block', collapsed ? 'w-[60px]' : 'w-60')}>
         {buildSidebar(collapsed)}
       </aside>
 
       {/* Mobile nav overlay */}
       {navOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-72 shadow-xl">{buildSidebar(false)}</div>
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+        <div className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]" onClick={() => setNavOpen(false)} />
+        <div className="absolute inset-y-0 left-0 w-72 border-r bg-sidebar elev-2">{buildSidebar(false)}</div>
         </div>
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="sticky top-0 z-40 h-14 border-b bg-card/95 backdrop-blur flex items-center gap-2 px-3 sm:px-4">
+        <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-card/85 px-3 backdrop-blur-md supports-[backdrop-filter]:bg-card/70 sm:px-4">
           <Button variant="ghost" size="icon" className="lg:hidden h-9 w-9 shrink-0" onClick={() => setNavOpen(true)} aria-label="Open navigation">
             <Menu className="h-5 w-5" />
           </Button>
@@ -708,7 +787,7 @@ export default function ErpApp() {
           </Button>
 
           <div className="min-w-0 flex-1">
-            <h1 className="font-semibold text-sm sm:text-base truncate leading-tight">{activeModule.label}</h1>
+            <h1 className="truncate text-sm font-semibold leading-tight tracking-tight sm:text-[15px]">{activeModule.label}</h1>
             <p className="text-[11px] text-muted-foreground truncate leading-tight hidden sm:block">
               {activeModule.description || activeModule.group}
             </p>
@@ -718,14 +797,14 @@ export default function ErpApp() {
           <Button
             variant="outline"
             size="sm"
-            className="h-9 gap-1.5 text-muted-foreground font-normal shrink-0 w-9 sm:w-auto px-0 sm:px-3"
+            className="h-9 w-9 shrink-0 gap-1.5 px-0 font-normal text-muted-foreground transition-colors hover:text-foreground sm:w-auto sm:px-3"
             onClick={() => setPaletteOpen(true)}
-            aria-label="Search (Ctrl+K)"
+            aria-label="Search records (Ctrl+K)"
           >
-            <Search className="h-4 w-4" />
-            <span className="hidden sm:inline text-xs">Search…</span>
-            <kbd className="hidden md:inline-flex h-5 items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-              <CommandIcon className="h-2.5 w-2.5" />K
+            <Search className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden text-xs sm:inline">Search…</span>
+            <kbd className="ml-1 hidden h-5 items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground md:inline-flex">
+            <CommandIcon className="h-2.5 w-2.5" aria-hidden="true" />K
             </kbd>
           </Button>
 
@@ -760,7 +839,7 @@ export default function ErpApp() {
                 {canCreateFirm && (
                   <>
                     <SelectSeparator />
-                    <SelectItem value={NEW_FIRM_VALUE} className="text-xs text-emerald-700 dark:text-emerald-400">
+                    <SelectItem value={NEW_FIRM_VALUE} className="text-xs text-success">
                       <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                       Create new firm
                     </SelectItem>
@@ -776,7 +855,7 @@ export default function ErpApp() {
               <Button variant="ghost" size="icon" className="relative h-9 w-9 shrink-0" aria-label={`Notifications (${notifications.data?.unreadCount || 0} unread)`}>
                 <Bell className="h-4.5 w-4.5" />
                 {!!notifications.data?.unreadCount && (
-                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] grid place-items-center font-semibold">
+                  <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-destructive px-0.5 text-[9px] font-semibold text-destructive-foreground ring-2 ring-card">
                     {notifications.data.unreadCount > 9 ? '9+' : notifications.data.unreadCount}
                   </span>
                 )}
@@ -789,7 +868,7 @@ export default function ErpApp() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 text-xs text-teal-700 hover:text-teal-800 hover:bg-teal-50"
+                    className="h-7 text-xs text-primary hover:bg-primary/10 hover:text-primary"
                     onClick={() => { setNotifOpen(false); goToModule('notifications') }}
                   >
                     View all
@@ -801,7 +880,10 @@ export default function ErpApp() {
               </div>
               <ScrollArea className="max-h-80">
                 {(notifications.data?.items || []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-8">No unread notifications 🎉</p>
+                  <div className="flex flex-col items-center gap-1.5 py-8 text-center">
+                      <CheckCheck className="h-5 w-5 text-success" aria-hidden="true" />
+                      <p className="text-xs text-muted-foreground">You&apos;re all caught up</p>
+                    </div>
                 ) : (
                   (notifications.data?.items || []).map((n) => (
                     <div key={n.id} className="px-3 py-2.5 border-b last:border-0 flex gap-2.5">
@@ -822,10 +904,10 @@ export default function ErpApp() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="flex items-center gap-2 pl-1 sm:pl-2 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full pl-1 outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring sm:pl-2"
                 aria-label="Open user menu"
               >
-                <span className="h-8 w-8 rounded-full bg-teal-600 text-white grid place-items-center text-xs font-semibold">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-1 ring-inset ring-black/10 dark:ring-white/15">
                   {initials(session.user.name)}
                 </span>
                 <span className="hidden md:block text-left leading-tight">
@@ -858,7 +940,7 @@ export default function ErpApp() {
                 {dark ? 'Light mode' : 'Dark mode'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => void logout()} className="text-red-600 focus:text-red-600">
+              <DropdownMenuItem onSelect={() => void logout()} className="text-destructive focus:text-destructive">
                 <LogOut className="h-4 w-4 mr-2" />Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -866,12 +948,16 @@ export default function ErpApp() {
         </header>
 
         {/* Content */}
-        <main className="flex-1 px-3 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6 w-full max-w-[1500px] mx-auto">
+        <main
+  id="erp-main"
+  tabIndex={-1}
+  className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6"
+>
           {!companyId || switching ? (
             <div className="h-64 grid place-items-center">
-              <div className="flex flex-col items-center gap-3 text-muted-foreground">
-                <Loader2 className="h-7 w-7 animate-spin text-emerald-600" />
-                <p className="text-sm">Loading workspace…</p>
+              <div className="flex flex-col items-center gap-3 text-muted-foreground" role="status" aria-live="polite">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
+              <p className="text-sm">Loading workspace…</p>
               </div>
             </div>
           ) : (
@@ -880,10 +966,10 @@ export default function ErpApp() {
         </main>
 
         {/* Sticky footer */}
-        <footer className="mt-auto border-t bg-card">
-          <div className="max-w-[1500px] mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-1.5 text-xs text-muted-foreground">
+        <footer className="mt-auto border-t bg-card/60">
+          <div className="mx-auto flex max-w-[1600px] flex-col items-center justify-between gap-1.5 px-4 py-3 text-xs text-muted-foreground sm:flex-row">
             <div className="flex items-center gap-1.5">
-              <Factory className="h-3.5 w-3.5 text-emerald-600" />
+              <Factory className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
               <span className="font-medium text-foreground/80">ManuFlow ERP</span>
               <span className="hidden sm:inline">— Lead → Quotation → SO → Production → QC → Dispatch → GST Invoice → Payment</span>
             </div>
@@ -905,7 +991,7 @@ export default function ErpApp() {
       </div>
 
       {/* Global search / command palette */}
-      <CommandDialog open={paletteOpen} onOpenChange={(o) => { setPaletteOpen(o); if (!o) { setPaletteQuery(''); setSearchResults([]) } }}>
+      <CommandDialog filter={paletteFilter} open={paletteOpen} onOpenChange={(o) => { setPaletteOpen(o); if (!o) { setPaletteQuery(''); setSearchResults([]) } }}>
         <CommandInput value={paletteQuery} onValueChange={setPaletteQuery} placeholder="Search modules, items, customers, orders…" />
         <CommandList>
           {searching && <div className="py-6 text-center text-sm text-muted-foreground">Searching…</div>}
@@ -918,7 +1004,7 @@ export default function ErpApp() {
                 <CommandGroup heading="Favorites">
                   {favModules.map((m) => (
                     <CommandItem key={`fav-${m.key}`} value={`fav-${m.label}`} onSelect={() => goToModule(m.key)}>
-                      <Star className="h-4 w-4 mr-2 fill-amber-400 text-amber-400" />
+                      <Star className="mr-2 h-4 w-4 fill-brand-accent text-brand-accent" aria-hidden="true" />
                       <span>{m.label}</span>
                       <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
                     </CommandItem>
@@ -928,7 +1014,7 @@ export default function ErpApp() {
               {recentModules.length > 0 && (
                 <CommandGroup heading="Recent">
                   {recentModules.map((m) => (
-                    <CommandItem key={`recent-${m.key}`} value={`recent-${m.label}`} onSelect={() => goToModule(m.key)}>
+                    <CommandItem key={`recent-${m.key}`} value={`recent-${m.label}`} keywords={paletteKeywords(m)} onSelect={() => goToModule(m.key)}>
                       <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
                       <span>{m.label}</span>
                       <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>
@@ -938,7 +1024,7 @@ export default function ErpApp() {
               )}
               <CommandGroup heading="Modules">
                 {visibleModules.map((m) => (
-                  <CommandItem key={`module-${m.key}`} value={`module-${m.label}`} onSelect={() => goToModule(m.key)}>
+                  <CommandItem key={`module-${m.key}`} value={`module-${m.label}`} keywords={paletteKeywords(m)} onSelect={() => goToModule(m.key)}>
                     <m.icon className="h-4 w-4 mr-2 text-muted-foreground" />
                     <span>{m.label}</span>
                     <span className="ml-auto text-[10px] text-muted-foreground">{m.group}</span>

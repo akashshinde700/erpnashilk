@@ -77,9 +77,9 @@ const agingOf = (inv: InvoiceRow): Aging => {
 }
 
 const AGING_CLS: Record<Aging, string> = {
-  '0-30': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  '31-60': 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
-  '60+': 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+  '0-30': 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
+  '31-60': 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border',
+  '60+': 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border',
 }
 
 function AgingBadge({ aging }: { aging: Aging }) {
@@ -266,14 +266,14 @@ export default function PayablesModule({ companyId }: { companyId: string }) {
           value={fmtMoney(overdueAmount)}
           sub={`${overdue.length} invoices past due by more than 30 days`}
           icon={<AlertTriangle className="h-4 w-4" />}
-          toneClass="bg-amber-100 text-amber-600"
+          toneClass="bg-warning-soft text-warning"
         />
         <StatCard
           title="Open Invoices"
           value={open.length}
           sub="UNPAID + PARTIALLY_PAID"
           icon={<ReceiptText className="h-4 w-4" />}
-          toneClass="bg-sky-100 text-sky-600"
+          toneClass="bg-info-soft text-info"
         />
       </div>
       <SectionCard title="Aging buckets — 0–30 / 31–60 / 60+ days from due date">
