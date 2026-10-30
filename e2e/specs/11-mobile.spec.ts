@@ -27,6 +27,10 @@ const PHONES: ViewportSpec[] = [
 
 const TABLETS: ViewportSpec[] = [{ width: 768, height: 1024, label: '768x1024 (iPad portrait)' }]
 
+const LANDSCAPE_PHONES: ViewportSpec[] = [
+  { width: 667, height: 375, label: '667x375 (phone landscape)' },
+]
+
 const LARGER: ViewportSpec[] = [
   { width: 1024, height: 768, label: '1024x768 (iPad landscape / small laptop)' },
   { width: 1366, height: 768, label: '1366x768 (laptop)' },
@@ -155,7 +159,7 @@ function describeViewport(vp: ViewportSpec) {
   })
 }
 
-for (const vp of [...PHONES, ...TABLETS, ...LARGER]) describeViewport(vp)
+for (const vp of [...PHONES, ...LANDSCAPE_PHONES, ...TABLETS, ...LARGER]) describeViewport(vp)
 
 test.describe('Phone drawer behaviour', () => {
   test.use({ viewport: { width: 375, height: 812 } })
@@ -251,5 +255,62 @@ test.describe('Phone write flow', () => {
 
     const created = (store.collections.items as { name: string }[]).find((i) => i.name === 'Mobile Bracket 30x30')
     expect(created, 'the API double received the create call').toBeTruthy()
+  })
+})
+
+test.describe('Offline handling', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('the connection banner appears on disconnect and clears on reconnect', async ({ page, store, context }) => {
+    await loginFast(page, store)
+    await expect(page.getByText("You're offline.")).toHaveCount(0)
+
+    await context.setOffline(true)
+    await expect(page.getByText("You're offline.")).toBeVisible()
+    // The copy must not promise that work is saved while offline.
+    await expect(page.getByText(/Nothing is saved until you reconnect/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
+
+    await context.setOffline(false)
+    await expect(page.getByText("You're offline.")).toBeHidden()
+  })
+})
+
+test.describe('PWA prerequisites', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('manifest is installable-shaped and the service worker registers', async ({ page, store }) => {
+    await loginFast(page, store)
+
+    const res = await page.request.get('/manifest.webmanifest')
+    expect(res.status()).toBe(200)
+    const manifest = await res.json()
+    expect(manifest.name).toBeTruthy()
+    expect(manifest.short_name).toBeTruthy()
+    expect(manifest.start_url).toBeTruthy()
+    expect(manifest.scope).toBe('/')
+    expect(manifest.display).toBe('standalone')
+    expect(manifest.theme_color).toMatch(/^#[0-9a-f]{6}$/i)
+    expect(manifest.background_color).toMatch(/^#[0-9a-f]{6}$/i)
+    expect(manifest.icons.some((i: { sizes: string }) => i.sizes === '192x192')).toBe(true)
+    expect(manifest.icons.some((i: { sizes: string }) => i.sizes === '512x512')).toBe(true)
+    expect(manifest.icons.some((i: { purpose?: string }) => i.purpose === 'maskable')).toBe(true)
+
+    // The suite runs a production build, so the registrar must install the worker at the root scope.
+    const scope = await page.waitForFunction(
+      async () => {
+        if (!('serviceWorker' in navigator)) return false
+        const reg = await navigator.serviceWorker.getRegistration('/')
+        return reg ? reg.scope : false
+      },
+      null,
+      { timeout: 20_000 },
+    ).then((handle) => handle.jsonValue())
+    expect(scope).toBe(`${new URL(page.url()).origin}/`)
+
+    // The static offline fallback really exists and is prerendered.
+    const offline = await page.request.get('/offline')
+    expect(offline.status()).toBe(200)
+    expect(await offline.text()).toContain('offline')
   })
 })
