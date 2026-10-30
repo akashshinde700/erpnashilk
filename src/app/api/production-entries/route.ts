@@ -61,6 +61,12 @@ export async function POST(req: Request) {
     // Quantities are optional: an all-zero entry just records work details / downtime.
 
     const created = await db.$transaction(async (tx) => {
+      // Serialize entries on the same work order: this no-op write takes the work-order row lock, so a
+      // second submission waits here and then reads the first one's committed quantities (the same
+      // lock trick postStock uses on the stock row). Without it two parallel entries both read the old
+      // producedQty, both pass the planned-qty check, both post finished-goods stock and both backflush
+      // raw material — while the work order itself only counts one of them (lost update).
+      await tx.workOrder.updateMany({ where: { id: workOrderId, companyId }, data: { producedQty: { increment: 0 } } })
       const wo = await tx.workOrder.findFirst({ where: { id: workOrderId, companyId } })
       if (!wo) throw new ApiError('Work order not found', 404)
       if (wo.status !== 'RELEASED' && wo.status !== 'IN_PROGRESS') {

@@ -331,22 +331,33 @@ export interface TaxLine {
   qty: number; rate: number; discountPct?: number; gstRate: number; cessRate?: number
 }
 
-/** Compute per-line taxable value and tax split. interState => IGST, else CGST+SGST */
+/**
+ * Compute per-line taxable value and tax split. interState => IGST, else CGST+SGST.
+ *
+ * Every line is rounded to paise and the document totals are the sum of those rounded lines, so the
+ * printed lines, the stored totals and the reports always agree to the paisa (an invoice whose
+ * line column summed to a different value than its taxable total would fail GSTR-1 matching).
+ * The intra-state split gives an odd paisa to SGST, so CGST + SGST is exactly the line's tax.
+ */
 export function computeGst(lines: TaxLine[], interState: boolean) {
   let subtotal = 0, discountTotal = 0, cgst = 0, sgst = 0, igst = 0
   const computed = lines.map((l) => {
-    const gross = l.qty * l.rate
-    const disc = gross * ((l.discountPct || 0) / 100)
-    const taxable = gross - disc
-    const tax = taxable * (l.gstRate / 100)
-    subtotal += gross
-    discountTotal += disc
-    if (interState) igst += tax
-    else { cgst += tax / 2; sgst += tax / 2 }
+    const gross = r2(l.qty * l.rate)
+    const disc = r2(gross * ((l.discountPct || 0) / 100))
+    const taxable = r2(gross - disc)
+    const tax = r2(taxable * (l.gstRate / 100))
+    subtotal = r2(subtotal + gross)
+    discountTotal = r2(discountTotal + disc)
+    if (interState) igst = r2(igst + tax)
+    else {
+      const half = r2(tax / 2)
+      cgst = r2(cgst + half)
+      sgst = r2(sgst + (tax - half))
+    }
     return { ...l, taxable, tax }
   })
-  const grandTotal = subtotal - discountTotal + cgst + sgst + igst
-  return { computed, subtotal: r2(subtotal), discountTotal: r2(discountTotal), cgst: r2(cgst), sgst: r2(sgst), igst: r2(igst), grandTotal: r2(grandTotal) }
+  const grandTotal = r2(subtotal - discountTotal + cgst + sgst + igst)
+  return { computed, subtotal, discountTotal, cgst, sgst, igst, grandTotal }
 }
 
 export const r2 = (n: number) => Math.round(n * 100) / 100
@@ -362,41 +373,94 @@ export interface BillAdjustments {
  * Full bill totals: line discounts, bill discount (pro-rata on line taxable values, so GST is on the
  * discounted value), freight / packing as taxable charges, CGST+SGST or IGST, optional round-off.
  * `computed[i].taxable` is the line's final taxable value (store it as lineTotal).
+ *
+ * Paisa-exact by construction:
+ *  • every line's taxable value is rounded once, and the bill discount is distributed with the
+ *    largest-remainder method — so Σ line taxable === bill taxable (no 1-paisa drift between the
+ *    printed line column and the total, which is what a GSTR-1 comparison trips over),
+ *  • tax and cess are computed from that rounded line value, and the intra-state split keeps
+ *    CGST + SGST === the line's tax exactly,
+ *  • the grand total is the sum of the stored line values + the rounded charges, so print, saved row
+ *    and reports all read the same number.
  */
 export function computeBillTotals(lines: TaxLine[], interState: boolean, adj: BillAdjustments = {}) {
-  let subtotal = 0, lineDisc = 0
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const cents = (n: number) => Math.round(n * 100)
+  let subtotalC = 0, lineDiscC = 0
   const pre = lines.map((l) => {
-    const gross = l.qty * l.rate
-    const disc = gross * ((l.discountPct || 0) / 100)
-    subtotal += gross
-    lineDisc += disc
-    return { ...l, base: gross - disc }
+    const gross = round2(l.qty * l.rate)
+    const disc = round2(gross * ((l.discountPct || 0) / 100))
+    subtotalC += cents(gross)
+    lineDiscC += cents(disc)
+    return { ...l, base: round2(gross - disc) }
   })
-  const baseSum = pre.reduce((s, l) => s + l.base, 0)
-  const billDiscount = Math.min(Math.max(0, adj.billDiscount || 0), baseSum)
-  let cgst = 0, sgst = 0, igst = 0, cess = 0, taxableSum = 0
-  const addTax = (tax: number) => { if (interState) igst += tax; else { cgst += tax / 2; sgst += tax / 2 } }
-  const computed = pre.map(({ base, ...l }) => {
-    const taxable = baseSum > 0 ? base - billDiscount * (base / baseSum) : base
-    const tax = taxable * (l.gstRate / 100)
-    const lineCess = taxable * ((l.cessRate || 0) / 100)
-    taxableSum += taxable
-    addTax(tax)
-    cess += lineCess
-    return { ...l, taxable: r2(taxable), tax: r2(tax), cess: r2(lineCess) }
+  const baseSumC = pre.reduce((s, l) => s + cents(l.base), 0)
+  // A bill discount can never exceed the taxable value of the bill
+  const billDiscountC = Math.min(Math.max(0, cents(adj.billDiscount || 0)), baseSumC)
+
+  // 1. pro-rata share of the bill discount per line, kept in paise (integers, no float drift)
+  const share = pre.map((l) => (baseSumC > 0 ? Math.round((cents(l.base) * billDiscountC) / baseSumC) : 0))
+  const shareSum = share.reduce((s, n) => s + n, 0)
+  // 2. largest-remainder: hand the leftover paise to the lines with the biggest cut-down fraction
+  let leftover = billDiscountC - shareSum
+  if (leftover !== 0) {
+    const frac = pre.map((l, i) => {
+      const exact = baseSumC > 0 ? (cents(l.base) * billDiscountC) / baseSumC : 0
+      return { i, rem: exact - share[i] }
+    })
+    const order = leftover > 0
+      ? frac.sort((a, b) => b.rem - a.rem || b.i - a.i)
+      : frac.sort((a, b) => a.rem - b.rem || b.i - a.i)
+    const step = leftover > 0 ? 1 : -1
+    for (let k = 0; leftover !== 0; k++) {
+      const idx = order[k % order.length].i
+      share[idx] += step
+      leftover -= step
+    }
+  }
+
+  let cgstC = 0, sgstC = 0, igstC = 0, cessC = 0, taxableTotalC = 0
+  const addTax = (taxC: number) => {
+    if (interState) igstC += taxC
+    else {
+      const half = Math.round(taxC / 2) // an odd paisa goes to CGST; CGST + SGST === the line's tax
+      cgstC += half
+      sgstC += taxC - half
+    }
+  }
+  const computed = pre.map(({ base, ...l }, i) => {
+    const lineC = cents(base) - share[i] // this line's final taxable value, in paise
+    const taxC = Math.round((lineC * (l.gstRate || 0)) / 100)
+    const cessLineC = Math.round((lineC * (l.cessRate || 0)) / 100)
+    taxableTotalC += lineC
+    addTax(taxC)
+    cessC += cessLineC
+    return { ...l, taxable: lineC / 100, tax: taxC / 100, cess: cessLineC / 100 }
   })
+
   const charge = (c?: { amount: number; gstRate: number }) => {
-    const amount = Math.max(0, c?.amount || 0)
-    if (amount) addTax(amount * ((c?.gstRate ?? 18) / 100))
-    return r2(amount)
+    const amountC = Math.max(0, cents(c?.amount || 0))
+    if (amountC) addTax(Math.round(amountC * ((c?.gstRate ?? 18) / 100)))
+    return amountC / 100
   }
   const freight = charge(adj.freight)
   const packing = charge(adj.packing)
-  const exact = r2(taxableSum + freight + packing + r2(cgst) + r2(sgst) + r2(igst) + r2(cess))
-  const grandTotal = adj.roundOff ? Math.round(exact) : exact
+
+  const exactC = taxableTotalC + cents(freight) + cents(packing) + cgstC + sgstC + igstC + cessC
+  const grandC = adj.roundOff ? Math.round(exactC / 100) * 100 : exactC
   return {
-    computed, subtotal: r2(subtotal), discountTotal: r2(lineDisc + billDiscount), billDiscount: r2(billDiscount),
-    freight, packing, cgst: r2(cgst), sgst: r2(sgst), igst: r2(igst), cess: r2(cess), roundOff: r2(grandTotal - exact), grandTotal: r2(grandTotal),
+    computed,
+    subtotal: subtotalC / 100,
+    discountTotal: (lineDiscC + billDiscountC) / 100,
+    billDiscount: billDiscountC / 100,
+    freight,
+    packing,
+    cgst: cgstC / 100,
+    sgst: sgstC / 100,
+    igst: igstC / 100,
+    cess: cessC / 100,
+    roundOff: (grandC - exactC) / 100,
+    grandTotal: grandC / 100,
   }
 }
 

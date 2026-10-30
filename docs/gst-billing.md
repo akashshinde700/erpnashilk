@@ -77,6 +77,28 @@ Where it is used in the invoice dialog's line editor:
 Nothing is applied silently: an existing line rate is never overwritten by the
 suggestion.
 
+## Rounding (paisa-exact)
+
+`computeBillTotals()` in `src/lib/erp-helpers.ts` is the only place bill money is
+calculated, and the invoice dialog previews with that same function — so what you see
+before saving is exactly what is stored and printed.
+
+* Everything is computed in **integer paise**; a line's value is rounded once.
+* A **bill-level discount** is shared over the lines pro-rata with the
+  largest-remainder method, so the lines always add up to the bill's taxable value.
+  Previously the share was unrounded and could be off by a paisa (3 × ₹100 with a ₹1
+  bill discount printed lines of ₹299.01 under a ₹299.00 bill).
+* **CGST + SGST always equals the line's tax** (an odd paisa goes to CGST); interstate
+  bills put the whole tax in IGST.
+* Freight and packing are taxed as rounded charge amounts, and the **grand total is
+  the sum of the stored line values + charges**. Round-off (optional) snaps the total
+  to the rupee and never moves a bill by more than 50 paise.
+* `computeGst()` — used by quotations, purchase orders and enquiries — follows the
+  same rules, so those documents reconcile too.
+
+Regression suite: `e2e/unit/billing-totals.spec.ts` (includes 400 deterministic random
+bills across intra/inter-state, cess, freight, packing and round-off).
+
 ## Credit notes
 
 Sales returns (`Sales → Sales Returns`, `CN/...`) stay the credit-note mechanism:
