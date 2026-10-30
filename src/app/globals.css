@@ -370,6 +370,19 @@
   background-attachment: local, local, scroll, scroll;
 }
 
+/*
+ * Recharts measures its container and then writes that pixel width onto `.recharts-wrapper`. If the
+ * measurement lands while the card is wider (orientation change, on-screen keyboard, font swap) the
+ * stale width pushes the card — and the whole page — sideways on a phone. Keep charts inside their card.
+ */
+.recharts-responsive-container {
+  min-width: 0 !important;
+}
+.recharts-wrapper,
+.recharts-wrapper > svg {
+  max-width: 100% !important;
+}
+
 /* iOS Safari zooms the whole page when a focused field is under 16px. Keep form text at 16px
    on touch-sized screens, then restore the compact size on larger pointers. */
 @media (max-width: 767px) {

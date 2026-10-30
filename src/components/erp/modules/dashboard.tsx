@@ -404,12 +404,14 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
       {/* Charts — production card only for work-order roles (dimmed while a span refetch is in flight) */}
       <div
         className={cn(
-          'grid gap-4',
+          // `grid-cols-1` + `min-w-0` items: a chart that measured itself at a stale width must not
+          // widen the column and drag the whole page into horizontal scroll on a phone.
+          'grid grid-cols-1 gap-4',
           canWorkOrders ? 'lg:grid-cols-2' : 'lg:grid-cols-1',
           loading && data ? 'opacity-60 transition-opacity' : undefined,
         )}
       >
-        <SectionCard title={`Sales Trend (${span} months)`}>
+        <SectionCard title={`Sales Trend (${span} months)`} className="min-w-0">
           <p className="-mt-1 mb-2 text-xs text-muted-foreground">Click a bar to open that month's invoices</p>
           {salesTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
@@ -458,7 +460,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
         </SectionCard>
 
         {canWorkOrders && (
-        <SectionCard title={`Production Output (${span} months)`}>
+        <SectionCard title={`Production Output (${span} months)`} className="min-w-0">
           <p className="-mt-1 mb-2 text-xs text-muted-foreground">Click a point to open that month's work orders</p>
           {productionTrend.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
@@ -604,7 +606,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
         )}
 
         {(canStock || canNotifications) && (
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {canStock && (
           <SectionCard title="Low Stock">
             {lowStock.length === 0 ? (

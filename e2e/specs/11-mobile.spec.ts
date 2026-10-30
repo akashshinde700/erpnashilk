@@ -57,8 +57,13 @@ async function overflowingElements(page: Page) {
       if (style.position === 'fixed' && (r.right > vw + 1 || r.left < -1)) continue
       if (r.right <= vw + 1 && r.left >= -1) continue
       const cls = typeof el.className === 'string' ? el.className : ''
+      const parent = el.parentElement
+      const pr = parent?.getBoundingClientRect()
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40)
       found.push(
-        `<${el.tagName.toLowerCase()} class="${cls.slice(0, 110)}"> left=${Math.round(r.left)} right=${Math.round(r.right)} width=${Math.round(r.width)}`,
+        `<${el.tagName.toLowerCase()} class="${cls.slice(0, 110)}"> left=${Math.round(r.left)} right=${Math.round(r.right)} width=${Math.round(r.width)}`
+          + ` | parent ${parent ? `<${parent.tagName.toLowerCase()} class="${(typeof parent.className === 'string' ? parent.className : '').slice(0, 60)}"> width=${pr ? Math.round(pr.width) : '?'}` : 'none'}`
+          + ` | text="${text}"`,
       )
       if (found.length >= 8) break
     }
