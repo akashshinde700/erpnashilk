@@ -335,13 +335,13 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
             <Button variant="ghost" size="sm" className="h-7" onClick={() => setConvertRow(r)} title="Convert to Sales Order" aria-label="Convert to Sales Order"><ArrowRightCircle className="h-3.5 w-3.5" /></Button>
           )}
           <Button variant="ghost" size="sm" className="h-7" onClick={() => printQuotation(r)} title="Print"><Printer className="h-3.5 w-3.5" /></Button>
-          <Button variant="ghost" size="sm" className="h-7 text-green-600 hover:text-green-700" title="Send on WhatsApp" onClick={() => void shareQuotation(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="sm" className="h-7 text-success hover:text-success/80" title="Send on WhatsApp" onClick={() => void shareQuotation(r)}><MessageCircle className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="sm" className="h-7" title="Email quotation" onClick={() => void emailQuotation(r)}><Mail className="h-3.5 w-3.5" /></Button>
           {r.status === 'DRAFT' && (
             <>
               <Button variant="ghost" size="sm" className="h-7" onClick={() => void openEdit(r)} title="Edit"><Pencil className="h-3.5 w-3.5" /></Button>
               <ConfirmAction
-                trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><Trash2 className="h-3.5 w-3.5" /></Button>}
+                trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>}
                 title="Delete quotation?" message={`Delete draft quotation ${r.number}?`} tone="destructive" onConfirm={() => remove(r)}
               />
             </>
@@ -427,7 +427,7 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
               <div className="col-span-1 flex justify-end">
                 <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                   onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               </div>
             </div>
@@ -495,7 +495,7 @@ export default function QuotationsModule({ companyId }: { companyId: string }) {
               <DialogTitle>Convert to Sales Order</DialogTitle>
               <DialogDescription>Quotation {convertRow.number} has no billable lines.</DialogDescription>
             </DialogHeader>
-            <p className="text-sm text-amber-600 dark:text-amber-400">
+            <p className="text-sm text-warning">
               This quotation has no item lines with a selected item, so it cannot be converted to a sales order. Edit the draft and add at least one item line first.
             </p>
             <DialogFooter>

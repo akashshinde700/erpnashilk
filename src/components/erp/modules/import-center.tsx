@@ -15,19 +15,19 @@ const CARDS: { entry: ImportEntry; emoji: string; title: string; text: string; b
     entry: 'tally', emoji: '📘', title: 'Tally', icon: BookOpen,
     text: 'Import business data from Tally into ManuFlow ERP.',
     button: 'Import from Tally',
-    tone: 'text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40',
+    tone: 'text-info bg-info-soft dark:bg-info-soft',
   },
   {
     entry: 'vyapar', emoji: '🟢', title: 'Vyapar', icon: Store,
     text: 'Import supported Vyapar data or exported files into ManuFlow ERP.',
     button: 'Import from Vyapar',
-    tone: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40',
+    tone: 'text-success bg-success-soft dark:bg-success-soft',
   },
   {
     entry: 'excel', emoji: '📊', title: 'Excel / CSV', icon: FileSpreadsheet,
     text: 'Select a file and import your data in a few simple steps.',
     button: 'Import from Excel / CSV',
-    tone: 'text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/40',
+    tone: 'text-info bg-info-soft',
   },
 ]
 
@@ -50,14 +50,16 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
         <TabsContent value="import" className="mt-4">
           <div className="grid gap-4 md:grid-cols-3">
             {CARDS.map((c) => (
-              <div key={c.entry} className="flex flex-col rounded-xl border bg-card p-5 shadow-sm">
-                <div className={cn('grid h-12 w-12 place-items-center rounded-xl text-2xl', c.tone)} aria-hidden>{c.emoji}</div>
-                <h3 className="mt-3 flex items-center gap-2 text-lg font-semibold"><c.icon className="h-5 w-5 text-muted-foreground" aria-hidden /> {c.title}</h3>
+              <div key={c.entry} className="flex flex-col rounded-xl border bg-card p-5 elev-1 transition-shadow duration-200 hover:elev-2">
+                <div className={cn('grid h-12 w-12 place-items-center rounded-xl', c.tone)} aria-hidden>
+                  <c.icon className="h-6 w-6" />
+                </div>
+                <h3 className="mt-3 text-lg font-semibold tracking-tight">{c.title}</h3>
                 <p className="mt-1 flex-1 text-sm text-muted-foreground">{c.text}</p>
                 <button
                   type="button"
                   onClick={() => (c.entry === 'tally' ? setTally(Date.now()) : setWizard({ entry: c.entry, key: Date.now() }))}
-                  className="mt-4 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-base font-medium text-white transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
+                  className="mt-4 inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
                   {c.button} <ArrowRight className="h-4 w-4" aria-hidden />
                 </button>

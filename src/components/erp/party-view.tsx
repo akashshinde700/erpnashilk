@@ -48,7 +48,7 @@ function Kpi({ label, value, tone, hint }: { label: string; value: React.ReactNo
   return (
     <div className="rounded-lg border p-3">
       <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className={cn('mt-0.5 text-lg font-semibold tabular-nums', tone === 'red' && 'text-red-600', tone === 'amber' && 'text-amber-600', tone === 'green' && 'text-emerald-600')}>{value}</p>
+      <p className={cn('mt-0.5 text-lg font-semibold tabular-nums', tone === 'red' && 'text-destructive', tone === 'amber' && 'text-warning', tone === 'green' && 'text-success')}>{value}</p>
       {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   )
@@ -61,7 +61,7 @@ function Empty({ text }: { text: string }) {
 function Progress({ pct }: { pct: number }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"><div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"><div className="h-full bg-success" style={{ width: `${pct}%` }} /></div>
       <span className="text-xs tabular-nums text-muted-foreground">{pct}%</span>
     </div>
   )
@@ -356,12 +356,12 @@ function InvoiceTable({ rows, open, pay, payLabel = 'Receive' }: { rows: Inv[]; 
             <TableCell><DateCell value={i.date} /></TableCell>
             <TableCell>
               <DateCell value={i.dueDate} />
-              {i.overdueDays > 0 && <p className="text-[11px] font-medium text-red-600">{i.overdueDays} days overdue</p>}
+              {i.overdueDays > 0 && <p className="text-[11px] font-medium text-destructive">{i.overdueDays} days overdue</p>}
             </TableCell>
             <TableCell><StatusBadge status={i.status} /></TableCell>
             <TableCell className="text-right"><Money value={i.grandTotal} /></TableCell>
             <TableCell className="text-right"><Money value={i.paidAmount} /></TableCell>
-            <TableCell className={cn('text-right font-medium', i.outstanding > 0 && 'text-amber-600')}><Money value={i.outstanding} /></TableCell>
+            <TableCell className={cn('text-right font-medium', i.outstanding > 0 && 'text-warning')}><Money value={i.outstanding} /></TableCell>
             <TableCell className="text-right">
               {i.outstanding > 0 && i.status !== 'CANCELLED' && <Button size="sm" variant="ghost" className="h-7" onClick={() => pay(i)}><Wallet className="mr-1 h-3.5 w-3.5" />{payLabel}</Button>}
             </TableCell>
@@ -426,7 +426,7 @@ export function PartyViewDialog({ open, onOpenChange, kind, id, onEdit }: {
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {party?.name ?? 'Party'}
             {party && <span className="text-sm font-normal text-muted-foreground">{party.code}</span>}
-            {both && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300">Customer + Supplier</span>}
+            {both && <span className="rounded bg-info-soft px-1.5 py-0.5 text-[10px] font-medium text-info">Customer + Supplier</span>}
           </DialogTitle>
           <DialogDescription asChild>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
@@ -439,7 +439,7 @@ export function PartyViewDialog({ open, onOpenChange, kind, id, onEdit }: {
               {party?.email && <a className="hover:underline" href={`mailto:${party.email}`}>{party.email}</a>}
               {phone && <a className="inline-flex items-center gap-1 hover:underline" href={`tel:${phone}`}><Phone className="h-3 w-3" />{party?.phone}</a>}
               {phone && outstanding > 0 && (
-                <a className="inline-flex items-center gap-1 text-emerald-700 hover:underline" target="_blank" rel="noopener noreferrer"
+                <a className="inline-flex items-center gap-1 text-success hover:underline" target="_blank" rel="noopener noreferrer"
                   href={`https://wa.me/91${phone.slice(-10)}?text=${encodeURIComponent(`Namaste ${party?.contactPerson || party?.name}, a gentle reminder that ₹${outstanding.toLocaleString('en-IN')} is outstanding on your account. Kindly arrange payment. Thank you.`)}`}>
                   <MessageCircle className="h-3 w-3" />WhatsApp reminder
                 </a>
@@ -449,14 +449,14 @@ export function PartyViewDialog({ open, onOpenChange, kind, id, onEdit }: {
           </DialogDescription>
         </DialogHeader>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
         {!data && !error && <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
 
         {data && both && (
           <div className="inline-flex w-fit rounded-lg border p-0.5 text-sm">
             {(['customer', 'supplier'] as const).map((k) => (
               <button key={k} onClick={() => setSide(k)}
-                className={cn('rounded-md px-3 py-1', side === k ? 'bg-emerald-600 text-white' : 'text-muted-foreground hover:text-foreground')}>
+                className={cn('rounded-md px-3 py-1', side === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
                 {k === 'customer' ? <><ClipboardList className="mr-1 inline h-3.5 w-3.5" />As customer</> : <><Truck className="mr-1 inline h-3.5 w-3.5" />As supplier</>}
               </button>
             ))}

@@ -100,9 +100,9 @@ function maskAcc(no?: string | null) {
 function Pill({ children, tone = 'muted' }: { children: React.ReactNode; tone?: 'muted' | 'green' | 'blue' | 'amber' }) {
   const cls = {
     muted: 'bg-muted text-muted-foreground',
-    green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-    blue: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+    green: 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
+    blue: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
+    amber: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border',
   }[tone]
   return <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>
 }
@@ -474,7 +474,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
   const deleteBtn = (onConfirm: () => void, title: string, message: string) => (
     <ConfirmAction
       tone="destructive" title={title} message={message} onConfirm={onConfirm}
-      trigger={<Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-600" aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></Button>}
+      trigger={<Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></Button>}
     />
   )
 
@@ -491,7 +491,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
     { key: 'category', header: 'Category', hideOnMobile: true, render: (r) => r.categoryLabel || '—' },
     {
       key: 'amount', header: 'Amount', className: 'text-right',
-      render: (r) => <Money value={r.amount} className={`font-medium ${r.type === 'ADJUST_IN' ? 'text-emerald-600' : 'text-red-600'}`} />,
+      render: (r) => <Money value={r.amount} className={`font-medium ${r.type === 'ADJUST_IN' ? 'text-success' : 'text-destructive'}`} />,
     },
     { key: 'notes', header: 'Notes', hideOnMobile: true, render: (r) => <span className="block max-w-[200px] truncate" title={r.notes || ''}>{r.notes || '—'}</span> },
     { key: 'actions', header: '', className: 'w-10 text-right', render: (r) => deleteBtn(() => deleteTxn(r), 'Delete entry?', `Delete ${r.number} (${fmtMoney(r.amount)})?`) },
@@ -577,10 +577,10 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
       ),
     },
     ...(hAccount ? [] : [{ key: 'accountName', header: 'Account', hideOnMobile: true, render: (r: LedgerItem) => <span className="text-sm">{r.accountName}</span> }]),
-    { key: 'moneyIn', header: 'Money in', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyIn ? <Money value={r.moneyIn} className="text-emerald-700 dark:text-emerald-400" /> : <span className="text-muted-foreground">—</span>) },
-    { key: 'moneyOut', header: 'Money out', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyOut ? <Money value={r.moneyOut} className="text-red-600 dark:text-red-400" /> : <span className="text-muted-foreground">—</span>) },
+    { key: 'moneyIn', header: 'Money in', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyIn ? <Money value={r.moneyIn} className="text-success" /> : <span className="text-muted-foreground">—</span>) },
+    { key: 'moneyOut', header: 'Money out', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => (r.moneyOut ? <Money value={r.moneyOut} className="text-destructive" /> : <span className="text-muted-foreground">—</span>) },
     // Balance after the row is per account — shown when one account is selected
-    ...(hAccount ? [{ key: 'balance', header: 'Balance', className: 'text-right', render: (r: LedgerItem) => <Money value={r.balance} className={`font-medium ${r.balance < 0 ? 'text-red-600' : ''}`} /> }] : []),
+    ...(hAccount ? [{ key: 'balance', header: 'Balance', className: 'text-right', render: (r: LedgerItem) => <Money value={r.balance} className={`font-medium ${r.balance < 0 ? 'text-destructive' : ''}`} /> }] : []),
   ]
 
   // ---------- Render ----------
@@ -602,9 +602,9 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
       />
 
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-3 mb-4">
-        <StatCard title="Cash in hand" value={fmtMoney(cashTotal)} sub={`${cashAccounts.length} cash account${cashAccounts.length === 1 ? '' : 's'}`} icon={<Wallet className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-600" />
-        <StatCard title="Bank balance" value={fmtMoney(bankTotal)} sub={`${bankAccounts.length} bank account${bankAccounts.length === 1 ? '' : 's'}`} icon={<Landmark className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-600" />
-        <StatCard title="Loans outstanding" value={fmtMoney(loans.data?.outstanding ?? 0)} sub={`${openLoans.length} open loan${openLoans.length === 1 ? '' : 's'}`} icon={<HandCoins className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-600" />
+        <StatCard title="Cash in hand" value={fmtMoney(cashTotal)} sub={`${cashAccounts.length} cash account${cashAccounts.length === 1 ? '' : 's'}`} icon={<Wallet className="h-4 w-4" />} toneClass="bg-success-soft text-success" />
+        <StatCard title="Bank balance" value={fmtMoney(bankTotal)} sub={`${bankAccounts.length} bank account${bankAccounts.length === 1 ? '' : 's'}`} icon={<Landmark className="h-4 w-4" />} toneClass="bg-info-soft text-info" />
+        <StatCard title="Loans outstanding" value={fmtMoney(loans.data?.outstanding ?? 0)} sub={`${openLoans.length} open loan${openLoans.length === 1 ? '' : 's'}`} icon={<HandCoins className="h-4 w-4" />} toneClass="bg-warning-soft text-warning" />
       </div>
 
       <Tabs defaultValue="accounts">
@@ -627,7 +627,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
               {!accounts.loading && !hasCash && (
                 <button
                   type="button" onClick={setupCash}
-                  className="flex min-h-[140px] flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-emerald-400 text-sm text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                  className="flex min-h-[140px] flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-primary/40 text-sm text-success hover:bg-primary/5 dark:hover:bg-primary/10"
                 >
                   <Banknote className="h-5 w-5" />Set up Cash in Hand
                   <span className="text-xs text-muted-foreground">Add your opening cash and its date</span>
@@ -638,7 +638,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
                   <CardContent className="px-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex min-w-0 items-start gap-2">
-                        <div className={`shrink-0 rounded-lg p-2 ${a.type === 'CASH' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950' : 'bg-sky-100 text-sky-600 dark:bg-sky-950'}`}>
+                        <div className={`shrink-0 rounded-lg p-2 ${a.type === 'CASH' ? 'bg-success-soft text-success' : 'bg-info-soft text-info'}`}>
                           {a.type === 'CASH' ? <Banknote className="h-4 w-4" /> : <Landmark className="h-4 w-4" />}
                         </div>
                         <div className="min-w-0">
@@ -653,7 +653,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
                         {deleteBtn(() => deleteAccount(a), 'Delete account?', `Delete "${a.name}"? Only accounts with no entries can be deleted — deactivate it otherwise.`)}
                       </div>
                     </div>
-                    <p className={`mt-3 text-2xl font-bold tabular-nums ${a.balance < 0 ? 'text-red-600' : ''}`}>{fmtMoney(a.balance)}</p>
+                    <p className={`mt-3 text-2xl font-bold tabular-nums ${a.balance < 0 ? 'text-destructive' : ''}`}>{fmtMoney(a.balance)}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       {a.isDefault && <Pill tone="blue">Default</Pill>}
                       {a.printOnInvoice && <Pill tone="green">On invoice</Pill>}
@@ -695,15 +695,15 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard title={hFrom ? `Balance before ${fmtDate(hFrom)}` : 'Opening balance'} value={fmtMoney(hist?.opening ?? 0)} icon={<Wallet className="h-4 w-4" />} toneClass="bg-muted text-muted-foreground" />
-            <StatCard title="Money in" value={fmtMoney(hist?.totals.moneyIn ?? 0)} icon={<ArrowDownLeft className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-600" />
-            <StatCard title="Money out" value={fmtMoney(hist?.totals.moneyOut ?? 0)} icon={<ArrowUpRight className="h-4 w-4" />} toneClass="bg-red-100 text-red-600" />
-            <StatCard title={hTo ? `Balance on ${fmtDate(hTo)}` : 'Balance now'} value={fmtMoney(hist?.closing ?? 0)} icon={<Landmark className="h-4 w-4" />} toneClass="bg-sky-100 text-sky-600" />
+            <StatCard title="Money in" value={fmtMoney(hist?.totals.moneyIn ?? 0)} icon={<ArrowDownLeft className="h-4 w-4" />} toneClass="bg-success-soft text-success" />
+            <StatCard title="Money out" value={fmtMoney(hist?.totals.moneyOut ?? 0)} icon={<ArrowUpRight className="h-4 w-4" />} toneClass="bg-danger-soft text-destructive" />
+            <StatCard title={hTo ? `Balance on ${fmtDate(hTo)}` : 'Balance now'} value={fmtMoney(hist?.closing ?? 0)} icon={<Landmark className="h-4 w-4" />} toneClass="bg-info-soft text-info" />
           </div>
           {hist?.filtered && (
             <p className="mt-2 text-xs text-muted-foreground">Money in / out are for the rows shown; the balances are for the whole {hAccount ? 'account' : 'cash & bank'}.</p>
           )}
           {!!hist?.pendingCheques.count && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+            <p className="mt-2 text-xs text-warning">
               {hist.pendingCheques.count} cheque{hist.pendingCheques.count === 1 ? '' : 's'} not cleared yet
               {hist.pendingCheques.toReceive ? ` · ${fmtMoney(hist.pendingCheques.toReceive)} to receive` : ''}
               {hist.pendingCheques.toPay ? ` · ${fmtMoney(hist.pendingCheques.toPay)} to pay` : ''} — not counted in the balance until cleared.
@@ -774,7 +774,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
                 key={o.key} type="button" onClick={() => choose(o.run)}
                 className="flex items-center gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span className={`shrink-0 rounded-lg p-2 ${chooser === 'IN' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950' : 'bg-amber-100 text-amber-700 dark:bg-amber-950'}`}>{o.icon}</span>
+                <span className={`shrink-0 rounded-lg p-2 ${chooser === 'IN' ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning'}`}>{o.icon}</span>
                 <span className="min-w-0">
                   <span className="block font-medium">{o.title}</span>
                   <span className="block text-xs text-muted-foreground">{o.text}</span>
@@ -803,7 +803,7 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
             <NumberInput value={cntCounted} onChange={(n) => { setCntCounted(n); setCntReviewed(null) }} min={0} step="0.01" />
           </Field>
           {cntDiff !== null && (
-            <div className={`sm:col-span-2 rounded-md border p-3 text-sm ${Math.abs(cntDiff) < 0.005 ? '' : cntDiff > 0 ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30' : 'border-amber-300 bg-amber-50 dark:bg-amber-950/30'}`}>
+            <div className={`sm:col-span-2 rounded-md border p-3 text-sm ${Math.abs(cntDiff) < 0.005 ? '' : cntDiff > 0 ? 'border-success-border bg-success-soft dark:bg-success-soft' : 'border-warning-border bg-warning-soft/30'}`}>
               {Math.abs(cntDiff) < 0.005
                 ? 'Counted cash matches the books — nothing will be saved.'
                 : cntDiff > 0
@@ -882,8 +882,8 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
           {stmt && (
             <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
               <div className="rounded-md border p-2"><p className="text-[11px] text-muted-foreground">Opening</p><Money value={stmt.opening} className="font-medium" /></div>
-              <div className="rounded-md border p-2"><p className="text-[11px] text-muted-foreground">Money in</p><Money value={stmt.totalIn} className="font-medium text-emerald-600" /></div>
-              <div className="rounded-md border p-2"><p className="text-[11px] text-muted-foreground">Money out</p><Money value={stmt.totalOut} className="font-medium text-red-600" /></div>
+              <div className="rounded-md border p-2"><p className="text-[11px] text-muted-foreground">Money in</p><Money value={stmt.totalIn} className="font-medium text-success" /></div>
+              <div className="rounded-md border p-2"><p className="text-[11px] text-muted-foreground">Money out</p><Money value={stmt.totalOut} className="font-medium text-destructive" /></div>
               <div className="rounded-md border p-2"><p className="text-[11px] text-muted-foreground">Closing</p><Money value={stmt.closing} className="font-semibold" /></div>
               {isBankStmt && (
                 <div className="col-span-2 rounded-md border border-dashed p-2 sm:col-span-4">
@@ -924,8 +924,8 @@ export default function CashBankModule({ companyId }: { companyId: string }) {
                       <div className="font-medium">{r.type}{r.ref ? <span className="ml-1 font-mono text-[11px] text-muted-foreground">{r.ref}</span> : null}</div>
                       {r.party && <div className="max-w-[260px] truncate text-xs text-muted-foreground" title={r.party}>{r.party}</div>}
                     </td>
-                    <td className="px-2 py-1.5 text-right">{r.in ? <Money value={r.in} className="text-emerald-600" /> : ''}</td>
-                    <td className="px-2 py-1.5 text-right">{r.out ? <Money value={r.out} className="text-red-600" /> : ''}</td>
+                    <td className="px-2 py-1.5 text-right">{r.in ? <Money value={r.in} className="text-success" /> : ''}</td>
+                    <td className="px-2 py-1.5 text-right">{r.out ? <Money value={r.out} className="text-destructive" /> : ''}</td>
                     <td className="px-2 py-1.5 text-right"><Money value={r.balance} /></td>
                     {isBankStmt && (
                       <td className="px-2 py-1.5 text-center">

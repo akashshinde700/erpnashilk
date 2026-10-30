@@ -197,7 +197,7 @@ export default function ImportDialog({
 
               {!blocked && cellWarnings.length > 0 && (
                 <Alert>
-                  <FileWarning className="h-4 w-4 text-amber-600" />
+                  <FileWarning className="h-4 w-4 text-warning" />
                   <AlertTitle>{cellWarnings.length} row{cellWarnings.length === 1 ? '' : 's'} with empty required cells</AlertTitle>
                   <AlertDescription>
                     {cellWarnings.slice(0, 3).join(' · ')}
@@ -215,7 +215,7 @@ export default function ImportDialog({
                         {templateHeaders.map((h) => (
                           <TableHead key={h} className="font-medium whitespace-nowrap">
                             {h}
-                            {required.includes(h) && <span className="text-red-500"> *</span>}
+                            {required.includes(h) && <span className="text-destructive"> *</span>}
                           </TableHead>
                         ))}
                       </TableRow>
@@ -255,8 +255,8 @@ export default function ImportDialog({
             </Alert>
           )}
           {result && (
-            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            <Alert className="border-success-border bg-success-soft text-success">
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <AlertTitle>Imported {result.imported} · Skipped {result.skipped}</AlertTitle>
               {result.errors.length > 0 && (
                 <AlertDescription>

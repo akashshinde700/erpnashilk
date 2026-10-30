@@ -73,7 +73,7 @@ export default function SuppliersModule({ companyId }: { companyId: string }) {
       render: (r) => (
         <span className="flex max-w-56 items-center gap-1.5">
           <span className="truncate">{r.name}</span>
-          {isBothParty(r) && <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300" title="Also a customer">Both</span>}
+          {isBothParty(r) && <span className="shrink-0 rounded bg-info-soft px-1.5 py-0.5 text-[10px] font-medium text-info" title="Also a customer">Both</span>}
         </span>
       ),
     },
@@ -106,7 +106,7 @@ export default function SuppliersModule({ companyId }: { companyId: string }) {
           </Button>
           <ConfirmAction
             trigger={
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" title="Delete">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" title="Delete">
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             }

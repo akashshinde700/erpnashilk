@@ -22,9 +22,9 @@ interface NotificationRow {
 
 // Mirrors LEVEL_DOT in erp-app.tsx (bell popover)
 const LEVEL_DOT: Record<string, string> = {
-  INFO: 'bg-sky-500',
-  WARNING: 'bg-amber-500',
-  CRITICAL: 'bg-red-500',
+  INFO: 'bg-info',
+  WARNING: 'bg-brand-accent',
+  CRITICAL: 'bg-destructive',
 }
 
 type Filter = 'all' | 'unread' | 'read'
@@ -112,7 +112,7 @@ export default function NotificationsModule({ companyId }: { companyId: string }
     }
   }
 
-  const emptyTitle = filter === 'unread' ? 'No unread notifications 🎉' : filter === 'read' ? 'No read notifications' : 'No notifications yet'
+  const emptyTitle = filter === 'unread' ? 'No unread notifications' : filter === 'read' ? 'No read notifications' : 'No notifications yet'
   const emptySub = filter === 'unread'
     ? "You're all caught up."
     : filter === 'read'
@@ -212,7 +212,7 @@ export default function NotificationsModule({ companyId }: { companyId: string }
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium leading-snug">{n.title}</p>
                         {!n.read && (
-                          <Badge className="border-0 bg-teal-100 px-1.5 py-0 text-[10px] text-teal-700 dark:bg-teal-950 dark:text-teal-300">
+                          <Badge className="border-0 bg-teal-100 px-1.5 py-0 text-[10px] text-success dark:bg-teal-950 dark:text-teal-300">
                             New
                           </Badge>
                         )}
@@ -237,7 +237,7 @@ export default function NotificationsModule({ companyId }: { companyId: string }
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-9 w-9 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                        className="h-9 w-9 text-destructive hover:text-destructive"
                         disabled={busyId === n.id}
                         onClick={() => void remove(n)}
                         aria-label="Delete notification"

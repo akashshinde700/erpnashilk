@@ -53,7 +53,7 @@ export function RefundDialog({ companyId, open, onClose, title, description, max
             value={accountId} onChange={setAccountId}
             options={[{ value: '', label: forMode.fallback ? `Default — ${forMode.fallback.name}` : 'Default for mode' }, ...forMode.matching.map((a) => ({ value: a.id, label: a.name }))]}
           />
-          {accounts.data && !accountId && !forMode.fallback && <p className="mt-1 text-[11px] text-red-600">No {forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank.</p>}
+          {accounts.data && !accountId && !forMode.fallback && <p className="mt-1 text-[11px] text-destructive">No {forMode.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank.</p>}
         </Field>
         {mode === 'CHEQUE' && (
           <>

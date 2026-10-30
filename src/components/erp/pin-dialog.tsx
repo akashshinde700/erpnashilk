@@ -55,7 +55,7 @@ export default function PinDialog() {
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-emerald-600" /> Security PIN
+              <ShieldCheck className="h-5 w-5 text-success" /> Security PIN
             </DialogTitle>
             <DialogDescription>
               {reason === 'Wrong security PIN'
@@ -77,7 +77,7 @@ export default function PinDialog() {
           />
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => finish(null)}>Cancel</Button>
-            <Button type="submit" disabled={!/^\d{4,6}$/.test(pin)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Button type="submit" disabled={!/^\d{4,6}$/.test(pin)} className="bg-primary text-primary-foreground hover:bg-primary/90">
               Continue
             </Button>
           </DialogFooter>

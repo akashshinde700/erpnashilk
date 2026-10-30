@@ -332,16 +332,16 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                     const on = c.name === company
                     return (
                       <button key={c.name} type="button" role="radio" aria-checked={on} onClick={() => setCompany(c.name)}
-                        className={cn('flex items-start gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600',
-                          on ? 'border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600 dark:bg-emerald-950/40' : 'hover:bg-muted/60')}>
-                        <Building2 className={cn('mt-0.5 h-5 w-5 shrink-0', on ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')} aria-hidden />
+                        className={cn('flex items-start gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          on ? 'border-primary bg-success-soft ring-1 ring-ring dark:bg-success-soft' : 'hover:bg-muted/60')}>
+                        <Building2 className={cn('mt-0.5 h-5 w-5 shrink-0', on ? 'text-success' : 'text-muted-foreground')} aria-hidden />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium">{c.name}</span>
                           <span className="block text-xs text-muted-foreground">
                             {c.booksFrom ? `Books from ${fmtDate(c.booksFrom)}` : c.startingFrom ? `Financial year from ${fmtDate(c.startingFrom)}` : 'Financial year not reported'}
                           </span>
                         </span>
-                        {on && <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" aria-hidden />}
+                        {on && <CheckCircle2 className="h-5 w-5 shrink-0 text-success" aria-hidden />}
                       </button>
                     )
                   })}
@@ -367,8 +367,8 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                   const on = kinds.has(k.kind)
                   const Icon = k.kind === 'items' ? Package : Users
                   return (
-                    <label key={k.kind} className={cn('flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors focus-within:ring-2 focus-within:ring-emerald-600',
-                      on ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40' : 'hover:bg-muted/60')}>
+                    <label key={k.kind} className={cn('flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors focus-within:ring-2 focus-within:ring-ring',
+                      on ? 'border-primary bg-success-soft dark:bg-success-soft' : 'hover:bg-muted/60')}>
                       <Checkbox checked={on} onCheckedChange={(v) => toggle(k.kind, v === true)} aria-label={k.label} className="mt-0.5" />
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5 font-medium"><Icon className="h-4 w-4 text-muted-foreground" aria-hidden /> {k.label}</span>
@@ -382,7 +382,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed p-3">
                   <label htmlFor="t-itemtype" className="text-sm font-medium">New stock items are</label>
                   <select id="t-itemtype" value={itemType} onChange={(e) => setItemType(e.target.value)}
-                    className="h-9 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600">
+                    className="h-9 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <option value="">Choose item type…</option>
                     {ITEM_TYPES.map((t) => <option key={t} value={t}>{ITEM_TYPE_LABEL[t]}</option>)}
                   </select>
@@ -469,12 +469,12 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                         <tr key={c.kind} className="border-t">
                           <th scope="row" className="px-2 py-2 sm:px-3 text-left font-medium">
                             {k.label}
-                            {c.read === 'failed' && <span className="block text-xs font-normal text-red-700 dark:text-red-400">{c.error}</span>}
+                            {c.read === 'failed' && <span className="block text-xs font-normal text-destructive">{c.error}</span>}
                           </th>
-                          <td className="px-2 py-2 sm:px-3 text-right tabular-nums">{c.read === 'done' ? c.records : c.read === 'reading' ? <Loader2 className="ml-auto h-4 w-4 animate-spin" aria-label="Reading" /> : c.read === 'failed' ? <XCircle className="ml-auto h-4 w-4 text-red-600" aria-label="Failed" /> : '—'}</td>
+                          <td className="px-2 py-2 sm:px-3 text-right tabular-nums">{c.read === 'done' ? c.records : c.read === 'reading' ? <Loader2 className="ml-auto h-4 w-4 animate-spin" aria-label="Reading" /> : c.read === 'failed' ? <XCircle className="ml-auto h-4 w-4 text-destructive" aria-label="Failed" /> : '—'}</td>
                           <td className="px-2 py-2 sm:px-3 text-right tabular-nums">{show ? (afterImport ? n.imported : n.ready) : '—'}</td>
                           <td className="px-2 py-2 sm:px-3 text-right tabular-nums">{show ? n.duplicates : '—'}</td>
-                          <td className={cn('px-3 py-2 text-right tabular-nums', n.problems > 0 && 'font-medium text-amber-700 dark:text-amber-400')}>{show ? n.problems : '—'}</td>
+                          <td className={cn('px-3 py-2 text-right tabular-nums', n.problems > 0 && 'font-medium text-warning')}>{show ? n.problems : '—'}</td>
                         </tr>
                       )
                     })}
@@ -490,7 +490,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               )}
               {phase === 'done' && (
                 <Alert>
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <CheckCircle2 className="h-4 w-4 text-success" />
                   <AlertTitle>Import finished</AlertTitle>
                   <AlertDescription>
                     {sum((c) => c.done.imported)} imported · {sum((c) => c.done.duplicates)} already in ManuFlow (skipped) · {sum((c) => c.done.problems)} not imported. Each part is recorded in Import History.
@@ -529,7 +529,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           )}
           <span className="mr-auto text-xs text-muted-foreground" aria-live="polite">{nextHint}</span>
           {step < 4 && (
-            <Button onClick={() => setStep((s) => s + 1)} disabled={!canNext} className="bg-emerald-600 text-white hover:bg-emerald-700">
+            <Button onClick={() => setStep((s) => s + 1)} disabled={!canNext} className="bg-primary text-primary-foreground hover:bg-primary/90">
               Next <ArrowRight className="ml-2 h-4 w-4" aria-hidden />
             </Button>
           )}
@@ -542,12 +542,12 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             <Button variant="outline" onClick={() => void readAndCheck()}><RefreshCw className="mr-2 h-4 w-4" aria-hidden /> Check again</Button>
           )}
           {step === 4 && phase === 'ready' && (
-            <Button onClick={() => void importAll()} disabled={sum((c) => c.preview.ready) === 0} className="bg-emerald-600 text-white hover:bg-emerald-700">
+            <Button onClick={() => void importAll()} disabled={sum((c) => c.preview.ready) === 0} className="bg-primary text-primary-foreground hover:bg-primary/90">
               <Upload className="mr-2 h-4 w-4" aria-hidden /> Import data
             </Button>
           )}
           {step === 4 && phase === 'done' && (
-            <Button onClick={() => onOpenChange(false)} className="bg-emerald-600 text-white hover:bg-emerald-700">Done</Button>
+            <Button onClick={() => onOpenChange(false)} className="bg-primary text-primary-foreground hover:bg-primary/90">Done</Button>
           )}
         </div>
       </DialogContent>
@@ -565,7 +565,7 @@ function Stepper({ step }: { step: number }) {
           return (
             <li key={s} aria-current={n === step ? 'step' : undefined} className="flex flex-1 items-center gap-2">
               <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs font-semibold',
-                n < step ? 'border-emerald-600 bg-emerald-600 text-white' : n === step ? 'border-emerald-600 text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+                n < step ? 'border-primary bg-primary text-primary-foreground' : n === step ? 'border-primary text-success' : 'text-muted-foreground')}>
                 {n < step ? <CheckCircle2 className="h-4 w-4" aria-hidden /> : n}
               </span>
               <span className={cn('text-sm', n === step ? 'font-medium' : 'text-muted-foreground')}>{s}</span>
@@ -580,7 +580,7 @@ function Stepper({ step }: { step: number }) {
 
 function Problem({ text, tone = 'error' }: { text: string; tone?: 'error' | 'info' }) {
   return (
-    <p role={tone === 'error' ? 'alert' : 'status'} className={cn('flex items-start gap-1.5 text-sm', tone === 'error' ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground')}>
+    <p role={tone === 'error' ? 'alert' : 'status'} className={cn('flex items-start gap-1.5 text-sm', tone === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
       <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {text}
     </p>
   )

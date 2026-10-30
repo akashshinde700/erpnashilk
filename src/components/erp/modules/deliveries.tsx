@@ -68,7 +68,7 @@ function SerialPick({ companyId, itemId, warehouseId, qty, value, onChange }: {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <span className={entered.length === need ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-amber-600 uppercase'}>
+        <span className={entered.length === need ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-warning uppercase'}>
           Serial nos — {entered.length} of {need} entered{warehouseId ? ` · ${avail.length} in stock` : ''}
         </span>
         {avail.length > 0 && (
@@ -406,7 +406,7 @@ export default function DeliveriesModule({ companyId }: { companyId: string }) {
                 title="Cancel challan?" message={`Cancel draft challan ${r.number}? It stays in the list as CANCELLED.`} tone="destructive" onConfirm={() => cancel(r)}
               />
               <ConfirmAction
-                trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><Trash2 className="h-3.5 w-3.5" /></Button>}
+                trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>}
                 title="Delete challan?" message={`Delete draft challan ${r.number}?`} tone="destructive" onConfirm={() => remove(r)}
               />
             </>

@@ -25,9 +25,9 @@ function TypeChip({ t }: { t: string }) {
   const isIn = t.endsWith('_IN')
   const isOut = t.endsWith('_OUT')
   const cls = isIn
-    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+    ? 'bg-success-soft text-success ring-1 ring-inset ring-success-border'
     : isOut
-      ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+      ? 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border'
       : 'bg-muted text-muted-foreground'
   return (
     <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap', cls)}>
@@ -87,12 +87,12 @@ export default function StockLedgerModule({ companyId }: { companyId: string }) 
     { key: 'warehouse', header: 'Warehouse', hideOnMobile: true, render: (r) => r.warehouse?.name || r.warehouse?.code || '—' },
     {
       key: 'qtyIn', header: 'In', className: 'text-right', render: (r) => (r.qtyIn || 0) > 0
-        ? <span className="text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">+{fmtNum(r.qtyIn)}</span>
+        ? <span className="text-success font-medium tabular-nums">+{fmtNum(r.qtyIn)}</span>
         : <span className="text-muted-foreground">—</span>,
     },
     {
       key: 'qtyOut', header: 'Out', className: 'text-right', render: (r) => (r.qtyOut || 0) > 0
-        ? <span className="text-red-600 dark:text-red-400 font-medium tabular-nums">-{fmtNum(r.qtyOut)}</span>
+        ? <span className="text-destructive font-medium tabular-nums">-{fmtNum(r.qtyOut)}</span>
         : <span className="text-muted-foreground">—</span>,
     },
     { key: 'rate', header: 'Rate', className: 'text-right', hideOnMobile: true, render: (r) => (r.rate != null ? <Money value={r.rate} /> : <span className="text-muted-foreground">—</span>) },
@@ -109,8 +109,8 @@ export default function StockLedgerModule({ companyId }: { companyId: string }) 
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4">
         <StatCard title="Entries" value={filtered.length} sub="In current filter" />
-        <StatCard title="Total In" value={fmtNum(totals.inQty)} sub="Sum of inward qty" toneClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" />
-        <StatCard title="Total Out" value={fmtNum(totals.outQty)} sub="Sum of outward qty" toneClass="bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" />
+        <StatCard title="Total In" value={fmtNum(totals.inQty)} sub="Sum of inward qty" toneClass="bg-success-soft text-success ring-1 ring-inset ring-success-border" />
+        <StatCard title="Total Out" value={fmtNum(totals.outQty)} sub="Sum of outward qty" toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" />
         <StatCard title="Movement Types" value={new Set(filtered.map((r) => r.type)).size} sub="Distinct transaction types" />
       </div>
 

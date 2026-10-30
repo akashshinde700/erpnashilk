@@ -165,7 +165,7 @@ export default function StockAdjustmentsModule({ companyId }: { companyId: strin
         const isOut = q < 0
         if (q === 0) return <span className="text-muted-foreground">—</span>
         return (
-          <span className={`tabular-nums font-medium ${isIn ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+          <span className={`tabular-nums font-medium ${isIn ? 'text-success' : 'text-destructive'}`}>
             {isIn ? '+' : ''}{fmtNum(q)}{r.item?.uom ? ` ${r.item.uom}` : ''}
           </span>
         )
@@ -213,7 +213,7 @@ export default function StockAdjustmentsModule({ companyId }: { companyId: strin
                 <Field label={idx === 0 ? 'Reason' : ''} className="sm:w-44">
                   <SelectInput value={l.reasonType} onChange={(v) => updateLine(l.key, { reasonType: v })} options={REASON_TYPES} />
                 </Field>
-                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-red-600 hover:text-red-700 shrink-0" onClick={() => removeLine(l.key)} aria-label="Remove line">
+                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive shrink-0" onClick={() => removeLine(l.key)} aria-label="Remove line">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
@@ -233,7 +233,7 @@ export default function StockAdjustmentsModule({ companyId }: { companyId: strin
                 <Field label={`Serial nos ${l.qty > 0 ? 'coming in' : 'to write off'} — ${serialList(l.serials).length} of ${Math.abs(l.qty)} entered`} className="sm:pl-2">
                   <Textarea rows={2} value={l.serials ?? ''} onChange={(e) => updateLine(l.key, { serials: e.target.value })}
                     placeholder="One serial / IMEI per line"
-                    className={serialList(l.serials).length !== Math.abs(l.qty) ? 'border-amber-500' : ''} />
+                    className={serialList(l.serials).length !== Math.abs(l.qty) ? 'border-warning-border' : ''} />
                 </Field>
               )}
               </div>

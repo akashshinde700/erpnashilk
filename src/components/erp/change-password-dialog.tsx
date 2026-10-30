@@ -58,7 +58,7 @@ export default function ChangePasswordDialog({ open, onOpenChange, userId, userN
 
   const strength = next.length === 0 ? 0 : next.length < 8 ? 1 : next.length < 10 ? 2 : /[0-9]/.test(next) && /[a-zA-Z]/.test(next) ? 3 : 2
   const strengthLabel = ['', 'Too short', 'Okay', 'Strong'][strength]
-  const strengthClass = ['', 'bg-red-400', 'bg-amber-400', 'bg-emerald-500'][strength]
+  const strengthClass = ['', 'bg-destructive', 'bg-brand-accent', 'bg-success'][strength]
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); else onOpenChange(true) }}>
@@ -108,10 +108,10 @@ export default function ChangePasswordDialog({ open, onOpenChange, userId, userN
               onChange={(e) => setConfirm(e.target.value)} placeholder="Repeat new password"
             />
           </div>
-          {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+          {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={close} disabled={saving}>Cancel</Button>
-            <Button type="submit" disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Button type="submit" disabled={saving} className="bg-primary text-primary-foreground hover:bg-primary/90">
               {saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
               Update password
             </Button>

@@ -60,10 +60,10 @@ const lim = (used: number, max: number) => `${used}/${max || '∞'}`
 const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`
 
 const STATE_STYLE: Record<OrgRow['state_'], string> = {
-  active: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  trial: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-  expired: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  suspended: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+  active: 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
+  trial: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
+  expired: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border',
+  suspended: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border',
 }
 
 function CopyChip({ text }: { text: string }) {
@@ -76,7 +76,7 @@ function CopyChip({ text }: { text: string }) {
       title="Copy"
     >
       {text}
-      {done ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+      {done ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
     </button>
   )
 }
@@ -130,7 +130,7 @@ export default function PlatformAdmin() {
   }
 
   const navBtn = (key: 'orgs' | 'plans', label: string) => (
-    <Button variant={tab === key ? 'default' : 'outline'} size="sm" className={cn('rounded-full', tab === key && 'bg-emerald-700 hover:bg-emerald-700/90')} onClick={() => setTab(key)}>
+    <Button variant={tab === key ? 'default' : 'outline'} size="sm" className={cn('rounded-full', tab === key && 'bg-primary hover:bg-primary/90')} onClick={() => setTab(key)}>
       {label}
     </Button>
   )
@@ -140,7 +140,7 @@ export default function PlatformAdmin() {
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-emerald-100 p-2 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Factory className="h-5 w-5" /></div>
+            <div className="rounded-lg bg-success-soft p-2 text-success"><Factory className="h-5 w-5" /></div>
             <div>
               <h1 className="text-lg font-semibold leading-tight">Platform Admin</h1>
               <p className="text-xs text-muted-foreground">{me.user.name} · {me.user.email}</p>
@@ -281,14 +281,14 @@ function Organizations() {
           <h2 className="text-xl font-semibold">Organizations ({rows.length}{hideFirms && firmCount ? ` of ${allRows.length}` : ''})</h2>
           <Button
             variant={hideFirms ? 'default' : 'outline'} size="sm"
-            className={cn('h-8 rounded-full px-3 text-xs', hideFirms && 'bg-emerald-700 hover:bg-emerald-700/90')}
+            className={cn('h-8 rounded-full px-3 text-xs', hideFirms && 'bg-primary hover:bg-primary/90')}
             onClick={() => setHideFirms((v) => !v)}
             title="Hide organizations that are firms of another organization"
           >
             {hideFirms ? 'Firms hidden' : 'Hide firms'}{firmCount ? ` (${firmCount})` : ''}
           </Button>
         </div>
-        <Button className="rounded-full bg-emerald-700 hover:bg-emerald-700/90" onClick={() => { setForm(EMPTY_CREATE); setCreateOpen(true) }}>
+        <Button className="rounded-full bg-primary hover:bg-primary/90" onClick={() => { setForm(EMPTY_CREATE); setCreateOpen(true) }}>
           <Plus className="mr-1.5 h-4 w-4" />Create organization
         </Button>
       </div>
@@ -319,12 +319,12 @@ function Organizations() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <p className="font-medium">{r.name}</p>
                     {!!r.linkedFirms && (
-                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950 dark:text-violet-300" title="Other organizations run by this organization's users">
+                      <span className="rounded-full bg-info-soft px-2 py-0.5 text-[10px] font-medium text-info" title="Other organizations run by this organization's users">
                         +{r.linkedFirms} {r.linkedFirms === 1 ? 'firm' : 'firms'}
                       </span>
                     )}
                   </div>
-                  {r.firmOf && <p className="text-xs text-violet-700 dark:text-violet-300">Firm of: {r.firmOf.name || '—'}</p>}
+                  {r.firmOf && <p className="text-xs text-info">Firm of: {r.firmOf.name || '—'}</p>}
                   <p className="text-xs text-muted-foreground">{r.slug}{r.city ? ` · ${r.city}` : ''}</p>
                 </TableCell>
                 <TableCell>
@@ -333,7 +333,7 @@ function Organizations() {
                 </TableCell>
                 <TableCell>
                   <SelectInput value={r.plan?.id || ''} options={planOpts} onChange={(v) => void act(r, { action: 'setPlan', planId: v || null }, 'Plan updated')} />
-                  {r.customized && <p className="mt-1 text-xs text-violet-700 dark:text-violet-300">Custom limits</p>}
+                  {r.customized && <p className="mt-1 text-xs text-info">Custom limits</p>}
                 </TableCell>
                 <TableCell>
                   <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', STATE_STYLE[r.state_])}>{r.state_}</span>
@@ -354,7 +354,7 @@ function Organizations() {
                     <Button variant="outline" size="sm" className={actBtn} onClick={() => { setPaidCycle(r.billingCycle); setPaidOrg(r) }}>Mark paid</Button>
                     <Button variant="outline" size="sm" className={actBtn} disabled={busy === r.id + 'extendTrial'} onClick={() => void act(r, { action: 'extendTrial', days: 7 }, 'Trial extended by 7 days')}>+7d trial</Button>
                     {r.status === 'SUSPENDED' ? (
-                      <Button variant="outline" size="sm" className={cn(actBtn, 'text-emerald-700')} onClick={() => void act(r, { action: 'activate' }, 'Organization re-activated')}>Activate</Button>
+                      <Button variant="outline" size="sm" className={cn(actBtn, 'text-success')} onClick={() => void act(r, { action: 'activate' }, 'Organization re-activated')}>Activate</Button>
                     ) : (
                       <ConfirmAction
                         trigger={<Button variant="outline" size="sm" className={actBtn}>Suspend</Button>}
@@ -376,7 +376,7 @@ function Organizations() {
                       onConfirm={() => void act(r, { action: 'resetPassword' })}
                     />
                     <Button variant="outline" size="sm" className={actBtn} onClick={() => void loginAs(r)}>Login as</Button>
-                    <Button variant="outline" size="sm" className={cn(actBtn, 'border-red-200 text-red-600 hover:text-red-700')} onClick={() => { setDeleteName(''); setDeleteOrg(r) }}>Delete</Button>
+                    <Button variant="outline" size="sm" className={cn(actBtn, 'border-danger-border text-destructive hover:text-destructive')} onClick={() => { setDeleteName(''); setDeleteOrg(r) }}>Delete</Button>
                   </div>
                 </TableCell>
               </TableRow>
@@ -454,7 +454,7 @@ function Organizations() {
       <Dialog open={!!deleteOrg} onOpenChange={(o) => { if (!o) setDeleteOrg(null) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-red-600">Delete {deleteOrg?.name}?</DialogTitle>
+            <DialogTitle className="text-destructive">Delete {deleteOrg?.name}?</DialogTitle>
             <DialogDescription>This permanently deletes the organization with all its users, items, documents, stock and audit history. It cannot be undone. Consider “Suspend” instead.</DialogDescription>
           </DialogHeader>
           <Field label={`Type "${deleteOrg?.name ?? ''}" to confirm`}>
@@ -520,7 +520,7 @@ function Plans() {
           <h2 className="text-xl font-semibold">Plans ({rows.length})</h2>
           <p className="text-sm text-muted-foreground">Limits apply to every organization on the plan unless customized. 0 = unlimited.</p>
         </div>
-        <Button className="rounded-full bg-emerald-700 hover:bg-emerald-700/90" onClick={() => { setEditId(null); setForm(EMPTY_PLAN); setOpen(true) }}>
+        <Button className="rounded-full bg-primary hover:bg-primary/90" onClick={() => { setEditId(null); setForm(EMPTY_PLAN); setOpen(true) }}>
           <Plus className="mr-1.5 h-4 w-4" />Plan
         </Button>
       </div>
@@ -559,7 +559,7 @@ function Plans() {
                       setOpen(true)
                     }}>Edit</Button>
                     <ConfirmAction
-                      trigger={<Button variant="outline" size="sm" className="h-8 rounded-full px-3 text-xs text-red-600">Delete</Button>}
+                      trigger={<Button variant="outline" size="sm" className="h-8 rounded-full px-3 text-xs text-destructive">Delete</Button>}
                       title={`Delete plan ${p.name}?`} message="Only possible when no organization uses it." tone="destructive" onConfirm={() => remove(p)}
                     />
                   </div>

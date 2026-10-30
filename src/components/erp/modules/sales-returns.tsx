@@ -280,7 +280,7 @@ export default function SalesReturnsModule({ companyId }: { companyId: string })
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'credit', header: 'Credit left', hideOnMobile: true, sortValue: (r) => left(r),
-      render: (r) => (left(r) > 0.005 ? <Money value={left(r)} className="font-medium text-amber-700 dark:text-amber-400" /> : <span className="text-muted-foreground">—</span>),
+      render: (r) => (left(r) > 0.005 ? <Money value={left(r)} className="font-medium text-warning" /> : <span className="text-muted-foreground">—</span>),
     },
     {
       key: 'actions', header: 'Actions',
@@ -295,7 +295,7 @@ export default function SalesReturnsModule({ companyId }: { companyId: string })
           <Button variant="ghost" size="sm" className="h-7" title="Print credit note" onClick={() => void printReturn(r)}><Printer className="h-3.5 w-3.5" /></Button>
           {r.status === 'POSTED' && (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600" title="Cancel credit note"><X className="h-3.5 w-3.5" /></Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive" title="Cancel credit note"><X className="h-3.5 w-3.5" /></Button>}
               title="Cancel credit note?" tone="destructive"
               message={`Cancel ${r.number}? The returned goods go back out of stock and the credit is removed from invoice ${r.invoice?.number || ''}.`}
               onConfirm={() => cancelReturn(r)}
@@ -371,7 +371,7 @@ export default function SalesReturnsModule({ companyId }: { companyId: string })
                     </div>
                     {isSerial(l.itemId) && l.qty > 0 && (
                       <div className="col-span-12 space-y-1 pl-2 border-l-2 border-muted">
-                        <span className={serialList(l.serials).length === l.qty ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-amber-600 uppercase'}>
+                        <span className={serialList(l.serials).length === l.qty ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-warning uppercase'}>
                           Serial nos coming back — {serialList(l.serials).length} of {l.qty}
                         </span>
                         <Textarea rows={2} value={l.serials} placeholder="One serial / IMEI per line"

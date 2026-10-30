@@ -272,7 +272,7 @@ export default function PurchaseReturnsModule({ companyId }: { companyId: string
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'refundDue', header: 'Refund due', hideOnMobile: true, sortValue: (r) => due(r),
-      render: (r) => (due(r) > 0.005 ? <Money value={due(r)} className="font-medium text-amber-700 dark:text-amber-400" /> : <span className="text-muted-foreground">—</span>),
+      render: (r) => (due(r) > 0.005 ? <Money value={due(r)} className="font-medium text-warning" /> : <span className="text-muted-foreground">—</span>),
     },
     {
       key: 'actions', header: 'Actions',
@@ -284,7 +284,7 @@ export default function PurchaseReturnsModule({ companyId }: { companyId: string
           </Button>
           {r.status !== 'CANCELLED' && (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600" title="Cancel"><X className="h-3.5 w-3.5" /></Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive" title="Cancel"><X className="h-3.5 w-3.5" /></Button>}
               title="Cancel debit note?" tone="destructive"
               message={`Cancel ${r.number}? The goods are taken back into stock and the bill's outstanding goes up again.`}
               onConfirm={() => cancelReturn(r)}
@@ -351,7 +351,7 @@ export default function PurchaseReturnsModule({ companyId }: { companyId: string
                       )}
                       {flagOf(l.itemId)?.trackSerial && (
                         <div className={flagOf(l.itemId)?.batchTracked ? '' : 'sm:col-span-2'}>
-                          <span className={serialList(l.serials).length === l.qty ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-amber-600 uppercase'}>
+                          <span className={serialList(l.serials).length === l.qty ? 'text-[10px] text-muted-foreground uppercase' : 'text-[10px] text-warning uppercase'}>
                             Serial nos going back — {serialList(l.serials).length} of {l.qty}
                           </span>
                           <Textarea rows={2} value={l.serials} placeholder="One serial / IMEI per line"

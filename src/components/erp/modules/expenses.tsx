@@ -232,7 +232,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
     {
       key: 'expenseType', header: 'Type', hideOnMobile: true,
       render: (r) => (
-        <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${r.expenseType === 'DIRECT' ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-muted text-muted-foreground'}`}>
+        <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${r.expenseType === 'DIRECT' ? 'bg-info-soft text-info ring-1 ring-inset ring-info-border' : 'bg-muted text-muted-foreground'}`}>
           {r.expenseType === 'DIRECT' ? 'Direct' : 'Indirect'}
         </span>
       ),
@@ -266,7 +266,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
             message={`Delete ${r.number} (${fmtMoney(r.amount)})? This cannot be undone.`}
             onConfirm={() => remove(r)}
             trigger={
-              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-600 hover:text-red-700" aria-label="Delete expense">
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" aria-label="Delete expense">
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             }
@@ -300,7 +300,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
           value={fmtMoney(allTotal)}
           sub={`${liveRows.length} expenses recorded`}
           icon={<Wallet className="h-4 w-4" />}
-          toneClass="bg-sky-100 text-sky-600"
+          toneClass="bg-info-soft text-info"
         />
       </div>
       <DataTable
@@ -354,7 +354,7 @@ export default function ExpensesModule({ companyId }: { companyId: string }) {
           </Field>
           <Field label="Paid from account">
             <SelectInput value={form.accountId} onChange={(v) => setForm((f) => ({ ...f, accountId: v }))} options={accountOpts} />
-            <p className={`mt-1 text-[11px] ${form.accountId || forMode.fallback ? 'text-muted-foreground' : 'text-red-600'}`}>{accountHint}</p>
+            <p className={`mt-1 text-[11px] ${form.accountId || forMode.fallback ? 'text-muted-foreground' : 'text-destructive'}`}>{accountHint}</p>
           </Field>
           <Field label="Paid To">
             <TextInput

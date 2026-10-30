@@ -183,7 +183,7 @@ export function ItemPicker({ items, value, onChange, onCreate, placeholder = 'Se
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => choose(shown.length)}
               onMouseEnter={() => setHi(shown.length)}
-              className={cn('mt-1 flex w-full items-center gap-1.5 rounded border-t px-2 py-1.5 text-left text-emerald-700 dark:text-emerald-400', hi === shown.length && 'bg-accent')}
+              className={cn('mt-1 flex w-full items-center gap-1.5 rounded border-t px-2 py-1.5 text-left text-success', hi === shown.length && 'bg-accent')}
             >
               <Plus className="h-3.5 w-3.5" />Add new item “{q.trim()}”
             </button>
@@ -254,8 +254,8 @@ export function QuickItemDialog({ open, onOpenChange, initialName, items, defaul
             <TextInput value={name} onChange={(e) => setName(e.target.value)} autoFocus />
           </Field>
           {(exact || similar.length > 0) && (
-            <div className="sm:col-span-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
-              <p className="mb-2 flex items-center gap-1.5 font-medium text-amber-800 dark:text-amber-300">
+            <div className="sm:col-span-2 rounded-lg border border-warning-border bg-warning-soft p-3 text-sm dark:border-warning-border dark:bg-warning-soft">
+              <p className="mb-2 flex items-center gap-1.5 font-medium text-warning">
                 <AlertTriangle className="h-4 w-4" />{exact ? 'This item already exists' : 'Similar items already exist — check the spelling'}
               </p>
               <div className="grid gap-1.5">

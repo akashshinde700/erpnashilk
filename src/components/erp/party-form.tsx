@@ -133,7 +133,7 @@ function Section({ icon: Icon, title, hint, children }: { icon: React.ComponentT
   return (
     <section className="rounded-xl border p-4">
       <div className="mb-4 flex items-start gap-3">
-        <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Icon className="h-4 w-4" /></div>
+        <div className="rounded-lg bg-success-soft p-2 text-success"><Icon className="h-4 w-4" /></div>
         <div>
           <p className="text-sm font-semibold leading-tight">{title}</p>
           <p className="text-xs text-muted-foreground">{hint}</p>
@@ -394,7 +394,7 @@ export function PartyFormDialog({ open, onOpenChange, kind, editing, companyId, 
 
         <section className="rounded-xl border p-4">
           <div className="mb-4 flex items-start gap-3">
-            <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><FileText className="h-4 w-4" /></div>
+            <div className="rounded-lg bg-success-soft p-2 text-success"><FileText className="h-4 w-4" /></div>
             <div>
               <p className="text-sm font-semibold leading-tight">Notes</p>
               <p className="text-xs text-muted-foreground">Internal remarks — never printed on documents</p>

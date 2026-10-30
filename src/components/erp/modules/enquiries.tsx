@@ -132,7 +132,7 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
           </Button>
           {r.status === 'OPEN' && (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>}
               title="Delete enquiry?" message={`Delete enquiry ${r.number}? This cannot be undone.`}
               tone="destructive" onConfirm={() => remove(r)}
             />
@@ -189,7 +189,7 @@ export default function EnquiriesModule({ companyId }: { companyId: string }) {
               />
               <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                 onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                <Trash2 className="h-3.5 w-3.5 text-destructive" />
               </Button>
             </div>
           ))}

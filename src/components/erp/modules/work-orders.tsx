@@ -183,7 +183,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
               title={`Complete WO ${r.number}?`}
               message={`Close ${r.number} at produced qty ${fmtNum(r.producedQty)} of planned ${fmtNum(r.plannedQty)}? No further production can be reported against it.`}
               onConfirm={() => void action(r, 'complete')}
-              trigger={<Button size="sm" variant="ghost" className="h-7 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Complete</Button>}
+              trigger={<Button size="sm" variant="ghost" className="h-7 text-success"><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Complete</Button>}
             />
           )}
           <Button size="sm" variant="ghost" className="h-7" onClick={() => void openDetail(r)}>
@@ -195,7 +195,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
               message="A cancelled work order cannot be released again."
               tone="destructive"
               onConfirm={() => void action(r, 'cancel')}
-              trigger={<Button size="sm" variant="ghost" className="h-7 text-red-600 hover:text-red-700">Cancel</Button>}
+              trigger={<Button size="sm" variant="ghost" className="h-7 text-destructive hover:text-destructive">Cancel</Button>}
             />
           )}
         </div>
@@ -332,7 +332,7 @@ export default function WorkOrdersModule({ companyId }: { companyId: string }) {
                               <TableCell className="text-right tabular-nums">{fmtNum(c.qty)}</TableCell>
                               <TableCell className="text-right tabular-nums">{fmtNum(c.scrapPct || 0)}</TableCell>
                               <TableCell className="text-right tabular-nums font-medium">{fmtNum(required)}</TableCell>
-                              <TableCell className={cn('text-right tabular-nums', consumed + 0.001 >= required ? 'text-emerald-600' : 'text-muted-foreground')}>{fmtNum(consumed)}</TableCell>
+                              <TableCell className={cn('text-right tabular-nums', consumed + 0.001 >= required ? 'text-success' : 'text-muted-foreground')}>{fmtNum(consumed)}</TableCell>
                             </TableRow>
                           )
                         })}

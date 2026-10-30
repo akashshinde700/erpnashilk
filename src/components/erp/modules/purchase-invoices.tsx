@@ -387,7 +387,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
       render: (r) => {
         const overdue = !!r.dueDate && !['PAID', 'CANCELLED'].includes(r.status) && r.dueDate.slice(0, 10) < today()
         return overdue
-          ? <span className="whitespace-nowrap text-red-600 font-medium" title="Overdue">{fmtDate(r.dueDate)}</span>
+          ? <span className="whitespace-nowrap text-destructive font-medium" title="Overdue">{fmtDate(r.dueDate)}</span>
           : <DateCell value={r.dueDate} />
       },
     },
@@ -398,7 +398,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
       key: 'outstanding', header: 'Outstanding', sortValue: (r) => r2((r.grandTotal || 0) - (r.paidAmount || 0)), sum: true, sumFormat: 'money',
       render: (r) => {
         const out = r2((r.grandTotal || 0) - (r.paidAmount || 0))
-        return <Money value={out} className={out > 0 ? 'text-amber-600 font-medium' : 'text-emerald-600'} />
+        return <Money value={out} className={out > 0 ? 'text-warning font-medium' : 'text-success'} />
       },
     },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
@@ -429,7 +429,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
               </Button>
               {(r.paidAmount || 0) <= 0 && (
                 <ConfirmAction
-                  trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><X className="h-3.5 w-3.5" /></Button>}
+                  trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><X className="h-3.5 w-3.5" /></Button>}
                   title="Cancel invoice?" message={`Cancel purchase invoice ${r.number}?`} tone="destructive"
                   onConfirm={() => cancelInvoice(r)}
                 />
@@ -512,7 +512,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
               <div className="col-span-1 flex justify-end">
                 <Button type="button" variant="ghost" size="sm" disabled={lines.length <= 1}
                   onClick={() => setLines((ls) => ls.filter((_, i) => i !== idx))}>
-                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                 </Button>
               </div>
               {direct && receiveStock && flagsOf(l.itemId).batch && (
@@ -538,7 +538,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
                   </span>
                   <Textarea rows={3} value={l.serials ?? ''} onChange={(e) => setLines((ls) => ls.map((x, i) => (i === idx ? { ...x, serials: e.target.value } : x)))}
                     placeholder="One serial number per line (scan or paste)"
-                    className={serialList(l.serials).length !== toBaseQty(l.qty, l.unit, itemRow(l.itemId)) ? 'border-amber-500' : ''} />
+                    className={serialList(l.serials).length !== toBaseQty(l.qty, l.unit, itemRow(l.itemId)) ? 'border-warning-border' : ''} />
                 </div>
               )}
             </div>
@@ -546,7 +546,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
           {direct && (
             <div className="flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm">
               <label className="flex items-center gap-2">
-                <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={receiveStock} onChange={(e) => setReceiveStock(e.target.checked)} />
+                <input type="checkbox" className="h-4 w-4 accent-[var(--primary)]" checked={receiveStock} onChange={(e) => setReceiveStock(e.target.checked)} />
                 Add these items to stock (no GRN)
               </label>
               {receiveStock && (
@@ -585,7 +585,7 @@ export default function PurchaseInvoicesModule({ companyId }: { companyId: strin
                   ]}
                 />
                 {paidNow > 0 && !paidAccountId && !paidFor.fallback && (
-                  <p className="mt-1 text-[11px] text-red-600">No {paidFor.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to pay by {paidMode}.</p>
+                  <p className="mt-1 text-[11px] text-destructive">No {paidFor.type === 'BANK' ? 'bank' : 'cash'} account — add one in Cash & Bank to pay by {paidMode}.</p>
                 )}
               </Field>
               {paidMode === 'CHEQUE' && (

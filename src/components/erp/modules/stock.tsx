@@ -60,10 +60,10 @@ const dayFmt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('en-IN
 function ExpiryBadge({ days }: { days?: number | null }) {
   if (days === null || days === undefined) return <span className="text-muted-foreground text-xs">No expiry</span>
   if (days < 0) {
-    return <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-950 dark:text-red-300 whitespace-nowrap">EXPIRED {Math.abs(days)}d</span>
+    return <span className="inline-flex rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-destructive whitespace-nowrap">EXPIRED {Math.abs(days)}d</span>
   }
   if (days <= 30) {
-    return <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300 whitespace-nowrap">{days === 0 ? 'Expires today' : `${days}d left`}</span>
+    return <span className="inline-flex rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-medium text-warning whitespace-nowrap">{days === 0 ? 'Expires today' : `${days}d left`}</span>
   }
   return <span className="text-xs text-muted-foreground whitespace-nowrap">{days}d left</span>
 }
@@ -90,8 +90,8 @@ function BatchesTab({ companyId }: { companyId: string }) {
     <div>
       <div className="grid gap-3 sm:grid-cols-3 mb-4">
         <StatCard title="Batches in stock" value={rows.length} sub={range === '__ALL__' ? 'All batches with qty' : `Expiring within ${range} days`} />
-        <StatCard title="Expired" value={expired} sub="Past expiry, still in stock" toneClass="bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" icon={<AlertTriangle className="h-4 w-4" />} />
-        <StatCard title="Expiring ≤ 30 days" value={soon} sub="Sell / use first" toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" />
+        <StatCard title="Expired" value={expired} sub="Past expiry, still in stock" toneClass="bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border" icon={<AlertTriangle className="h-4 w-4" />} />
+        <StatCard title="Expiring ≤ 30 days" value={soon} sub="Sell / use first" toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" />
       </div>
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <div className="w-56">
@@ -235,7 +235,7 @@ function BalancesTab({ companyId }: { companyId: string }) {
           <div className="flex items-center justify-end gap-2">
             <span className="tabular-nums text-muted-foreground">{rl > 0 ? fmtNum(rl) : '—'}</span>
             {low && (
-              <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-950 dark:text-red-300">
+              <span className="inline-flex items-center rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-destructive">
                 LOW
               </span>
             )}
@@ -249,8 +249,8 @@ function BalancesTab({ companyId }: { companyId: string }) {
     <div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4">
         <StatCard title="Stock Value" value={fmtMoney(totalValue)} sub="At moving average cost" toneClass="bg-primary/10 text-primary" icon={<Boxes className="h-4 w-4" />} />
-        <StatCard title="SKUs In Stock" value={skuCount} sub="Distinct items with balance" toneClass="bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300" icon={<Warehouse className="h-4 w-4" />} />
-        <StatCard title="Low Stock" value={lowStockCount} sub="At / below reorder level" toneClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" icon={<AlertTriangle className="h-4 w-4" />} />
+        <StatCard title="SKUs In Stock" value={skuCount} sub="Distinct items with balance" toneClass="bg-info-soft text-info ring-1 ring-inset ring-info-border" icon={<Warehouse className="h-4 w-4" />} />
+        <StatCard title="Low Stock" value={lowStockCount} sub="At / below reorder level" toneClass="bg-warning-soft text-warning ring-1 ring-inset ring-warning-border" icon={<AlertTriangle className="h-4 w-4" />} />
         <StatCard title="Balance Rows" value={filtered.length} sub="Item × warehouse lines" />
       </div>
 

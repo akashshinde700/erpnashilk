@@ -39,10 +39,10 @@ const NOTE_MODES: Record<string, string> = { CREDIT_NOTE: 'Credit Note', DEBIT_N
 // Invoice select value for "Advance (no invoice yet)" — Payment In only
 const ADVANCE_OPTION = '__ADVANCE__'
 const CHEQUE_TONE: Record<string, string> = {
-  PENDING: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
-  DEPOSITED: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
-  CLEARED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  BOUNCED: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+  PENDING: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border',
+  DEPOSITED: 'bg-info-soft text-info ring-1 ring-inset ring-info-border',
+  CLEARED: 'bg-success-soft text-success ring-1 ring-inset ring-success-border',
+  BOUNCED: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border',
 }
 const CHEQUE_LABEL: Record<string, string> = { PENDING: 'Post-dated', DEPOSITED: 'Deposited', CLEARED: 'Cleared', BOUNCED: 'Bounced' }
 
@@ -218,7 +218,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
     {
       key: 'type', header: 'Type',
       render: (r) => (
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${r.type === 'RECEIPT' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'}`}>
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${r.type === 'RECEIPT' ? 'bg-success-soft text-success ring-1 ring-inset ring-success-border' : 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border'}`}>
           {r.type === 'RECEIPT' ? 'In' : 'Out'}
         </span>
       ),
@@ -265,7 +265,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
                 {(r.chequeStatus === 'PENDING' || r.chequeStatus === 'DEPOSITED') && (
                   <DropdownMenuItem onClick={() => { setActionDate(today()); setChequeAction({ row: r, action: 'clear' }) }}>Mark cleared</DropdownMenuItem>
                 )}
-                <DropdownMenuItem className="text-red-600" onClick={() => { setActionDate(today()); setChequeAction({ row: r, action: 'bounce' }) }}>Mark bounced</DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive" onClick={() => { setActionDate(today()); setChequeAction({ row: r, action: 'bounce' }) }}>Mark bounced</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -274,7 +274,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
           )}
           {r.kind === 'ADVANCE_APPLIED' || r.kind === 'CREDIT_APPLIED' ? (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600">Remove</Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive">Remove</Button>}
               title="Remove application?" message={`Remove ${r.number}? ₹${r.amount} goes back to ${r.sourceNumber || 'its source'} and the invoice becomes outstanding again. No money moves.`}
               tone="destructive" onConfirm={() => remove(r)}
             />
@@ -282,7 +282,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
             <span className="text-[11px] text-muted-foreground" title="Cancel the credit/debit note to reverse this">{NOTE_MODES[r.mode]}</span>
           ) : (
             <ConfirmAction
-              trigger={<Button variant="ghost" size="sm" className="h-7 text-red-600"><Trash2 className="h-3.5 w-3.5" /></Button>}
+              trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>}
               title="Void payment?" message={`Void payment ${r.number} of ${r.amount}? Linked invoice balances will be updated.`}
               tone="destructive" onConfirm={() => remove(r)}
             />
@@ -364,7 +364,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
           <Field label="Mode"><SelectInput value={mode} onChange={(m) => { setMode(m); setAccountId('') }} options={PAYMENT_MODES.map((m) => ({ value: m, label: m }))} /></Field>
           <Field label={type === 'RECEIPT' ? 'Into account' : 'From account'}>
             <SelectInput value={accountId} onChange={setAccountId} options={accountOpts} />
-            <p className={`mt-1 text-[11px] ${forMode.fallback || accountId ? 'text-muted-foreground' : 'text-red-600'}`}>
+            <p className={`mt-1 text-[11px] ${forMode.fallback || accountId ? 'text-muted-foreground' : 'text-destructive'}`}>
               {accountId
                 ? `Recorded in ${forMode.matching.find((a) => a.id === accountId)?.name ?? 'the chosen account'}`
                 : forMode.fallback
@@ -377,7 +377,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
               <Field label="Cheque no."><TextInput value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} placeholder="e.g. 004512" /></Field>
               <Field label="Cheque date"><DateInput value={chequeDate} onChange={setChequeDate} /></Field>
               {chequeDate > today() && (
-                <p className="sm:col-span-2 text-[11px] text-amber-600">Post-dated cheque — it will not count in the bank balance until you mark it cleared.</p>
+                <p className="sm:col-span-2 text-[11px] text-warning">Post-dated cheque — it will not count in the bank balance until you mark it cleared.</p>
               )}
             </>
           )}
