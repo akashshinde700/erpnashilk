@@ -64,6 +64,9 @@ export async function POST(req: Request) {
     if (!warehouse) throw new ApiError(warehouseId ? 'Warehouse not found' : 'Create a warehouse first', 404)
 
     const created = await db.$transaction(async (tx) => {
+      // Same row lock as production entries: it serializes two issues against one work order, so the
+      // availability check, the status flip to IN_PROGRESS and the stock posting stay consistent.
+      await tx.workOrder.updateMany({ where: { id: workOrderId, companyId }, data: { producedQty: { increment: 0 } } })
       const wo = await tx.workOrder.findFirst({ where: { id: workOrderId, companyId } })
       if (!wo) throw new ApiError('Work order not found', 404)
       if (wo.status !== 'RELEASED' && wo.status !== 'IN_PROGRESS') {
