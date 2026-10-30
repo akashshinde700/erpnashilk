@@ -86,6 +86,41 @@ test.describe('Tally + e-Invoice export', () => {
     await expect(menu.getByText('Mark as sent to Tally')).toBeVisible()
   })
 
+  test('the Tally importer .bat and masters XML are downloadable', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'Sales Invoices')
+
+    // The .bat ships as a static asset: drag an invoice XML onto it to post into Tally.
+    const menu = await openExportMenu(page, 'INV/26-27/0001')
+    const batPromise = page.waitForEvent('download')
+    await menu.getByText('Tally importer (.bat)').click()
+    const bat = await batPromise
+    expect(bat.suggestedFilename()).toBe('Tally-Import.bat')
+    const script = await readFile(await bat.path(), 'latin1')
+    expect(script).toContain('ManuFlow ERP')
+    expect(script).toContain('http://127.0.0.1:9000')
+    expect(script).toContain('curl -s -m 30 -X POST')
+    expect(script).toContain('<CREATED>')
+    expect(script).toContain('TallyPrime acts as')
+
+    // The masters file creates the ledgers the voucher names.
+    const menu2 = await openExportMenu(page, 'INV/26-27/0001')
+    const mastersPromise = page.waitForEvent('download')
+    await menu2.getByText('Tally masters (XML)').click()
+    const masters = await mastersPromise
+    expect(masters.suggestedFilename()).toMatch(/^tally-masters-.*\.xml$/)
+    const xml = await readFile(await masters.path(), 'utf8')
+    expect(xml).toContain('<REPORTNAME>All Masters</REPORTNAME>')
+    expect(xml).toContain('<LEDGER NAME="Sales">')
+    await expect(page.getByText('Tally masters downloaded')).toBeVisible()
+
+    // Same two entry points live in Settings → Tally export.
+    await openModule(page, 'Settings')
+    const tallyCard = page.locator('[data-slot="card"]').filter({ has: page.locator('[data-slot="card-title"]', { hasText: 'Tally export' }) })
+    await expect(tallyCard.getByRole('link', { name: 'Tally importer (.bat)' })).toHaveAttribute('href', '/downloads/tally/Tally-Import.bat')
+    await expect(tallyCard.getByRole('button', { name: 'Tally masters (XML)' })).toBeVisible()
+  })
+
   test('e-Invoice JSON matches the NIC bulk-upload shape and opens the portal', async ({ page, store, context }) => {
     await loginFast(page, store)
     await openModule(page, 'Sales Invoices')

@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { Column, DataTable, Field, PageHeader, SectionCard, StatusBadge, TextInput } from '@/components/erp/kit'
 import { fmtDateTime } from '@/lib/erp-constants'
 import { api, apiPatch, useList } from '@/lib/use-api'
+import { TALLY_IMPORT_BAT_PATH } from '@/lib/tally/masters'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface CompanyProfile {
@@ -276,6 +277,7 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
   const [saving, setSaving] = React.useState(false)
   const [markingAll, setMarkingAll] = React.useState(false)
   const [downloading, setDownloading] = React.useState(false)
+  const [downloadingMasters, setDownloadingMasters] = React.useState(false)
 
   const isAdmin = React.useMemo(() => {
     try {
@@ -420,6 +422,37 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
       return false
     } finally {
       setDownloading(false)
+    }
+  }
+
+  /** All Masters file for TallyPrime: the ledgers, GST ledgers, units and Sundry Debtors that every imported voucher names. */
+  async function downloadMasters() {
+    setDownloadingMasters(true)
+    try {
+      const res = await fetch(`/api/tally/masters?companyId=${encodeURIComponent(companyId)}`, { credentials: 'same-origin' })
+      if (!res.ok) {
+        let msg = `Masters file failed (${res.status})`
+        try {
+          const j = (await res.json()) as { error?: { message?: string } }
+          if (j?.error?.message) msg = j.error.message
+        } catch { /* non-JSON error */ }
+        throw new Error(msg)
+      }
+      const blob = await res.blob()
+      const named = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')?.[1]
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = named || 'tally-masters.xml'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.success('Tally masters downloaded', { description: `${a.download} — import it once in TallyPrime (Import Data → Masters).` })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not build the Tally masters file')
+    } finally {
+      setDownloadingMasters(false)
     }
   }
 
@@ -617,6 +650,19 @@ export default function SettingsModule({ companyId }: { companyId: string }) {
             Used by the Tally import file on every sales invoice. Tally never creates a master on import, so these
             names must match the ledgers of that Tally company exactly. Blank = the standard default.
           </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" asChild>
+              <a href={TALLY_IMPORT_BAT_PATH} download="Tally-Import.bat">
+                <Download className="h-4 w-4 mr-1.5" />Tally importer (.bat)
+              </a>
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void downloadMasters()} disabled={downloadingMasters}>
+              <Download className="h-4 w-4 mr-1.5" />{downloadingMasters ? 'Building…' : 'Tally masters (XML)'}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Drag an invoice XML onto the .bat to post it straight into Tally; import the masters file once.
+            </span>
+          </div>
         </SectionCard>
 
         <SectionCard

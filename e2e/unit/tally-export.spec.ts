@@ -9,6 +9,7 @@
 import { test, expect } from '@playwright/test'
 import { buildTallyVoucher, ledgerNames, voucherFileName, voucherToXml } from '../../src/lib/tally/voucher'
 import { buildEInvoiceJson, validateForIrp } from '../../src/lib/einvoice'
+import { buildMastersXml, mastersFileName } from '../../src/lib/tally/masters'
 
 const company = {
   name: 'Nashilk Precision Works',
@@ -152,5 +153,60 @@ test.describe('e-Invoice JSON builder', () => {
       company,
     )
     expect(doc.ItemList[0].IsServc).toBe('Y')
+  })
+})
+
+test.describe('Tally masters file', () => {
+  const ledgers = {
+    sales: 'Sales',
+    cgst: 'Central Tax on Sales @ 9%',
+    sgst: 'State Tax on Sales @ 9%',
+    igst: 'Integrated Tax on Sales @ 18%',
+    cess: 'Cess on Sales',
+    freight: 'Transport & Freight Charges',
+    roundOff: 'Round Off',
+  }
+
+  test('creates every ledger the voucher names, under the right groups', () => {
+    const xml = buildMastersXml(
+      {
+        ledgers,
+        units: ['NOS', 'KGS'],
+        parties: [{ name: 'Precision Tools Pvt Ltd', gstin: '27AABCP1234C1ZU' }],
+      },
+      'Nashilk Precision Works',
+    )
+    expect(xml).toContain('<REPORTNAME>All Masters</REPORTNAME>')
+    expect(xml).toContain('<SVCURRENTCOMPANY>Nashilk Precision Works</SVCURRENTCOMPANY>')
+    expect(xml).toContain('<LEDGER NAME="Sales" ACTION="Create">')
+    expect(xml).toContain('<PARENT>Sales Accounts</PARENT>')
+    expect(xml).toContain('<PARENT>Duties &amp; Taxes</PARENT>')
+    expect(xml).toContain('<LEDGER NAME="Transport &amp; Freight Charges" ACTION="Create">')
+    expect(xml).toContain('<PARENT>Indirect Expenses</PARENT>')
+    // Units from the item master, plus the customer as a Sundry Debtor.
+    expect(xml).toContain('<UNIT NAME="NOS" ACTION="Create">')
+    expect(xml).toContain('<UNIT NAME="KGS" ACTION="Create">')
+    expect(xml).toContain('<LEDGER NAME="Precision Tools Pvt Ltd" ACTION="Create">')
+    expect(xml).toContain('<PARENT>Sundry Debtors</PARENT>')
+  })
+
+  test('honours the configured ledger names and the party override', () => {
+    const xml = buildMastersXml({
+      ledgers: { ...ledgers, sales: 'Job Work Income' },
+      units: ['nos'],
+      parties: [{ name: 'Precision Tools Pvt Ltd', tallyLedgerName: 'PRECISION TOOLS' }],
+    })
+    expect(xml).toContain('<LEDGER NAME="Job Work Income" ACTION="Create">')
+    expect(xml).toContain('<LEDGER NAME="PRECISION TOOLS" ACTION="Create">')
+    expect(xml).not.toContain('<LEDGER NAME="Precision Tools Pvt Ltd"')
+    // units are normalised and de-duplicated
+    expect(xml.match(/<UNIT NAME="NOS"/g)?.length).toBe(1)
+  })
+
+  test('does not create the same ledger twice', () => {
+    const xml = buildMastersXml({ ledgers: { ...ledgers, sgst: 'GST Output' , cgst: 'GST Output' }, units: [] })
+    expect(xml.match(/<LEDGER NAME="GST Output"/g)?.length).toBe(1)
+    expect(xml).toContain('<UNIT NAME="NOS" ACTION="Create">') // default unit when the master is empty
+    expect(mastersFileName('Nashilk Precision Works')).toBe('tally-masters-nashilk-precision-works.xml')
   })
 })

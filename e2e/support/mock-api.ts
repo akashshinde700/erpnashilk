@@ -528,6 +528,20 @@ export function makeApi(store: Store) {
       }
     }
 
+    // All-Masters import for TallyPrime (Settings → Tally export / invoice menu)
+    if (head === 'tally' && second === 'masters') {
+      const company = (col('companies') as Json[])[0] || {}
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>` +
+        `<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC><REQUESTDATA>` +
+        `<TALLYMESSAGE><LEDGER NAME="Sales"><PARENT>Sales Accounts</PARENT></LEDGER></TALLYMESSAGE>` +
+        `<TALLYMESSAGE><LEDGER NAME="Central Tax on Sales @ 9%"><PARENT>Duties &amp; Taxes</PARENT></LEDGER></TALLYMESSAGE>` +
+        `</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`
+      return {
+        status: 200, body: {},
+        file: { body: xml, contentType: 'application/xml', filename: `tally-masters-${String(company.name || 'company').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.xml` },
+      }
+    }
+
     // ---------------- Tally / e-Invoice exports ----------------
     // Mirrors src/app/api/sales-invoices/[id]/{tally,einvoice}/route.ts.
     if (head === 'sales-invoices' && second && (third === 'tally' || third === 'einvoice')) {
