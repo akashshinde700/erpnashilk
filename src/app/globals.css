@@ -314,6 +314,84 @@
   box-shadow: var(--shadow-2);
 }
 
+/* ------------------------------------------------------------------ *
+ * Mobile / PWA plumbing
+ * ------------------------------------------------------------------ */
+
+/* Phones with a notch/home indicator: keep controls inside the safe area. */
+@utility pt-safe {
+  padding-top: max(0px, env(safe-area-inset-top));
+}
+@utility pb-safe {
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
+}
+@utility px-safe {
+  padding-left: max(0px, env(safe-area-inset-left));
+  padding-right: max(0px, env(safe-area-inset-right));
+}
+/* A sheet/drawer pinned to the bottom edge (mobile action bars, bottom nav). */
+@utility pb-safe-4 {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+/* Full-height surfaces: dvh tracks the visible area as browser chrome and the on-screen
+   keyboard appear, unlike vh. The vh fallback above it covers older engines. */
+@utility h-screen-safe {
+  height: 100vh;
+  height: 100dvh;
+}
+@utility min-h-screen-safe {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+@utility max-h-screen-safe {
+  max-height: 100vh;
+  max-height: 100dvh;
+}
+
+/* Minimum comfortable touch target (WCAG 2.5.8 asks for 24px; 44px is the iOS/Android norm).
+   Applied to icon-only controls so rows of small buttons stay tappable on a phone. */
+@utility touch-target {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+}
+
+/*
+ * Horizontally scrollable tables: a soft shadow on whichever side has more content, so a phone
+ * user can see the table continues instead of guessing. Pure CSS scroll-state detection.
+ */
+@utility scroll-shadow-x {
+  background:
+    linear-gradient(to right, var(--card) 30%, color-mix(in oklab, var(--card) 0%, transparent)) left center,
+    linear-gradient(to left, var(--card) 30%, color-mix(in oklab, var(--card) 0%, transparent)) right center,
+    radial-gradient(farthest-side at 0% 50%, oklch(0 0 0 / 14%), transparent) left center,
+    radial-gradient(farthest-side at 100% 50%, oklch(0 0 0 / 14%), transparent) right center;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* iOS Safari zooms the whole page when a focused field is under 16px. Keep form text at 16px
+   on touch-sized screens, then restore the compact size on larger pointers. */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px;
+    /* 36px desktop inputs are hard to hit with a thumb; 44px is the platform norm. */
+    min-height: 2.75rem;
+  }
+  /* Radix select/combobox triggers are buttons, so they need the height rule separately. */
+  [role='combobox'] {
+    min-height: 2.75rem;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    /* Larger hit area without changing the visual box. */
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+}
+
 @layer utilities {
 
   /* Sidebar module list: thin, always-visible scrollbar */

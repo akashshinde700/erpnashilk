@@ -230,7 +230,7 @@ function Tot({ k, v }: { k: string; v: string }) {
 
 const CSS = `
   html, body { background: #f4f4f5 !important; color: #111 !important; }
-  .si-page { min-height: 100vh; padding: 16px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #111; }
+  .si-page { min-height: 100vh; min-height: 100dvh; padding: 16px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #111; }
   .si-toolbar { max-width: 860px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: #444; }
   .si-print-btn { background: #047857; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
   .si-print-btn:hover { background: #065f46; }

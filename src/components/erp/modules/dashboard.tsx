@@ -333,7 +333,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
   if (loading && !data) {
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={`kpi-${i}`} className="h-[86px] rounded-xl" />
           ))}
@@ -364,7 +364,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
 
       {/* Money row — You'll Receive / You'll Pay / Cash / Bank */}
       {visibleMoney.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-4">
           {visibleMoney.map((c) => (
             <button
               key={c.title}
@@ -380,7 +380,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
       )}
 
       {/* KPI cards — clickable, drill into the owning module */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-4">
         {visibleStats.map((s) => (
           <button
             key={s.title}

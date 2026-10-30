@@ -639,7 +639,7 @@ export default function ItemsModule({ companyId }: { companyId: string }) {
         wide
       >
         <Tabs value={formTab} onValueChange={setFormTab}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-1 min-[420px]:grid-cols-3">
             <TabsTrigger value="basic">Basic</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
             <TabsTrigger value="stock">Stock</TabsTrigger>
