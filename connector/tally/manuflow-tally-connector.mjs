@@ -13,10 +13,17 @@
  *   node manuflow-tally-connector.mjs forget
  *
  * What it sends to Tally: TALLY_HEALTH_REQUEST below (an Export of a report that does not exist, so Tally answers with
- * a short status reply) and, when ManuFlow asks for one of four NAMED jobs, the matching fixed Export request built
- * here (company list; Sundry Debtors / Sundry Creditors ledgers; stock items). Every request is TALLYREQUEST=Export:
- * nothing is ever created, changed or deleted in Tally. The Tally address is set here, on this computer, and must be
- * this computer or a private network address; ManuFlow cannot send it an address, XML or any other command.
+ * a short status reply) and, when ManuFlow asks for one of four NAMED read jobs, the matching fixed Export request
+ * built here (company list; Sundry Debtors / Sundry Creditors ledgers; stock items).
+ *
+ * The ONE write path is the `push-voucher` job: ManuFlow builds one Tally Import envelope from a sales invoice and
+ * sends it with the job, and this program posts that document to Tally unchanged after checking it (a single
+ * `<VOUCHER ACTION="Create">`, no DTD / entities, ≤ 256 KB). The connector never builds an Import request itself,
+ * never alters the document and never invents an address — a job without a well-formed envelope is refused.
+ * Push stays off unless the ManuFlow server was started with TALLY_CONNECTOR_PUSH=1.
+ *
+ * The Tally address is set here, on this computer, and must be this computer or a private network address; ManuFlow
+ * cannot send it an address.
  * NOTE: the export requests and the field names read from Tally's replies have only been tested against a mock
  * server, not a real TallyPrime.
  *
@@ -277,6 +284,67 @@ function decodeBody(buf) {
   return new TextDecoder('utf-8').decode(buf)
 }
 
+// ---------------------------------------------------------------- push (the only write)
+
+export const PUSH_MAX_BYTES = 256 * 1024
+const PUSH_TIMEOUT_MS = 60 * 1000
+
+/** Why a pushed envelope is not acceptable, or null. Repeated here so the connector never trusts the server blindly. */
+export function pushProblem(xml) {
+  if (typeof xml !== 'string' || !xml.trim()) return 'empty'
+  if (Buffer.byteLength(xml, 'utf8') > PUSH_MAX_BYTES) return 'too_large'
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) return 'unsafe_xml'
+  if (!/<TALLYREQUEST>\s*Import Data\s*<\/TALLYREQUEST>/i.test(xml)) return 'not_an_import'
+  if (!/<ENVELOPE[\s>]/i.test(xml) || !/<\/ENVELOPE>\s*$/i.test(xml)) return 'not_an_envelope'
+  if ((xml.match(/<VOUCHER[\s>]/gi) ?? []).length !== 1) return 'one_voucher_only'
+  if (!/ACTION\s*=\s*"Create"/i.test(xml)) return 'not_a_create'
+  return null
+}
+
+const tagText = (xml, tag) => {
+  const m = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(xml)
+  return m ? m[1].trim() : ''
+}
+
+/**
+ * POST one server-built Import envelope to Tally.
+ * → { ok: true, records: [{ name, status }] } | { ok: false, error }
+ */
+export async function pushVoucher(tallyUrl, job, opts = {}) {
+  const problem = pushProblem(job?.xml)
+  if (problem) return { ok: false, error: 'tally_error' }
+  const t = validateTallyUrl(tallyUrl)
+  if (t.error) return { ok: false, error: 'tally_unreachable' }
+  const voucherNumber = tagText(job.xml, 'VOUCHERNUMBER') || 'voucher'
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? PUSH_TIMEOUT_MS)
+  try {
+    const res = await fetch(t.url, {
+      method: 'POST', headers: { 'content-type': 'text/xml; charset=utf-8' },
+      body: job.xml, signal: ctrl.signal, redirect: 'manual',
+    })
+    if (res.status !== 200) return { ok: false, error: 'bad_response' }
+    const body = await readCapped(res, PUSH_MAX_BYTES)
+    if (body === null) return { ok: false, error: 'too_large' }
+    const text = body.replace(/^\uFEFF/, '')
+    if (!looksLikeTallyXml(text) && !/<STATUS>/i.test(text)) return { ok: false, error: 'bad_response' }
+    const ok = /<STATUS>\s*1\s*<\/STATUS>/i.test(text)
+    const lineError = (/<LINEERROR>([\s\S]*?)<\/LINEERROR>/i.exec(text)?.[1] ?? '').trim()
+    if (!ok) {
+      // Tally says the remote id / voucher number is already there → not an error the user can fix
+      if (/duplicate|already (exists|exist)|record already/i.test(lineError)) {
+        return { ok: true, records: [{ name: voucherNumber, status: 'exists', message: lineError.slice(0, 200) }] }
+      }
+      return { ok: false, error: 'voucher_rejected' }
+    }
+    return { ok: true, records: [{ name: voucherNumber, status: 'created' }] }
+  } catch {
+    return { ok: false, error: ctrl.signal.aborted ? 'timeout' : 'tally_unreachable' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** Run one named job against Tally → { ok: true, records } | { ok: false, error } */
 export async function runJob(tallyUrl, job, opts = {}) {
   const def = JOBS[job?.type]
@@ -402,7 +470,9 @@ export async function heartbeatOnce(cfg, path = configPath()) {
   const job = r.json?.data?.job
   let jobDone
   if (job && typeof job.id === 'string') {
-    const out = JOBS[job.type] ? await runJob(cfg.tally, job) : { ok: false, error: 'tally_error' }
+    const out = job.type === 'push-voucher'
+      ? await pushVoucher(cfg.tally, job)
+      : JOBS[job.type] ? await runJob(cfg.tally, job) : { ok: false, error: 'tally_error' }
     let payload = JSON.stringify({ jobId: job.id, ...out })
     if (Buffer.byteLength(payload) > MAX_RESULT_BYTES) payload = JSON.stringify({ jobId: job.id, ok: false, error: 'too_large' })
     await postJson(`${cfg.server}/api/tally-connector/result`, JSON.parse(payload), cfg.token)
@@ -420,7 +490,7 @@ export async function runLoop({ path = configPath(), log = console.log, sleep = 
     try {
       const r = await heartbeatOnce(cfg, path)
       if (r.revoked) { log('This connector was disconnected in ManuFlow. Its token was deleted; pair again to reconnect.'); return 2 }
-      log(`${new Date().toISOString()} Tally: ${r.tally.status}${r.ok ? '' : ` · ManuFlow: ${r.error}`}${r.job ? ` · ${r.job.type}: ${r.job.ok ? `${r.job.count} records sent` : r.job.error}` : ''}`)
+      log(`${new Date().toISOString()} Tally: ${r.tally.status}${r.ok ? '' : ` · ManuFlow: ${r.error}`}${r.job ? ` · ${r.job.type}: ${r.job.ok ? `${r.job.count} ${r.job.type === 'push-voucher' ? 'voucher(s) pushed' : 'records sent'}` : r.job.error}` : ''}`)
       wait = r.nextSec
       backoff = 15
     } catch (e) {

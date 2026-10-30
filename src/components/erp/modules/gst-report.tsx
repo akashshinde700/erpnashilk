@@ -57,12 +57,13 @@ interface Gstr2Bill {
   supplierName: string; gstin: string | null; isInterState: boolean
   taxable: number; cgst: number; sgst: number; igst: number; cess: number; totalTax: number; grandTotal: number
   itcEligible: boolean
+  reverseCharge: boolean
 }
 interface Gstr2Data {
   items: Gstr2Bill[]
   debitNotes: { id: string; number: string; date: string; invoiceNumber: string; supplierName: string; gstin: string | null; taxable: number; cgst: number; sgst: number; igst: number; grandTotal: number }[]
-  bySupplier: { key: string; gstin: string | null; name: string; bills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; total: number; itcEligible: boolean }[]
-  totals: { bills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; grandTotal: number; itcEligibleTax: number; itcIneligibleTax: number; debitNotes: number; debitNoteTax: number }
+  bySupplier: { key: string; gstin: string | null; name: string; bills: number; rcmBills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; total: number; itcEligible: boolean }[]
+  totals: { bills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; grandTotal: number; itcEligibleTax: number; itcIneligibleTax: number; rcmBills: number; rcmTaxable: number; rcmTax: number; debitNotes: number; debitNoteTax: number }
 }
 interface Heads { igst: number; cgst: number; sgst: number; cess: number }
 interface ReverseChargeBlock { docs: number; taxable: number; tax: Heads; totalTax: number }
@@ -282,12 +283,13 @@ export default function GstReportModule({ companyId }: { companyId: string }) {
     const d = gstr2.data
     if (!d) return
     const c = company.data
-    const rows = d.items.map((b) => `<tr><td>${esc(fmtDate(b.date))}</td><td>${esc(b.number)}${b.supplierInvNo ? `<br/><span class="muted">${esc(b.supplierInvNo)}</span>` : ''}</td><td>${esc(b.supplierName)}<br/><span class="muted">${esc(b.gstin || 'Unregistered')}</span></td><td class="num">${fmtMoney(b.taxable)}</td><td class="num">${fmtMoney(b.cgst)}</td><td class="num">${fmtMoney(b.sgst)}</td><td class="num">${fmtMoney(b.igst)}</td><td class="num">${fmtMoney(b.cess)}</td><td class="num">${fmtMoney(b.grandTotal)}</td><td>${b.itcEligible ? 'Yes' : 'No'}</td></tr>`).join('')
+    const rows = d.items.map((b) => `<tr><td>${esc(fmtDate(b.date))}</td><td>${esc(b.number)}${b.supplierInvNo ? `<br/><span class="muted">${esc(b.supplierInvNo)}</span>` : ''}</td><td>${esc(b.supplierName)}<br/><span class="muted">${esc(b.gstin || 'Unregistered')}</span></td><td class="num">${fmtMoney(b.taxable)}</td><td class="num">${fmtMoney(b.cgst)}</td><td class="num">${fmtMoney(b.sgst)}</td><td class="num">${fmtMoney(b.igst)}</td><td class="num">${fmtMoney(b.cess)}</td><td class="num">${fmtMoney(b.grandTotal)}</td><td>${b.reverseCharge ? 'RCM' : '—'}</td><td>${b.itcEligible ? 'Yes' : 'No'}</td></tr>`).join('')
     printHtml(`GSTR-2 Purchase Register — ${monthLabel}`, `<div class="head"><div><h1>${esc(c?.name || 'Company')}</h1><div class="muted">GSTIN: ${esc(c?.gstin || '—')} · Purchase register (GSTR-2) · ${esc(monthLabel)}</div></div><span class="badge">GSTR-2</span></div>
-      <table><thead><tr><th>Date</th><th>Bill</th><th>Supplier</th><th class="num">Taxable</th><th class="num">CGST</th><th class="num">SGST</th><th class="num">IGST</th><th class="num">Cess</th><th class="num">Total</th><th>ITC</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" class="muted">No bills in this month</td></tr>'}
-      <tr class="grand"><td colspan="3">Total</td><td class="num">${fmtMoney(d.totals.taxable)}</td><td class="num">${fmtMoney(d.totals.cgst)}</td><td class="num">${fmtMoney(d.totals.sgst)}</td><td class="num">${fmtMoney(d.totals.igst)}</td><td class="num">${fmtMoney(d.totals.cess)}</td><td class="num">${fmtMoney(d.totals.grandTotal)}</td><td></td></tr></tbody></table>
-      <p class="muted" style="margin-top:10px">ITC-eligible tax: ${fmtMoney(d.totals.itcEligibleTax)} · Ineligible (unregistered suppliers): ${fmtMoney(d.totals.itcIneligibleTax)} · Debit notes: ${d.totals.debitNotes} (tax ${fmtMoney(d.totals.debitNoteTax)})</p>`)
+      <table><thead><tr><th>Date</th><th>Bill</th><th>Supplier</th><th class="num">Taxable</th><th class="num">CGST</th><th class="num">SGST</th><th class="num">IGST</th><th class="num">Cess</th><th class="num">Total</th><th>RCM</th><th>ITC</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="11" class="muted">No bills in this month</td></tr>'}
+      <tr class="grand"><td colspan="3">Total</td><td class="num">${fmtMoney(d.totals.taxable)}</td><td class="num">${fmtMoney(d.totals.cgst)}</td><td class="num">${fmtMoney(d.totals.sgst)}</td><td class="num">${fmtMoney(d.totals.igst)}</td><td class="num">${fmtMoney(d.totals.cess)}</td><td class="num">${fmtMoney(d.totals.grandTotal)}</td><td></td><td></td></tr></tbody></table>
+      <p class="muted" style="margin-top:10px">ITC-eligible tax: ${fmtMoney(d.totals.itcEligibleTax)} · Ineligible (unregistered suppliers): ${fmtMoney(d.totals.itcIneligibleTax)} · Debit notes: ${d.totals.debitNotes} (tax ${fmtMoney(d.totals.debitNoteTax)})</p>
+      <p class="muted">Reverse charge (self-assessed, claim under 3.1(d) / 4(A)(3)): ${d.totals.rcmBills} bill(s) · taxable ${fmtMoney(d.totals.rcmTaxable)} · tax ${fmtMoney(d.totals.rcmTax)}</p>`)
   }
 
   function printGstr3b() {
@@ -542,10 +544,10 @@ export default function GstReportModule({ companyId }: { companyId: string }) {
 type Gstr2SupplierRow = Gstr2Data['bySupplier'][number] & { id: string }
 type Gstr2NoteRow = Gstr2Data['debitNotes'][number]
 
-const GSTR2_HEADERS = ['Date', 'Bill', 'Supplier Inv No', 'Supplier', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Cess', 'Total', 'ITC eligible']
+const GSTR2_HEADERS = ['Date', 'Bill', 'Supplier Inv No', 'Supplier', 'GSTIN', 'Taxable', 'CGST', 'SGST', 'IGST', 'Cess', 'Total', 'Reverse charge', 'ITC eligible']
 const gstr2Pick = (r: Gstr2Bill): (string | number)[] => [
   String(r.date).slice(0, 10), r.number, r.supplierInvNo || '', r.supplierName, r.gstin || '',
-  r.taxable, r.cgst, r.sgst, r.igst, r.cess, r.grandTotal, r.itcEligible ? 'Yes' : 'No',
+  r.taxable, r.cgst, r.sgst, r.igst, r.cess, r.grandTotal, r.reverseCharge ? 'Yes' : 'No', r.itcEligible ? 'Yes' : 'No',
 ]
 
 function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; loading: boolean; monthLabel: string }) {
@@ -577,6 +579,14 @@ function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; load
     { key: 'cess', header: 'Cess', className: 'text-right', hideOnMobile: true, sum: true, sumFormat: 'money', render: (r) => <Money value={r.cess} /> },
     { key: 'grandTotal', header: 'Total', className: 'text-right', sum: true, sumFormat: 'money', render: (r) => <Money value={r.grandTotal} className="font-medium" /> },
     {
+      key: 'reverseCharge', header: 'RCM', hideOnMobile: true,
+      render: (r) => (
+        r.reverseCharge
+          ? <span className="inline-flex whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-300" title="Reverse charge — self-assessed tax, claim under 3.1(d)">RCM</span>
+          : <span className="text-muted-foreground">—</span>
+      ),
+    },
+    {
       key: 'itcEligible', header: 'ITC',
       render: (r) => (
         <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${r.itcEligible ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
@@ -595,7 +605,15 @@ function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; load
         </div>
       ),
     },
-    { key: 'bills', header: 'Bills', className: 'text-right', render: (r) => <span className="tabular-nums">{r.bills}</span> },
+    {
+      key: 'bills', header: 'Bills', className: 'text-right',
+      render: (r) => (
+        <span className="tabular-nums">
+          {r.bills}
+          {r.rcmBills ? <span className="ml-1 text-[11px] text-amber-700 dark:text-amber-400">({r.rcmBills} RCM)</span> : null}
+        </span>
+      ),
+    },
     { key: 'taxable', header: 'Taxable', className: 'text-right', render: (r) => <Money value={r.taxable} /> },
     { key: 'tax', header: 'GST + Cess', className: 'text-right', render: (r) => <Money value={r2(r.cgst + r.sgst + r.igst + r.cess)} /> },
     { key: 'total', header: 'Total', className: 'text-right', render: (r) => <Money value={r.total} className="font-medium" /> },
@@ -616,6 +634,12 @@ function Gstr2View({ data, loading, monthLabel }: { data: Gstr2Data | null; load
         <StatCard title="ITC Eligible Tax" value={t ? fmtMoney(t.itcEligibleTax) : '—'} sub="Bills from registered suppliers" icon={<ArrowDownToLine className="h-4 w-4" />} toneClass="bg-emerald-100 text-emerald-600" />
         <StatCard title="Ineligible Tax" value={t ? fmtMoney(t.itcIneligibleTax) : '—'} sub={t ? `Debit notes ${t.debitNotes} · tax ${fmtMoney(t.debitNoteTax)}` : 'Unregistered suppliers'} icon={<ArrowUpFromLine className="h-4 w-4" />} toneClass="bg-amber-100 text-amber-600" />
       </div>
+      {t && t.rcmBills > 0 && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          <strong>{t.rcmBills} reverse-charge bill(s)</strong> this month · taxable {fmtMoney(t.rcmTaxable)} · self-assessed tax {fmtMoney(t.rcmTax)} —
+          credit is claimed under 3.1(d) / 4(A)(3), not as ordinary ITC.
+        </p>
+      )}
       <SectionCard title={`Purchase register (${monthLabel})`}>
         <DataTable
           columns={billCols}

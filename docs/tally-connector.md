@@ -145,6 +145,46 @@ Admin ──"Disconnect"──► DELETE /api/import-center/tally/connector → 
   (Linux); file mode 0600, folder 0700 (on Windows the user-profile ACL applies instead). The token is never printed.
   Redirects from ManuFlow are refused, so the token cannot be forwarded elsewhere.
 
+### Push to Tally — sales vouchers (built, OFF by default)
+
+The one direction that **writes**: **Sales → Sales Invoices → invoice menu → “Push to Tally (connector)”**
+sends that invoice to TallyPrime through the paired connector instead of downloading a file.
+
+```
+Invoice menu ──POST /api/import-center/tally/push { invoiceId }──►  server builds ONE Import envelope
+                                                                   (buildTallyVoucher → voucherToXml,
+                                                                    the same builder as the XML download)
+                                                                    and queues it as job type push-voucher
+Connector heartbeat ──► { job: { id, type: 'push-voucher', xml } }  ← the envelope, unchanged
+Connector ──POST <tally 127.0.0.1:9000> the envelope──────────────►  TallyPrime creates the voucher
+Connector ──POST /api/tally-connector/result { jobId, ok, records: [{ name, status }] }
+Browser ──GET /api/import-center/tally/jobs?id=…──► done → toast; the invoice is marked “sent to Tally”
+```
+
+What is deliberately narrow:
+
+* **One invoice, one envelope, one voucher.** `checkPushXml()` (server, `src/lib/tally/push-xml.ts`) and
+  `pushProblem()` (connector, `manuflow-tally-connector.mjs`) both require exactly one
+  `<VOUCHER … ACTION="Create">` inside an `<ENVELOPE>` with `TALLYREQUEST=Import Data`, no DTD and no
+  entity declaration, ≤ 256 KB. Two vouchers, an Update/Delete action or an Export request are refused
+  **on both sides**, so a server bug cannot become an arbitrary write in Tally.
+* **The connector never builds an Import request.** It posts the document it was handed, byte for byte
+  (asserted in `tests/tally-connector.test.ts`), and it only does so for a job that carries `xml`.
+* **The browser never supplies XML** — no endpoint accepts it. The payload is built from the invoice.
+* **Nothing to duplicate:** the voucher carries `REMOTEID="MANUFLOW-INV-<id>"`. If Tally answers
+  “already exists / duplicate”, the job is **done** with `result.status = 'exists'` and the UI says
+  “was already in TallyPrime” instead of failing.
+* **Off unless asked for:** the route answers 503 with `TALLY_PUSH_DISABLED` unless the server runs with
+  `TALLY_CONNECTOR_PUSH=1` **and** the connector feature switch `TALLY_CONNECTOR_POC=1` is on.
+  Cancelled invoices are refused; a second click while a push is still running returns the waiting job.
+* **Same permissions as raising the invoice:** `requireWrite('sales-invoices')` + `requireWrite('import-center')`.
+  The connector token still binds the company; the company is never taken from the request.
+
+Not verified (as everywhere else in this connector): the Import envelope against a **real** TallyPrime.
+The voucher only imports cleanly when the ledgers it names already exist in that Tally company — the
+**All Masters** file (or an existing chart of accounts) is a precondition, and a missing ledger shows up
+as `voucher_rejected` with a message that says so.
+
 ### Known limitations of the proof of concept
 
 1. **In-memory storage.** Codes and connectors live in the server process: lost on restart, not shared between PM2
@@ -207,6 +247,10 @@ Admin ──"Disconnect"──► DELETE /api/import-center/tally/connector → 
    process, `prisma db push` on deploy, no data-loss flags).
 4. Build and sign the connector app; document firewall settings (port 9000 reachable from
    127.0.0.1 only).
-5. Only after masters work: evaluate vouchers (sales / purchase / receipts / journals) — blocked on
-   the accounting decisions listed in the Smart Import audit (no general ledger, document numbering,
-   bill-wise outstanding, go-live date).
+5. Vouchers: **sales invoices can already be pushed** (see above). Purchase bills, receipts and
+   journals still need the accounting decisions listed in the Smart Import audit (no general ledger,
+   document numbering, bill-wise outstanding, go-live date).
+6. Once a real TallyPrime is available: capture the exact reply of an Import (`<STATUS>1</STATUS>`,
+   line errors for a duplicate remote id) and replace the pattern matching in `pushVoucher()`.
+7. Persist push results (a `tallyPushedAt` / `tallyRemoteId` on the invoice would let the list show it).
+   Today the result lives in the 30-minute in-memory job and the “sent to Tally” flag on the invoice.

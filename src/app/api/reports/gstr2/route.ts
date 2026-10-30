@@ -6,6 +6,10 @@ import { parsePeriod } from '@/lib/accounting'
 // Purchase register (GSTR-2 style): every non-cancelled bill with supplier GSTIN, taxable value,
 // CGST / SGST / IGST / cess and an ITC-eligible flag (bills from suppliers with a GSTIN), the debit
 // notes of the period, and a supplier-GSTIN-wise summary.
+//
+// Reverse-charge bills are marked separately (`reverseCharge`) and summed in their own block: the
+// recipient self-assesses that tax, so it is claimed under 3.1(d) / 4(A)(3) rather than as ordinary
+// ITC, and the credit is available even when the supplier has no GSTIN.
 export async function GET(req: Request) {
   try {
     requireRead(req, 'gst-report') // Phase 5: financial read permission
@@ -20,7 +24,7 @@ export async function GET(req: Request) {
         orderBy: { date: 'asc' },
         select: {
           id: true, number: true, supplierInvNo: true, supplierInvDate: true, date: true, isInterState: true,
-          grandTotal: true, cgst: true, sgst: true, igst: true, cess: true, roundOff: true,
+          grandTotal: true, cgst: true, sgst: true, igst: true, cess: true, roundOff: true, reverseCharge: true,
           supplier: { select: { id: true, name: true, gstin: true, state: true } },
         },
       }),
@@ -41,6 +45,7 @@ export async function GET(req: Request) {
 
     const items = bills.map((b) => {
       const taxable = r2(b.grandTotal - b.cgst - b.sgst - b.igst - b.cess - b.roundOff)
+      const reverseCharge = !!b.reverseCharge
       return {
         id: b.id,
         number: b.number,
@@ -56,7 +61,9 @@ export async function GET(req: Request) {
         cgst: r2(b.cgst), sgst: r2(b.sgst), igst: r2(b.igst), cess: r2(b.cess),
         totalTax: r2(b.cgst + b.sgst + b.igst + b.cess),
         grandTotal: r2(b.grandTotal),
-        itcEligible: !!b.supplier?.gstin,
+        reverseCharge,
+        // Self-assessed tax under RCM is creditable even without the supplier's GSTIN.
+        itcEligible: !!b.supplier?.gstin || reverseCharge,
       }
     })
     const debitNotes = returns.map((r) => {
@@ -68,11 +75,12 @@ export async function GET(req: Request) {
       }
     })
 
-    const groups = new Map<string, { key: string; gstin: string | null; name: string; bills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; total: number; itcEligible: boolean }>()
+    const groups = new Map<string, { key: string; gstin: string | null; name: string; bills: number; rcmBills: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; total: number; itcEligible: boolean }>()
     for (const b of items) {
       const key = b.gstin || `UNREG:${b.supplierId}`
-      const g = groups.get(key) ?? { key, gstin: b.gstin, name: b.supplierName, bills: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, total: 0, itcEligible: b.itcEligible }
+      const g = groups.get(key) ?? { key, gstin: b.gstin, name: b.supplierName, bills: 0, rcmBills: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, total: 0, itcEligible: b.itcEligible }
       g.bills += 1
+      if (b.reverseCharge) g.rcmBills += 1
       g.taxable = r2(g.taxable + b.taxable)
       g.cgst = r2(g.cgst + b.cgst)
       g.sgst = r2(g.sgst + b.sgst)
@@ -84,11 +92,16 @@ export async function GET(req: Request) {
 
     const t = (k: 'taxable' | 'cgst' | 'sgst' | 'igst' | 'cess' | 'grandTotal', rows = items) => r2(rows.reduce((s, r) => s + r[k], 0))
     const eligible = items.filter((b) => b.itcEligible)
+    // Reverse charge: the tax is self-assessed, so it is shown apart from the ordinary ITC block.
+    const rcm = items.filter((b) => b.reverseCharge)
     const totals = {
       bills: items.length,
       taxable: t('taxable'), cgst: t('cgst'), sgst: t('sgst'), igst: t('igst'), cess: t('cess'), grandTotal: t('grandTotal'),
       itcEligibleTax: r2(eligible.reduce((s, b) => s + b.totalTax, 0)),
       itcIneligibleTax: r2(items.filter((b) => !b.itcEligible).reduce((s, b) => s + b.totalTax, 0)),
+      rcmBills: rcm.length,
+      rcmTaxable: t('taxable', rcm),
+      rcmTax: r2(rcm.reduce((s, b) => s + b.totalTax, 0)),
       debitNotes: debitNotes.length,
       debitNoteTax: r2(debitNotes.reduce((s, d) => s + d.cgst + d.sgst + d.igst, 0)),
     }

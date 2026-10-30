@@ -218,19 +218,24 @@ function gstr2(store: Store) {
     isInterState: !!b.isInterState, taxable: Number(b.subtotal) - Number(b.discountTotal || 0),
     cgst: b.cgst, sgst: b.sgst, igst: b.igst, cess: b.cess ?? 0,
     totalTax: Number(b.cgst) + Number(b.sgst) + Number(b.igst) + Number(b.cess ?? 0),
-    grandTotal: b.grandTotal, itcEligible: b.itcEligible !== false,
+    grandTotal: b.grandTotal,
+    reverseCharge: !!b.reverseCharge,
+    itcEligible: b.itcEligible !== false || !!b.reverseCharge,
   }))
   const tot = items.reduce((t, r) => ({
     bills: t.bills + 1, taxable: t.taxable + r.taxable, cgst: t.cgst + r.cgst, sgst: t.sgst + r.sgst,
     igst: t.igst + r.igst, cess: t.cess + r.cess, grandTotal: t.grandTotal + Number(r.grandTotal),
     itcEligibleTax: t.itcEligibleTax + (r.itcEligible ? r.totalTax : 0),
     itcIneligibleTax: t.itcIneligibleTax + (r.itcEligible ? 0 : r.totalTax),
-  }), { bills: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, grandTotal: 0, itcEligibleTax: 0, itcIneligibleTax: 0 })
+    rcmBills: t.rcmBills + (r.reverseCharge ? 1 : 0),
+    rcmTaxable: t.rcmTaxable + (r.reverseCharge ? r.taxable : 0),
+    rcmTax: t.rcmTax + (r.reverseCharge ? r.totalTax : 0),
+  }), { bills: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, grandTotal: 0, itcEligibleTax: 0, itcIneligibleTax: 0, rcmBills: 0, rcmTaxable: 0, rcmTax: 0 })
   return {
     items,
     debitNotes: [],
     bySupplier: items.map((r) => ({
-      key: r.gstin ?? r.supplierName, gstin: r.gstin, name: r.supplierName, bills: 1,
+      key: r.gstin ?? r.supplierName, gstin: r.gstin, name: r.supplierName, bills: 1, rcmBills: r.reverseCharge ? 1 : 0,
       taxable: r.taxable, cgst: r.cgst, sgst: r.sgst, igst: r.igst, cess: r.cess, total: r.grandTotal, itcEligible: r.itcEligible,
     })),
     totals: { ...tot, debitNotes: 0, debitNoteTax: 0 },
@@ -389,6 +394,9 @@ const IMPORT_PREVIEW = {
  */
 export function makeApi(store: Store) {
   const col = (name: string) => (store.collections[name] ||= [])
+  // Push jobs are settled by the fake connector as soon as the UI asks for their status.
+  const tallyPushes: Json[] = []
+  const tallyJobs: Json[] = []
 
   function dispatch(method: string, path: string, query: URLSearchParams, body: any): Reply | null {
     const seg = path.replace(/^\/api\/?/, '').split('/').filter(Boolean)
@@ -530,6 +538,22 @@ export function makeApi(store: Store) {
       if (second === 'go-live') return ok({ ok: true })
       if (second === 'tally') {
         if (third === 'status') return ok({ configured: true, reachable: true, endpoint: 'http://127.0.0.1:9000', checkedAt: iso(), version: 'Tally Prime 4.1' })
+        // POST /api/import-center/tally/push — the invoice is handed to the connector.
+        if (third === 'push' && method === 'POST') {
+          const invoice = (col('sales-invoices') as Json[]).find((i) => i.id === body?.invoiceId)
+          if (!invoice) return fail('Invoice not found', 'NOT_FOUND', 404)
+          const job = { id: store.nextId('tallyjob'), type: 'push-voucher', invoiceId: invoice.id, number: invoice.number }
+          tallyPushes.push(job as Json)
+          return ok({ id: job.id, type: 'push-voucher', status: 'queued', voucherNumber: invoice.number, invoiceId: invoice.id })
+        }
+        // GET /api/import-center/tally/jobs?id= — the fake connector settles at once.
+        if (third === 'jobs' && method === 'GET') {
+          const id = query.get('id') || ''
+          if (!id) return ok({ items: tallyJobs })
+          const pushed = tallyPushes.find((j) => j.id === id)
+          if (!pushed) return fail('This Tally request was not found — start again', 'NOT_FOUND', 404)
+          return ok({ id, type: 'push-voucher', status: 'done', invoiceId: pushed.invoiceId, count: 1, result: { status: 'created', message: null } })
+        }
         if (third === 'jobs') return ok({ items: [] })
         if (third === 'connector') return ok({ paired: true, code: '8421', expiresAt: iso(new Date(Date.now() + 900000)) })
         if (third === 'import') return ok({ jobId: 'job_tally_1' })
@@ -633,110 +657,6 @@ export function makeApi(store: Store) {
       const pageSize = Number(query.get('pageSize') || 50)
       const items = col('audit-logs') as Json[]
       return ok({ items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize })
-    }
-
-    // ---------------- CRM: leads + follow-ups ----------------
-    // Mirrors src/app/api/leads/route.ts and /api/lead-activities.
-    if (head === 'leads') {
-      const rows = col('leads') as Json[]
-      if (!second && method === 'GET') {
-        const stage = query.get('stage') || ''
-        const items = stage ? rows.filter((r) => r.stage === stage) : rows
-        const open = items.filter((r) => r.stage !== 'WON' && r.stage !== 'LOST')
-        return ok({
-          items, total: items.length,
-          summary: {
-            total: items.length,
-            open: open.length,
-            pipelineValue: open.reduce((s, r) => s + Number(r.value || 0), 0),
-            weightedValue: open.reduce((s, r) => s + (Number(r.value || 0) * Number(r.probability || 0)) / 100, 0),
-            won: items.filter((r) => r.stage === 'WON').length,
-            lost: items.filter((r) => r.stage === 'LOST').length,
-            wonValue: items.filter((r) => r.stage === 'WON').reduce((s, r) => s + Number(r.value || 0), 0),
-          },
-        })
-      }
-      if (!second && method === 'POST') {
-        const now = iso()
-        const created = {
-          id: store.nextId('lead'), code: `LD-${String(rows.length + 1).padStart(4, '0')}`,
-          activities: [], createdAt: now, updatedAt: now, ...body,
-        }
-        rows.unshift(created as Json)
-        return ok(created, 201)
-      }
-      if (second && (method === 'PATCH' || method === 'PUT')) {
-        const row = rows.find((r) => r.id === second)
-        if (!row) return fail('Lead not found', 'NOT_FOUND', 404)
-        if (body?.action === 'convert') {
-          if (row.customerId) return ok({ lead: row, customerId: row.customerId, created: false })
-          const customers = col('customers') as Json[]
-          const customer = {
-            id: store.nextId('cus'), code: `C-${String(customers.length + 1).padStart(4, '0')}`,
-            name: String(row.companyName || row.name), phone: row.phone || null, email: row.email || null,
-            city: row.city || null, gstType: 'UNREGISTERED', status: 'ACTIVE',
-          }
-          customers.unshift(customer as Json)
-          Object.assign(row, { stage: 'WON', probability: 100, customerId: customer.id, convertedAt: iso(), updatedAt: iso() })
-          return ok({ lead: row, customer, customerId: customer.id, created: true })
-        }
-        const { action: _action, companyId: _company, ...rest } = (body || {}) as Record<string, unknown>
-        Object.assign(row, rest, { updatedAt: iso() })
-        if (body?.stage && body?.probability === undefined) {
-          const prob: Record<string, number> = { NEW: 10, CONTACTED: 25, QUALIFIED: 45, PROPOSAL: 60, NEGOTIATION: 80, WON: 100, LOST: 0 }
-          row.probability = prob[String(body.stage)] ?? row.probability
-        }
-        return ok(row)
-      }
-      if (second && method === 'DELETE') {
-        const i = rows.findIndex((r) => r.id === second)
-        if (i >= 0) rows.splice(i, 1)
-        const acts = col('lead-activities') as Json[]
-        for (let k = acts.length - 1; k >= 0; k--) if (acts[k].leadId === second) acts.splice(k, 1)
-        return ok({ id: second })
-      }
-    }
-
-    if (head === 'lead-activities') {
-      const rows = col('lead-activities') as Json[]
-      if (!second && method === 'GET') {
-        const onlyOpen = query.get('open') === '1'
-        const items = onlyOpen ? rows.filter((r) => !r.doneAt) : rows
-        return ok({ items, total: items.length })
-      }
-      if (!second && method === 'POST') {
-        const lead = (col('leads') as Json[]).find((l) => l.id === body?.leadId)
-        if (!lead) return fail('Lead not found', 'NOT_FOUND', 404)
-        const created = {
-          id: store.nextId('act'), ...body,
-          doneAt: body?.done === true || body?.kind === 'NOTE' ? iso() : null,
-          createdAt: iso(),
-          lead: { id: lead.id, code: lead.code, name: lead.name, companyName: lead.companyName },
-        }
-        rows.unshift(created as Json)
-        // the board shows the lead's next open follow-up
-        const open = (lead.activities as Json[] | undefined) ?? []
-        lead.activities = [...open, created as Json].filter((a) => !a.doneAt).slice(0, 1)
-        return ok(created, 201)
-      }
-      if (second && (method === 'PATCH' || method === 'PUT')) {
-        const row = rows.find((r) => r.id === second)
-        if (!row) return fail('Follow-up not found', 'NOT_FOUND', 404)
-        const { companyId: _company, done, ...rest } = (body || {}) as Record<string, unknown>
-        Object.assign(row, rest)
-        if (done !== undefined) row.doneAt = done ? iso() : null
-        // keep the lead's "next open follow-up" (the board card) in sync
-        const lead = (col('leads') as Json[]).find((l) => l.id === row.leadId)
-        if (lead && done) {
-          lead.activities = ((lead.activities as Json[] | undefined) ?? []).filter((a) => a.id !== row.id)
-        }
-        return ok(row)
-      }
-      if (second && method === 'DELETE') {
-        const i = rows.findIndex((r) => r.id === second)
-        if (i >= 0) rows.splice(i, 1)
-        return ok({ id: second })
-      }
     }
 
     // ---------------- generic CRUD over collections ----------------
