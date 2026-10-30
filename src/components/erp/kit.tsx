@@ -14,6 +14,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { printDocument } from '@/lib/html'
 import { fmtDate, fmtMoney, fmtNum, tone } from '@/lib/erp-constants'
 import { Bookmark, BookmarkPlus, ChevronDown, ChevronUp, Download, FileSpreadsheet, Inbox, Search, Printer, Trash2, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -918,25 +919,9 @@ export function DateCell({ value }: { value: string | Date | null | undefined })
 export function printHtml(title: string, html: string) {
   const w = window.open('', '_blank', 'width=900,height=700')
   if (!w) return
-  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; color: #111; padding: 28px; font-size: 13px; }
-    h1 { font-size: 20px; margin: 0 0 2px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-    th, td { border: 1px solid #ddd; padding: 7px 9px; text-align: left; font-size: 12px; }
-    th { background: #f4f4f5; font-weight: 600; }
-    .num { text-align: right; }
-    .muted { color: #666; font-size: 11px; }
-    .totals td { border: none; padding: 3px 8px; }
-    .totals .num { font-weight: 600; }
-    .grand { font-size: 14px; font-weight: 700; border-top: 2px solid #111; }
-    .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; }
-    .badge { display: inline-block; border: 1px solid #999; border-radius: 4px; padding: 2px 8px; font-size: 10px; letter-spacing: 1px; }
-    @media print { body { padding: 12px; } }
-  </style></head><body>${html}
-  <script>window.onload = function(){ window.print(); }</script>
-  </body></html>`)
+  // The document shell (and the <title>, which can carry a party name) is escaped in printDocument();
+  // `html` is caller-built markup whose values the caller escapes.
+  w.document.write(printDocument(title, html))
   w.document.close()
 }
 

@@ -32,18 +32,20 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "@next/next/no-html-link-for-pages": "off",
     
     // General JavaScript rules
-    "prefer-const": "off",
-    "no-unused-vars": "off",
+    // Kept ON (they are clean today and catch real damage): no-redeclare, no-fallthrough,
+    // no-unreachable, prefer-const.
+    // Kept OFF, with the reason:
+    //   no-unused-vars / @typescript-eslint/no-unused-vars — 201 hits today (mostly `catch (e)` and
+    //     leftover imports); clean up, then enable.
+    //   no-undef — TypeScript already checks this; it only produced false positives (React, NodeJS,
+    //     RequestInit, BodyInit).
+    //   @typescript-eslint/no-explicit-any — 64 deliberate `any`s at JSON-parsing boundaries.
     "no-console": "off",
     "no-debugger": "off",
     "no-empty": "off",
     "no-irregular-whitespace": "off",
     "no-case-declarations": "off",
-    "no-fallthrough": "off",
     "no-mixed-spaces-and-tabs": "off",
-    "no-redeclare": "off",
-    "no-undef": "off",
-    "no-unreachable": "off",
     "no-useless-escape": "off",
   },
 }, {
