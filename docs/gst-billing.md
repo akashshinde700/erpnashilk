@@ -34,6 +34,13 @@ and then claim back).
   still claimable, even from a supplier without a GSTIN, so it no longer lands in
   the "ineligible ITC" bucket. The self-assessed tax is added back to the net
   payable, so the credit and the liability cancel out as they do on the portal.
+* **GSTR-2 purchase register** — every bill carries an **RCM** column (badge in
+  the table, `Reverse charge: Yes/No` in the CSV / XLSX, `RCM` column on the
+  print). A banner above the register totals the month's reverse-charge bills
+  (`rcmBills`, `rcmTaxable`, `rcmTax`), and the supplier-wise summary shows
+  `(n RCM)` next to the bill count, so the 3.1(d) figure can be filled straight
+  from the register. Reverse-charge bills count as ITC-eligible even when the
+  supplier has no GSTIN.
 
 ## Multi-currency
 

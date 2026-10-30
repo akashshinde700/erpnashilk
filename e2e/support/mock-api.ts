@@ -218,19 +218,24 @@ function gstr2(store: Store) {
     isInterState: !!b.isInterState, taxable: Number(b.subtotal) - Number(b.discountTotal || 0),
     cgst: b.cgst, sgst: b.sgst, igst: b.igst, cess: b.cess ?? 0,
     totalTax: Number(b.cgst) + Number(b.sgst) + Number(b.igst) + Number(b.cess ?? 0),
-    grandTotal: b.grandTotal, itcEligible: b.itcEligible !== false,
+    grandTotal: b.grandTotal,
+    reverseCharge: !!b.reverseCharge,
+    itcEligible: b.itcEligible !== false || !!b.reverseCharge,
   }))
   const tot = items.reduce((t, r) => ({
     bills: t.bills + 1, taxable: t.taxable + r.taxable, cgst: t.cgst + r.cgst, sgst: t.sgst + r.sgst,
     igst: t.igst + r.igst, cess: t.cess + r.cess, grandTotal: t.grandTotal + Number(r.grandTotal),
     itcEligibleTax: t.itcEligibleTax + (r.itcEligible ? r.totalTax : 0),
     itcIneligibleTax: t.itcIneligibleTax + (r.itcEligible ? 0 : r.totalTax),
-  }), { bills: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, grandTotal: 0, itcEligibleTax: 0, itcIneligibleTax: 0 })
+    rcmBills: t.rcmBills + (r.reverseCharge ? 1 : 0),
+    rcmTaxable: t.rcmTaxable + (r.reverseCharge ? r.taxable : 0),
+    rcmTax: t.rcmTax + (r.reverseCharge ? r.totalTax : 0),
+  }), { bills: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, grandTotal: 0, itcEligibleTax: 0, itcIneligibleTax: 0, rcmBills: 0, rcmTaxable: 0, rcmTax: 0 })
   return {
     items,
     debitNotes: [],
     bySupplier: items.map((r) => ({
-      key: r.gstin ?? r.supplierName, gstin: r.gstin, name: r.supplierName, bills: 1,
+      key: r.gstin ?? r.supplierName, gstin: r.gstin, name: r.supplierName, bills: 1, rcmBills: r.reverseCharge ? 1 : 0,
       taxable: r.taxable, cgst: r.cgst, sgst: r.sgst, igst: r.igst, cess: r.cess, total: r.grandTotal, itcEligible: r.itcEligible,
     })),
     totals: { ...tot, debitNotes: 0, debitNoteTax: 0 },

@@ -76,6 +76,24 @@ test.describe('GST reporting', () => {
     await expect(page.getByText(/2026-27|Annual/i).first()).toBeVisible()
   })
 
+  test('GST Reports: reverse-charge bills get their own column in the GSTR-2 register', async ({ page, store }) => {
+    // One posted bill carries self-assessed GST (RCM) — the register must call it out on its own.
+    const bills = store.collections['purchase-invoices'] as { id: string; reverseCharge?: boolean }[]
+    bills[0].reverseCharge = true
+
+    await loginFast(page, store)
+    await openModule(page, 'GST Reports')
+    await openTab(page, 'GSTR-2')
+
+    await expect(page.getByRole('columnheader', { name: 'RCM' })).toBeVisible()
+    await expect(page.getByText('RCM', { exact: true }).first()).toBeVisible()
+    // Header banner adds the self-assessed tax up for the month.
+    await expect(page.getByText(/1 reverse-charge bill\(s\) this month/)).toBeVisible()
+    await expect(page.getByText(/self-assessed tax/)).toBeVisible()
+    // The credit is still claimable, so the ITC chip stays green.
+    await expect(page.getByText('Eligible').first()).toBeVisible()
+  })
+
   test('GST Reports: GSTR-1 JSON download produces a portal-shaped file', async ({ page, store }) => {
     await loginFast(page, store)
     await openModule(page, 'GST Reports')
