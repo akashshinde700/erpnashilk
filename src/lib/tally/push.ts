@@ -4,7 +4,8 @@ import {
   ONLINE_WINDOW_MS, connectorStore, type ConnectorRecord, type ConnectorStore, type TallyJobRecord,
 } from '@/lib/tally/connector'
 import { buildTallyVoucher, ledgerNames, voucherToXml } from '@/lib/tally/voucher'
-import { loadTallyInvoice } from '@/lib/tally/load-invoice'
+import { loadTallyBill, loadTallyInvoice } from '@/lib/tally/load-invoice'
+import { buildPurchaseVoucher, purchaseLedgerNames } from '@/lib/tally/voucher-purchase'
 import { MAX_OPEN_JOBS, jobView, type JobView } from '@/lib/tally/jobs'
 import { MAX_PUSH_XML_BYTES, PUSH_FLAG, checkPushXml, pushEnabled } from '@/lib/tally/push-xml'
 
@@ -54,19 +55,33 @@ async function readyConnector(companyId: string, store: ConnectorStore): Promise
   return c
 }
 
+/** The XML the connector will post for this purchase bill, plus the voucher it came from. */
+export async function buildBillPushPayload(billId: string, companyId: string) {
+  const { bill, company } = await loadTallyBill(billId, companyId)
+  if (bill.status === 'CANCELLED') throw new ApiError('A cancelled bill cannot be pushed to Tally', 400)
+  const shared = ledgerNames(company as never)
+  const voucher = buildPurchaseVoucher(bill as never, company as never, purchaseLedgerNames(process.env, shared))
+  const xml = voucherToXml(voucher, company.tallyCompanyName || null)
+  const problem = checkPushXml(xml)
+  if (problem) throw new ApiError(`Could not prepare the Tally voucher (${problem})`, 500, 'TALLY_PUSH_BUILD_FAILED')
+  return { voucher, xml }
+}
+
 /**
- * Queue the invoice for the connector. Pushing the same invoice twice while a job is still
- * waiting returns the waiting job instead of creating a second voucher in Tally.
+ * Queue one document (sales invoice or purchase bill) for the connector. Pushing the same document
+ * twice while a job is still waiting returns the waiting job instead of creating a second voucher
+ * in Tally. Both document kinds travel as a `push-voucher` job, so an already-installed connector
+ * keeps working unchanged — it only ever posts the envelope the server built.
  */
-export async function queueVoucherPush(
+async function queueJob(
   companyId: string,
   createdBy: string,
-  invoiceId: unknown,
-  store: ConnectorStore = connectorStore(),
+  targetId: string,
+  build: () => Promise<{ voucher: { voucherNumber: string }; xml: string }>,
+  store: ConnectorStore,
 ): Promise<JobView & { voucherNumber: string }> {
   assertPushEnabled()
-  const id = typeof invoiceId === 'string' ? invoiceId.trim() : ''
-  if (!id) throw new ApiError('invoiceId is required', 400)
+  const id = targetId
   const c = await readyConnector(companyId, store)
 
   const open = (await store.jobsOf(companyId)).filter((j) => j.status === 'queued' || j.status === 'running')
@@ -74,7 +89,7 @@ export async function queueVoucherPush(
   if (same) return { ...jobView(same), voucherNumber: '' }
   if (open.length >= MAX_OPEN_JOBS) throw new ApiError('Several Tally requests are still running — wait for them to finish', 429, 'RATE_LIMITED')
 
-  const { voucher, xml } = await buildPushPayload(id, companyId)
+  const { voucher, xml } = await build()
   const job: TallyJobRecord = {
     id: randomBytes(12).toString('hex'),
     companyId,
@@ -93,4 +108,28 @@ export async function queueVoucherPush(
   }
   await store.putJob(job)
   return { ...jobView(job), voucherNumber: voucher.voucherNumber }
+}
+
+/** Push one sales invoice. */
+export async function queueVoucherPush(
+  companyId: string,
+  createdBy: string,
+  invoiceId: unknown,
+  store: ConnectorStore = connectorStore(),
+): Promise<JobView & { voucherNumber: string }> {
+  const id = typeof invoiceId === 'string' ? invoiceId.trim() : ''
+  if (!id) throw new ApiError('invoiceId is required', 400)
+  return queueJob(companyId, createdBy, id, () => buildPushPayload(id, companyId), store)
+}
+
+/** Push one purchase bill (the buying side of `queueVoucherPush`). */
+export async function queueBillPush(
+  companyId: string,
+  createdBy: string,
+  billId: unknown,
+  store: ConnectorStore = connectorStore(),
+): Promise<JobView & { voucherNumber: string }> {
+  const id = typeof billId === 'string' ? billId.trim() : ''
+  if (!id) throw new ApiError('billId is required', 400)
+  return queueJob(companyId, createdBy, id, () => buildBillPushPayload(id, companyId), store)
 }

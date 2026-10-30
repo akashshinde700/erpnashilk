@@ -56,6 +56,19 @@ test.describe('Tally + e-Invoice export', () => {
     expect(invoice?.tallySentAt).toBeTruthy()
   })
 
+  test('a purchase bill is pushed to Tally as a Purchase voucher', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'Purchase Invoices')
+
+    const row = page.getByRole('row').filter({ hasText: 'BILL/26-27/0002' }).first()
+    await expect(row).toBeVisible()
+    await row.getByTitle('Push this bill to Tally (connector)').click()
+
+    // The server queues a push-voucher job for the bill; the fake connector settles it.
+    await expect(page.getByText('Sending bill BILL/26-27/0002 to Tally…')).toBeVisible()
+    await expect(page.getByText('BILL/26-27/0002 imported into TallyPrime')).toBeVisible({ timeout: 20_000 })
+  })
+
   test('Tally JSON download describes the same voucher', async ({ page, store }) => {
     await loginFast(page, store)
     await openModule(page, 'Sales Invoices')

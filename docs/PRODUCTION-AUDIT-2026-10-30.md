@@ -134,6 +134,20 @@ server uses — so the preview now inherits the paisa-exact fix automatically.
 
 ---
 
+## 4d. Follow-up delivered after the audit
+
+* **Bill-level transaction safety** — `Idempotency-Key` added to material issues, production entries, stock
+  adjustments and stock transfers; `tests/production-concurrency.test.ts` is the executable race proof (bun + MySQL).
+* **Tally connector direct push** — the push path now covers **purchase bills** as well as sales invoices
+  (`MANUFLOW-BILL-…`, Purchase voucher: supplier credited, purchase + input-tax ledgers debited, stock debited).
+  Ledger names come from `TALLY_LEDGER_PURCHASE` / `TALLY_LEDGER_CGST_INPUT` / `TALLY_LEDGER_SGST_INPUT` /
+  `TALLY_LEDGER_IGST_INPUT` / `TALLY_LEDGER_CESS_INPUT`. Verified by `e2e/unit/tally-purchase.spec.ts` (balances to
+  the paisa, single Purchase envelope, round-off, RCM / missing-GSTIN warnings, env overrides) and by the browser
+  test `a purchase bill is pushed to Tally as a Purchase voucher`.
+* **GSTR-2 reverse-charge column** — already present before this pass (per-bill `RCM` badge, supplier-wise `N RCM`
+  count and the 3.1(d) summary line); covered by
+  `GST Reports: reverse-charge bills get their own column in the GSTR-2 register`. No change was needed.
+
 ## 5. Business scenarios — what was and was not verified
 
 | # | Scenario | Status |
