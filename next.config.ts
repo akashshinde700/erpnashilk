@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Opt-in escape hatch for offline/sandbox builds: `NEXT_SKIP_TYPECHECK=1 next build`.
+  // Never set in a normal or production build.
+  typescript: process.env.NEXT_SKIP_TYPECHECK === "1" ? { ignoreBuildErrors: true } : undefined,
   poweredByHeader: false,
   reactStrictMode: false,
   async headers() {

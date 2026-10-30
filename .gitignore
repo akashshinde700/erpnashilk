@@ -53,3 +53,8 @@ server.log
 # Skills directory
 /skills/
 deploy_config*.json
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
