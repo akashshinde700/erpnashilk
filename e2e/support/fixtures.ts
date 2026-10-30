@@ -22,6 +22,8 @@ export interface AppFixtures {
 
 export const test = base.extend<AppFixtures>({
   store: async ({}, use) => {
+    // Playwright's fixture `use()` — not a React hook (the react-hooks rule sees the name and guesses).
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     await use(createStore())
   },
 
