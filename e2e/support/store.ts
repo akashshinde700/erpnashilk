@@ -270,6 +270,21 @@ export const loans = [
   { id: 'loan_1', name: 'HDFC Term Loan', lender: 'HDFC Bank', loanAccountNo: 'TL-889123', principal: 500000, interestRate: 10.5, processingFee: 5000, startDate: '2026-05-01', termMonths: 24, emiAmount: 23200, receivedAccountId: 'acc_bank', receivedAccountName: 'HDFC Current', status: 'ACTIVE', principalPaid: 86000, interestPaid: 27000, outstanding: 414000, emiCount: 5 },
 ]
 
+export const leads = [
+  { id: 'lead_1', code: 'LD-0001', name: 'Rahul Deshmukh', companyName: 'Deccan Auto Systems', phone: '9822011001', email: 'rahul@deccanauto.test', city: 'Pune', source: 'REFERRAL', stage: 'QUALIFIED', value: 240000, probability: 45, owner: 'Sales', expectedCloseDate: '2026-11-20', notes: 'Wants 500 shafts per month', createdAt: '2026-10-20T06:00:00.000Z', updatedAt: '2026-10-27T06:00:00.000Z' },
+  { id: 'lead_2', code: 'LD-0002', name: 'Sneha Kulkarni', companyName: 'Kothrud Engineering', phone: '9822011002', email: 'sneha@kothrudeng.test', city: 'Pune', source: 'WEBSITE', stage: 'PROPOSAL', value: 185000, probability: 60, owner: 'Sales', expectedCloseDate: '2026-11-05', notes: 'Quotation QT/26-27/0002 sent', createdAt: '2026-10-18T06:00:00.000Z', updatedAt: '2026-10-26T06:00:00.000Z' },
+  { id: 'lead_3', code: 'LD-0003', name: 'Imran Shaikh', companyName: 'Hadapsar Fabricators', phone: '9822011003', email: 'imran@hadapsar.test', city: 'Pune', source: 'EXHIBITION', stage: 'NEW', value: 90000, probability: 10, owner: 'Sales', expectedCloseDate: '2026-12-01', notes: 'Met at the Pune expo', createdAt: '2026-10-25T06:00:00.000Z', updatedAt: '2026-10-25T06:00:00.000Z' },
+  { id: 'lead_4', code: 'LD-0004', name: 'Vikram Patil', companyName: 'Chakan Precision', phone: '9822011004', email: 'vikram@chakan.test', city: 'Chakan', source: 'CALL', stage: 'WON', value: 320000, probability: 100, owner: 'Sales', customerId: 'cus_3', convertedAt: '2026-10-15T06:00:00.000Z', notes: 'Repeat order for flange couplings', createdAt: '2026-09-28T06:00:00.000Z', updatedAt: '2026-10-15T06:00:00.000Z' },
+  { id: 'lead_5', code: 'LD-0005', name: 'Anita Rane', companyName: 'Bhosari Tools', phone: '9822011005', city: 'Pune', source: 'WHATSAPP', stage: 'CONTACTED', value: 60000, probability: 25, owner: 'Sales', notes: 'Asked for the price list', createdAt: '2026-10-26T06:00:00.000Z', updatedAt: '2026-10-28T06:00:00.000Z' },
+]
+
+export const leadActivities = [
+  { id: 'act_1', leadId: 'lead_1', companyId: 'cmp_nashilk', kind: 'CALL', summary: 'Send revised quotation for 500 nos', dueDate: '2026-10-31', doneAt: null, notes: 'Price break above 400', createdAt: '2026-10-27T06:00:00.000Z' },
+  { id: 'act_2', leadId: 'lead_2', companyId: 'cmp_nashilk', kind: 'MEETING', summary: 'Plant visit — discuss tolerances', dueDate: '2026-10-29', doneAt: null, notes: null, createdAt: '2026-10-26T06:00:00.000Z' },
+  { id: 'act_3', leadId: 'lead_5', companyId: 'cmp_nashilk', kind: 'WHATSAPP', summary: 'Share the EN8 bar price list', dueDate: '2026-10-28', doneAt: null, notes: null, createdAt: '2026-10-26T06:00:00.000Z' },
+  { id: 'act_4', leadId: 'lead_1', companyId: 'cmp_nashilk', kind: 'NOTE', summary: 'Spoke to Rahul — budget approved', dueDate: null, doneAt: '2026-10-26T06:00:00.000Z', notes: null, createdAt: '2026-10-26T06:00:00.000Z' },
+]
+
 export const notifications = [
   { id: 'ntf_1', title: 'Low stock: Flange Coupling FC-90', message: 'On hand 12 NOS, reorder level 15 NOS.', level: 'WARNING', read: false, createdAt: '2026-10-28T05:30:00.000Z' },
   { id: 'ntf_2', title: 'PO/26-27/0002 awaiting approval', message: 'Gujarat Bearings Co · ₹21,240', level: 'INFO', read: false, createdAt: '2026-10-27T09:10:00.000Z' },
@@ -361,6 +376,21 @@ export function createStore(): Store {
       expenses: [...expenses],
       loans: [...loans],
       notifications: [...notifications],
+      leads: leads.map((l) => ({
+        ...l,
+        // the next open follow-up, like the API's include
+        activities: leadActivities
+          .filter((a) => a.leadId === l.id && !a.doneAt)
+          .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))
+          .slice(0, 1),
+      })),
+      'lead-activities': leadActivities.map((a) => ({
+        ...a,
+        lead: (() => {
+          const l = leads.find((x) => x.id === a.leadId)
+          return l ? { id: l.id, code: l.code, name: l.name, companyName: l.companyName, stage: l.stage } : null
+        })(),
+      })),
       'audit-logs': [...auditLogs],
       batches: [...batches],
       serials: [...serials],
