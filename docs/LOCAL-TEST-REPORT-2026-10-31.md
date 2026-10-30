@@ -9,7 +9,13 @@ Environment: Node 22.20.0, bun 1.4.4 (installed for this run), Playwright Chromi
 Prisma client 6.19.3. Each manual scenario ran in its own synthetic tenant (`ZZ-Gate6x …`) created through the
 platform API, against the production build (`.next/standalone/server.js`) — not the dev server.
 
-## Verdict: **NOT READY**
+## Verdict (after the follow-up round below): **READY WITH KNOWN RISKS**
+
+The first pass of this report (kept below) ended **NOT READY** on three defects. All three are fixed, an audit
+round found and fixed three more, and every gate was re-run on the final build — see "Follow-up round".
+The remaining risks are listed at the end of that section.
+
+## First-pass verdict: **NOT READY** (superseded)
 
 The three business guarantees hold (inventory, billing maths, transaction safety — numbers below). The verdict is held
 back by three product defects that need a decision before they can be fixed:
@@ -173,3 +179,44 @@ No hang or deadlock was seen, so no `SHOW ENGINE INNODB STATUS` capture was need
 | `d229d14` | test(production): accept the status refusal for a losing parallel entry |
 | `d27dbb9` | fix(print): escape quotation print body and use the tenant's own company |
 | `9f9eb6e` | fix(print): escape sales order print and drop the hardcoded company name |
+
+## Follow-up round (same day) — fixes and re-run
+
+| ID | Severity | Issue | Fix | Regression test |
+|---|---|---|---|---|
+| F-1 | Critical | Backups (download + nightly) left out returns, Cash & Bank, loans, batches, serials, firm access | `defc83c` table list derived from the Prisma schema in FK order; backup **version 2**; a v1 file leaves tables it lacks untouched and says so; a v2 file missing a table, or lines without their header, is refused before anything changes | `tests/backup-plan.test.ts` (7) |
+| F-2 | High | e-Invoice JSON rejected by the IRP for any discount or freight/packing | `6edc126` lines carry gross / discount / taxable with tax worked out as `computeBillTotals`; freight and packing are taxable service lines (SAC 996511 / 998540) | `e2e/unit/einvoice-values.spec.ts` (3) |
+| F-3 | High | Over-issue cap trusted the client's `requiredQty` and was per request | `b48baba` requirement computed on the server (BOM × planned qty), cap covers issues + backflush under the work-order lock; items not on the BOM refused | `tests/material-issue-cap.test.ts` (7, incl. a parallel race) |
+| F-4 | High | Line discount above 100 % accepted → negative taxable value and bill; qty 1e15 accepted (paise lost) | `540c1e3` both shared calculators refuse discount/GST/cess outside 0–100 %, non-finite or oversized qty/rate, line value > ₹1e11, bad freight/packing | `e2e/unit/bill-line-limits.spec.ts` (9) |
+| F-5 | Medium | No clickjacking protection, no HSTS | `e3a2b49` `X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`, `Strict-Transport-Security` | audit probe on the production build |
+| F-6 | Low | Two unused packages with advisories; `bun.lock` behind `package.json` | `860bda7` removed `@mdxeditor/editor`, `react-syntax-highlighter`; lockfile regenerated | build + full suites |
+
+Audit probes on the final production build (two synthetic tenants, `gaudit.py`): tenant B could not read, cancel, pay
+or bill tenant A's invoice / customer / item / Tally XML / e-Invoice / backup (404/403 with either company header);
+spoofed `x-erp-*` headers ignored; anonymous → 401; operator refused on invoices, payments, users and backup; eight
+wrong passwords → 429; negative / zero / NaN quantities and rates, negative receipts, negative-stock adjustments,
+duplicate codes, empty and malformed JSON all refused with 4xx (no 500). Raw SQL is parameterised (`$queryRaw`
+templates only); the error handler never returns internals.
+
+### Re-run on the final build
+
+| Gate | Result |
+|---|---|
+| lint / tsc / test types | 0 errors (8 pre-existing lint warnings) |
+| build | PASS, 89/89 pages |
+| Playwright (`next start`) | **163 passed** (3.5 min) |
+| `bun test` | **339/339** across 29 files |
+| 6A / 6B / 6C / 6D | 25/25 · 37/37 · 13/13 · 8/8 (the over-issue probes and the e-Invoice check now pass) |
+| 7 backup/restore | backup v2 holds returns + Cash & Bank; three refusals; counts match; restore 0.21 s |
+| audit probes | 34/35 — the one "fail" is a 7 % GST rate being accepted, left as is on purpose (below) |
+
+### Known risks left open
+
+* **`xlsx` 0.18.5** (prototype pollution, ReDoS; parses uploaded import files). npm has no fixed release; the fix is
+  SheetJS 0.20.3 from `cdn.sheetjs.com`, which needs an explicit decision to take a package from outside the npm
+  registry. Uploads are already size- and row-capped and only reachable by signed-in users with import rights.
+* **`sharp` 0.34** advisories (libvips) — fixed only in a major upgrade; Next uses it for image optimisation.
+* **`prisma` CLI** (`deepmerge-ts` advisory) — build/CLI tooling, not reachable at runtime.
+* **GST rate slabs** are not enforced (any 0–100 % is accepted): which slabs are valid is a legal/business rule that
+  changed with GST 2.0, so it is not hard-coded.
+* Browser-only checks still not done by eye: invoice dialog preview, A4/A5 print preview, Settings → Restore screen.
