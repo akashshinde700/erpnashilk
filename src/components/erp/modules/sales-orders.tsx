@@ -202,22 +202,26 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Failed') }
   }
 
-  function printSo(so: SoRow) {
+  async function printSo(so: SoRow) {
     const items2 = so.items ?? []
+    let seller: { name?: string | null; gstin?: string | null } | null = null
+    try {
+      seller = await apiGet<{ name?: string | null; gstin?: string | null }>(`/api/settings?companyId=${companyId}`)
+    } catch { /* header falls back to a generic title */ }
     const html = `
       <div class="head">
-        <div><h1>Acme Precision Manufacturing Pvt Ltd</h1><div class="muted">Sales Order · ${so.number}</div></div>
+        <div><h1>${esc(seller?.name || 'Sales Order')}</h1><div class="muted">${seller?.gstin ? `GSTIN ${esc(seller.gstin)} · ` : ''}Sales Order · ${esc(so.number)}</div></div>
         <div style="text-align:right"><span class="badge">${so.status}</span><br/>
           <div class="muted">Order date: ${new Date(so.orderDate).toLocaleDateString('en-IN')}</div>
           ${so.deliveryDate ? `<div class="muted">Delivery: ${new Date(so.deliveryDate).toLocaleDateString('en-IN')}</div>` : ''}</div>
       </div>
-      <p><strong>Customer:</strong> ${so.customer?.name || '—'}${so.customer?.gstin ? ` · GSTIN ${so.customer.gstin}` : ''}
-      ${so.customer?.city ? `<br/><span class="muted">${so.customer.city}${so.customer.state ? ', ' + so.customer.state : ''}</span>` : ''}
+      <p><strong>Customer:</strong> ${esc(so.customer?.name || '—')}${so.customer?.gstin ? ` · GSTIN ${esc(so.customer.gstin)}` : ''}
+      ${so.customer?.city ? `<br/><span class="muted">${esc(so.customer.city)}${so.customer.state ? ', ' + esc(so.customer.state) : ''}</span>` : ''}
       ${so.customerPoNo ? `<br/><strong>Customer PO:</strong> ${esc(so.customerPoNo)}${so.customerPoDate ? ` dt. ${new Date(so.customerPoDate).toLocaleDateString('en-IN')}` : ''}` : ''}</p>
       ${so.shippingAddress ? `<p><strong>Ship To:</strong><br/><span style="white-space:pre-wrap">${esc(so.shippingAddress)}</span></p>` : ''}
       <table>
         <thead><tr><th>#</th><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Disc %</th><th class="num">GST %</th><th class="num">Amount</th></tr></thead>
-        <tbody>${items2.map((it, i) => `<tr><td>${i + 1}</td><td>${it.item?.name || it.itemId}</td><td class="num">${it.qty}${it.item?.uom ? ' ' + it.item.uom : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.discountPct}%</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`).join('')}</tbody>
+        <tbody>${items2.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.item?.name || it.itemId)}</td><td class="num">${it.qty}${it.item?.uom ? ' ' + esc(it.item.uom) : ''}</td><td class="num">${fmtMoney(it.rate)}</td><td class="num">${it.discountPct}%</td><td class="num">${it.gstRate}%</td><td class="num">${fmtMoney(it.lineTotal)}</td></tr>`).join('')}</tbody>
       </table>
       <table class="totals" style="width:280px;margin-left:auto">
         <tr><td>Subtotal</td><td class="num">${fmtMoney(so.subtotal)}</td></tr>

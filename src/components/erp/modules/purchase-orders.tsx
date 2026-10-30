@@ -187,7 +187,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
     const sup = po.supplier
     const buyer = po.company
     const lines2 = po.items ?? []
-    const buyerName = buyer?.name || 'Acme Precision Manufacturing Pvt Ltd'
+    const buyerName = buyer?.name || 'Company'
     // PAN = characters 3-12 of the GSTIN (when PAN itself is not stored)
     const buyerPan = buyer?.pan || (buyer?.gstin && buyer.gstin.length >= 12 ? buyer.gstin.slice(2, 12) : '')
     const buyerStateCode = buyer?.stateCode || (buyer?.gstin ? buyer.gstin.slice(0, 2) : '')

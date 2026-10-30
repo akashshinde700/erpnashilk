@@ -656,7 +656,7 @@ export default function SalesInvoicesModule({ companyId }: { companyId: string }
     const cust = inv.customer
     const lines2 = inv.items ?? []
     const interState = (inv.igst || 0) > 0
-    const sellerName = seller?.name || 'Acme Precision Manufacturing Pvt Ltd'
+    const sellerName = seller?.name || 'Company'
     // PAN = characters 3-12 of the GSTIN (when PAN itself is not stored)
     const sellerPan = seller?.pan || (seller?.gstin && seller.gstin.length >= 12 ? seller.gstin.slice(2, 12) : '')
     const sellerStateCode = seller?.stateCode || (seller?.gstin ? seller.gstin.slice(0, 2) : '')

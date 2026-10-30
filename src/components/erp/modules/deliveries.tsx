@@ -288,7 +288,7 @@ export default function DeliveriesModule({ companyId }: { companyId: string }) {
     } catch { /* fall back to the list row */ }
 
     const consignor = d.company
-    const consignorName = consignor?.name || 'Acme Precision Manufacturing Pvt Ltd'
+    const consignorName = consignor?.name || 'Company'
     const cust = d.salesOrder?.customer
     const custStateCode = cust?.stateCode || (cust?.gstin ? cust.gstin.slice(0, 2) : '')
     const wh = d.warehouse
