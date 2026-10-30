@@ -348,6 +348,29 @@
   max-height: 100dvh;
 }
 
+/*
+ * Grid tracks that may not be widened by their content.
+ *
+ * `grid-cols-N` produces `1fr` tracks, whose automatic minimum is the widest child's min-content. One
+ * nowrap number or chart can therefore push a whole dashboard sideways on a 320px phone.
+ * `minmax(0, 1fr)` clamps the track to the container and lets the children truncate instead.
+ */
+@utility grid-safe-1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+@utility grid-safe-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@utility grid-safe-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@utility grid-safe-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@utility grid-safe-6 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 /* Minimum comfortable touch target (WCAG 2.5.8 asks for 24px; 44px is the iOS/Android norm).
    Applied to icon-only controls so rows of small buttons stay tappable on a phone. */
 @utility touch-target {

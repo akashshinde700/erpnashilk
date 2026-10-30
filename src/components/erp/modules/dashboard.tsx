@@ -198,7 +198,7 @@ function QuickActions({ role }: { role: string }) {
   return (
     <SectionCard title="Quick actions">
       <p className="text-xs text-muted-foreground -mt-1 mb-2">One click to start the most-used documents</p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-safe-2 gap-2 sm:grid-safe-3 lg:grid-safe-6">
         {actions.map((a) => (
           <button
             key={a.id ?? a.key}
@@ -312,7 +312,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
 
   // List grid columns adapt to how many top-level list sections the role can see
   const listSlots = [canSalesOrders, canApprovals, canStock || canNotifications].filter(Boolean).length
-  const listCols = listSlots >= 3 ? 'lg:grid-cols-3' : listSlots === 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-1'
+  const listCols = listSlots >= 3 ? 'lg:grid-safe-3' : listSlots === 2 ? 'lg:grid-safe-2' : 'lg:grid-safe-1'
 
   if (error && !data) {
     return (
@@ -333,7 +333,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
   if (loading && !data) {
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-4">
+        <div className="grid grid-safe-1 gap-3 min-[400px]:grid-safe-2 md:grid-safe-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={`kpi-${i}`} className="h-[86px] rounded-xl" />
           ))}
@@ -364,7 +364,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
 
       {/* Money row — You'll Receive / You'll Pay / Cash / Bank */}
       {visibleMoney.length > 0 && (
-        <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-4">
+        <div className="grid grid-safe-1 gap-3 min-[400px]:grid-safe-2 md:grid-safe-4">
           {visibleMoney.map((c) => (
             <button
               key={c.title}
@@ -380,7 +380,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
       )}
 
       {/* KPI cards — clickable, drill into the owning module */}
-      <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 md:grid-cols-4">
+      <div className="grid grid-safe-1 gap-3 min-[400px]:grid-safe-2 md:grid-safe-4">
         {visibleStats.map((s) => (
           <button
             key={s.title}
@@ -406,8 +406,8 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
         className={cn(
           // `grid-cols-1` + `min-w-0` items: a chart that measured itself at a stale width must not
           // widen the column and drag the whole page into horizontal scroll on a phone.
-          'grid grid-cols-1 gap-4',
-          canWorkOrders ? 'lg:grid-cols-2' : 'lg:grid-cols-1',
+          'grid grid-safe-1 gap-4',
+          canWorkOrders ? 'lg:grid-safe-2' : 'lg:grid-safe-1',
           loading && data ? 'opacity-60 transition-opacity' : undefined,
         )}
       >
@@ -518,7 +518,7 @@ export default function DashboardModule({ companyId }: { companyId: string }) {
       </div>
 
       {/* Lists — role-gated */}
-      <div className={cn('grid gap-4', listCols)}>
+      <div className={cn('grid grid-safe-1 gap-4', listCols)}>
         {canSalesOrders && (
         <SectionCard title="Recent Sales Orders">
           {recentOrders.length === 0 ? (
