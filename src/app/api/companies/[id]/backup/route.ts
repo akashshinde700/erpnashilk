@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { tenantSnapshot } from '@/lib/backup-plan'
 import { ApiError, companyRequired, fail, handleError, logAudit, sessionUser } from '@/lib/erp-helpers'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -27,76 +28,8 @@ export async function GET(req: Request, { params }: Ctx) {
     const company = await db.company.findUnique({ where: { id } })
     if (!company) throw new ApiError('Company not found', 404)
 
-    // Gather the full tenant snapshot (read-only finds; line tables hang off their
-    // parent via relation filters since they carry no companyId column).
-    const w = { companyId: id }
-    const [
-      users, items, customers, suppliers, warehouses, machines, plants, boms,
-      enquiries, quotations, salesOrders, deliveries, salesInvoices, payments,
-      purchaseRequisitions, purchaseOrders, grns, purchaseInvoices,
-      workOrders, materialIssues, productionEntries, qcInspections,
-      stockBalances, stockLedger, expenses,
-      notifications, auditLogs, numberSeqs,
-      bomItems, enquiryItems, quotationItems, salesOrderItems, deliveryChallanItems,
-      salesInvoiceItems, purchaseRequisitionItems, purchaseOrderItems, grnItems,
-      purchaseInvoiceItems, materialIssueItems,
-    ] = await Promise.all([
-      db.user.findMany({ where: w, orderBy: { id: 'asc' }, omit: { passwordHash: true } }),
-      db.item.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.customer.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.supplier.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.warehouse.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.machine.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.plant.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.bom.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.enquiry.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.quotation.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.salesOrder.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.deliveryChallan.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.salesInvoice.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.payment.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.purchaseRequisition.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.purchaseOrder.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.grn.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.purchaseInvoice.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.workOrder.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.materialIssue.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.productionEntry.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.qcInspection.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.stockBalance.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.stockLedger.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.expense.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.notification.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.auditLog.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.numberSeq.findMany({ where: w, orderBy: { id: 'asc' } }),
-      db.bomItem.findMany({ where: { bom: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.enquiryItem.findMany({ where: { enquiry: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.quotationItem.findMany({ where: { quotation: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.salesOrderItem.findMany({ where: { salesOrder: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.deliveryChallanItem.findMany({ where: { challan: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.salesInvoiceItem.findMany({ where: { invoice: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.purchaseRequisitionItem.findMany({ where: { pr: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.purchaseOrderItem.findMany({ where: { po: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.grnItem.findMany({ where: { grn: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.purchaseInvoiceItem.findMany({ where: { invoice: { companyId: id } }, orderBy: { id: 'asc' } }),
-      db.materialIssueItem.findMany({ where: { issue: { companyId: id } }, orderBy: { id: 'asc' } }),
-    ])
-
-    const data: Record<string, unknown> = {
-      company,
-      users, items, customers, suppliers, warehouses, machines, plants, boms,
-      enquiries, quotations, salesOrders, deliveries, salesInvoices, payments,
-      purchaseRequisitions, purchaseOrders, grns, purchaseInvoices,
-      workOrders, materialIssues, productionEntries, qcInspections,
-      stockBalances, stockLedger, expenses,
-      notifications, auditLogs, numberSeqs,
-      bomItems, enquiryItems, quotationItems, salesOrderItems, deliveryChallanItems,
-      salesInvoiceItems, purchaseRequisitionItems, purchaseOrderItems, grnItems,
-      purchaseInvoiceItems, materialIssueItems,
-    }
-
-    const counts: Record<string, number> = {}
-    for (const [k, v] of Object.entries(data)) counts[k] = Array.isArray(v) ? v.length : v ? 1 : 0
+    // Every tenant table and its document lines, derived from the schema (src/lib/backup-plan.ts)
+    const payload = await tenantSnapshot(db, id)
 
     // Best-effort audit trail — never block the download.
     try {
@@ -112,10 +45,6 @@ export async function GET(req: Request, { params }: Ctx) {
 
     const now = new Date()
     const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const payload = {
-      meta: { exportedAt: now.toISOString(), companyId: id, companyName: company.name, version: 1, counts },
-      data,
-    }
 
     return new Response(JSON.stringify(payload), {
       status: 200,

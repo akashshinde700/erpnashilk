@@ -1,54 +1,9 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { ApiError, companyRequired, handleError, logAudit, ok, sessionUser } from '@/lib/erp-helpers'
+import { BACKUP_VERSION, backupPlan } from '@/lib/backup-plan'
 
 type Ctx = { params: Promise<{ id: string }> }
-
-/**
- * Tables in a backup (key in backup.data → Prisma model), in insert order (parents first).
- * `parent` = [foreign-key field, backup key of the header] for document lines (they carry no companyId).
- * Users are never restored: logins and passwords stay as they are now.
- */
-const TABLES: { key: string; model: string; parent?: [string, string] }[] = [
-  { key: 'warehouses', model: 'Warehouse' },
-  { key: 'plants', model: 'Plant' },
-  { key: 'machines', model: 'Machine' },
-  { key: 'items', model: 'Item' },
-  { key: 'suppliers', model: 'Supplier' },
-  { key: 'customers', model: 'Customer' },
-  { key: 'boms', model: 'Bom' },
-  { key: 'bomItems', model: 'BomItem', parent: ['bomId', 'boms'] },
-  { key: 'enquiries', model: 'Enquiry' },
-  { key: 'enquiryItems', model: 'EnquiryItem', parent: ['enquiryId', 'enquiries'] },
-  { key: 'quotations', model: 'Quotation' },
-  { key: 'quotationItems', model: 'QuotationItem', parent: ['quotationId', 'quotations'] },
-  { key: 'salesOrders', model: 'SalesOrder' },
-  { key: 'salesOrderItems', model: 'SalesOrderItem', parent: ['salesOrderId', 'salesOrders'] },
-  { key: 'workOrders', model: 'WorkOrder' },
-  { key: 'deliveries', model: 'DeliveryChallan' },
-  { key: 'deliveryChallanItems', model: 'DeliveryChallanItem', parent: ['challanId', 'deliveries'] },
-  { key: 'salesInvoices', model: 'SalesInvoice' },
-  { key: 'salesInvoiceItems', model: 'SalesInvoiceItem', parent: ['invoiceId', 'salesInvoices'] },
-  { key: 'purchaseRequisitions', model: 'PurchaseRequisition' },
-  { key: 'purchaseRequisitionItems', model: 'PurchaseRequisitionItem', parent: ['prId', 'purchaseRequisitions'] },
-  { key: 'purchaseOrders', model: 'PurchaseOrder' },
-  { key: 'purchaseOrderItems', model: 'PurchaseOrderItem', parent: ['poId', 'purchaseOrders'] },
-  { key: 'grns', model: 'Grn' },
-  { key: 'grnItems', model: 'GrnItem', parent: ['grnId', 'grns'] },
-  { key: 'purchaseInvoices', model: 'PurchaseInvoice' },
-  { key: 'purchaseInvoiceItems', model: 'PurchaseInvoiceItem', parent: ['invoiceId', 'purchaseInvoices'] },
-  { key: 'materialIssues', model: 'MaterialIssue' },
-  { key: 'materialIssueItems', model: 'MaterialIssueItem', parent: ['issueId', 'materialIssues'] },
-  { key: 'productionEntries', model: 'ProductionEntry' },
-  { key: 'qcInspections', model: 'QcInspection' },
-  { key: 'stockBalances', model: 'StockBalance' },
-  { key: 'stockLedger', model: 'StockLedger' },
-  { key: 'expenses', model: 'Expense' },
-  { key: 'payments', model: 'Payment' },
-  { key: 'notifications', model: 'Notification' },
-  { key: 'auditLogs', model: 'AuditLog' },
-  { key: 'numberSeqs', model: 'NumberSeq' },
-]
 
 // Company columns that belong to the platform subscription, never taken from a backup
 const COMPANY_KEEP = new Set(['id', 'isPlatform', 'slug', 'planId', 'status', 'billingCycle', 'paidUntil', 'trialEndsAt', 'maxUsers', 'maxWarehouses', 'maxItems', 'createdAt', 'updatedAt'])
@@ -78,26 +33,37 @@ export async function POST(req: Request, { params }: Ctx) {
     if (!body?.backup?.data || !body.backup.meta) throw new ApiError('This is not a ManuFlow backup file', 400)
     if (String(body.confirmName || '').trim() !== company.name) throw new ApiError('Type the company name exactly to confirm', 400)
     const { meta, data } = body.backup
-    if (meta.version !== 1) throw new ApiError(`Unsupported backup version ${meta.version}`, 400)
+    if (meta.version !== 1 && meta.version !== BACKUP_VERSION) throw new ApiError(`Unsupported backup version ${meta.version}`, 400)
     if (meta.companyId !== companyId) throw new ApiError('This backup belongs to a different company — it can only be restored into the company it was taken from', 400)
+
+    // Version-1 files predate returns, Cash & Bank, batches and serials. A table the file does not
+    // carry is left exactly as it is (neither emptied nor filled) rather than wiped.
+    const tables = backupPlan().filter((t) => t.restore)
+    const skipped = tables.filter((t) => data[t.key] === undefined).map((t) => t.key)
+    const present = tables.filter((t) => data[t.key] !== undefined)
+    if (meta.version === BACKUP_VERSION && skipped.length) throw new ApiError(`Backup is incomplete: missing ${skipped.join(', ')}`, 400)
+    // Deleting a header cascades to its lines, so lines missing from the file would be lost for good
+    const orphanedLines = tables.filter((t) => t.parent && skipped.includes(t.key) && !skipped.includes(t.parent.key))
+    if (orphanedLines.length) throw new ApiError(`Backup is incomplete: missing ${orphanedLines.map((t) => t.key).join(', ')}`, 400)
 
     // Validate + clean every table before touching anything
     const rowsByKey = new Map<string, Record<string, unknown>[]>()
     const idsByKey = new Map<string, Set<string>>()
-    for (const t of TABLES) {
+    for (const t of present) {
       const raw = data[t.key]
-      if (raw !== undefined && !Array.isArray(raw)) throw new ApiError(`Backup table ${t.key} is malformed`, 400)
+      if (!Array.isArray(raw)) throw new ApiError(`Backup table ${t.key} is malformed`, 400)
       const allowed = scalarFields(t.model)
-      const rows = ((raw as Record<string, unknown>[] | undefined) ?? []).map((r) => {
+      const rows = (raw as Record<string, unknown>[]).map((r) => {
         const clean: Record<string, unknown> = {}
         for (const [k, v] of Object.entries(r ?? {})) if (allowed.has(k)) clean[k] = v
         if (allowed.has('companyId')) clean.companyId = companyId // never write into another tenant
         return clean
       })
       if (t.parent) {
-        const [fk, parentKey] = t.parent
-        const parents = idsByKey.get(parentKey) ?? new Set()
-        if (rows.some((r) => !parents.has(String(r[fk])))) throw new ApiError(`Backup is inconsistent: ${t.key} refers to missing ${parentKey}`, 400)
+        const parents = idsByKey.get(t.parent.key)
+        if (!parents) throw new ApiError(`Backup is inconsistent: ${t.key} without ${t.parent.key}`, 400)
+        const fk = t.parent.fk
+        if (rows.some((r) => !parents.has(String(r[fk])))) throw new ApiError(`Backup is inconsistent: ${t.key} refers to missing ${t.parent.key}`, 400)
       }
       rowsByKey.set(t.key, rows)
       idsByKey.set(t.key, new Set(rows.map((r) => String(r.id))))
@@ -105,12 +71,9 @@ export async function POST(req: Request, { params }: Ctx) {
 
     const total = [...rowsByKey.values()].reduce((s, r) => s + r.length, 0)
     await db.$transaction(async (tx) => {
-      const w = { where: { companyId } }
-      // Remove current data (children before parents; document lines cascade with their headers)
-      for (const m of ['StockLedger', 'StockBalance', 'Payment', 'Expense', 'Notification', 'NumberSeq', 'AuditLog', 'QcInspection',
-        'ProductionEntry', 'MaterialIssue', 'SalesInvoice', 'PurchaseInvoice', 'DeliveryChallan', 'Grn', 'WorkOrder', 'SalesOrder',
-        'Quotation', 'Enquiry', 'PurchaseOrder', 'PurchaseRequisition', 'Bom', 'Customer', 'Supplier', 'Item', 'Machine', 'Plant', 'Warehouse']) {
-        await delegate(tx, m).deleteMany(w)
+      // Remove current data, children before parents (document lines cascade with their headers)
+      for (const t of [...present].reverse()) {
+        if (!t.parent) await delegate(tx, t.model).deleteMany({ where: { companyId } })
       }
       // Company profile from the backup (subscription fields stay)
       const backupCompany = (data.company ?? {}) as Record<string, unknown>
@@ -118,7 +81,7 @@ export async function POST(req: Request, { params }: Ctx) {
       const profile = Object.fromEntries(Object.entries(backupCompany).filter(([k]) => companyFields.has(k) && !COMPANY_KEEP.has(k)))
       if (Object.keys(profile).length) await tx.company.update({ where: { id: companyId }, data: profile })
       // Re-insert in dependency order
-      for (const t of TABLES) {
+      for (const t of present) {
         const rows = rowsByKey.get(t.key) ?? []
         for (let i = 0; i < rows.length; i += 500) await delegate(tx, t.model).createMany({ data: rows.slice(i, i + 500) })
       }
@@ -126,9 +89,10 @@ export async function POST(req: Request, { params }: Ctx) {
 
     await logAudit(db as never, {
       companyId, userName: me.name, action: 'CONFIG', entity: 'COMPANY', entityId: companyId,
-      details: `Data restored from backup taken ${String((meta as { exportedAt?: string }).exportedAt || '').slice(0, 19).replace('T', ' ')} (${total} records)`,
+      details: `Data restored from backup taken ${String((meta as { exportedAt?: string }).exportedAt || '').slice(0, 19).replace('T', ' ')} (${total} records${skipped.length ? `; not in file: ${skipped.join(', ')}` : ''})`,
     })
-    return ok({ restored: total }, `Backup restored — ${total} records`)
+    const note = skipped.length ? ` — this older backup has no ${skipped.join(', ')}; those were left as they are` : ''
+    return ok({ restored: total, skipped }, `Backup restored — ${total} records${note}`)
   } catch (e) {
     return handleError(e)
   }
