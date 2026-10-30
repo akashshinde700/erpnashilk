@@ -69,7 +69,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: LoginUser, co
   }
 
   return (
-    <div className="grid min-h-screen bg-background lg:grid-cols-[1.05fr_1fr]">
+    <div className="min-h-screen-safe grid bg-background lg:grid-cols-[1.05fr_1fr]">
       {/* Brand panel — the only place in the app that uses the deep emerald field, so signing in
           feels like entering the product rather than filling a generic form. */}
       <aside className="relative hidden overflow-hidden bg-[oklch(0.24_0.06_165)] p-10 text-emerald-50 lg:flex lg:flex-col lg:justify-between xl:p-14">

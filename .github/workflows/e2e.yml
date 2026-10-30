@@ -54,7 +54,9 @@ jobs:
         run: npx next build --webpack
 
       - name: Run Playwright tests
-        run: npx playwright test --reporter=list,html
+        # `github` adds a check annotation per failed test, so a failure is readable from the
+        # Checks API without downloading the HTML report.
+        run: npx playwright test --reporter=list,html,github
 
       - name: Upload HTML report
         if: always()

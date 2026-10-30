@@ -102,7 +102,7 @@ export default function PlatformAdmin() {
   }
 
   if (booting) {
-    return <div className="flex min-h-screen items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+    return <div className="flex min-h-screen-safe items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
   }
   if (!me) {
     return (
@@ -121,7 +121,7 @@ export default function PlatformAdmin() {
   }
   if (me.user.role !== 'SUPER_ADMIN') {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="flex min-h-screen-safe flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-lg font-semibold">Platform administrator access required</p>
         <p className="text-sm text-muted-foreground">You are signed in as {me.user.email}.</p>
         <Button onClick={() => { window.location.href = '/' }}>Go to ERP</Button>
@@ -136,7 +136,7 @@ export default function PlatformAdmin() {
   )
 
   return (
-    <div className="min-h-screen bg-muted/40">
+    <div className="min-h-screen-safe bg-muted/40">
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
           <div className="flex items-center gap-3">

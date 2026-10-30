@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+import { ServiceWorkerRegistrar } from "@/components/pwa/service-worker";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -43,6 +44,8 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
+  // No maximumScale/user-scalable lock: pinch-zoom is an accessibility feature.
+  viewportFit: "cover",
   colorScheme: "light dark",
 };
 
@@ -61,6 +64,7 @@ export default function RootLayout({
         </a>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
           {children}
+          <ServiceWorkerRegistrar />
           <Toaster richColors position="bottom-right" closeButton />
         </ThemeProvider>
       </body>

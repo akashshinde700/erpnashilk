@@ -5,7 +5,7 @@ import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import { io, type Socket } from 'socket.io-client'
 import {
-  Bell, Building2, CheckCheck, ChevronRight, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
+  Bell, Building2, Check, CheckCheck, ChevronRight, Factory, Keyboard, KeyRound, Loader2, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen,
   Search, Star, Sun, X, Command as CommandIcon, Clock, Sparkles, Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,7 @@ import { MODULES, MODULE_GROUPS, findModule } from '@/components/erp/registry'
 import { defaultFilter } from 'cmdk'
 import { Kbd, NEW_DOC_EVENT, openCreate } from '@/components/erp/kit'
 import LoginScreen, { type LoginUser, type LoginCompany } from '@/components/erp/login-screen'
+import { ConnectionStatus } from '@/components/erp/connection-status'
 import ShortcutsDialog from '@/components/erp/shortcuts-help'
 import ChangePasswordDialog from '@/components/erp/change-password-dialog'
 import PinDialog from '@/components/erp/pin-dialog'
@@ -205,6 +206,55 @@ export default function ErpApp() {
   const [companyId, setCompanyId] = React.useState<string | null>(null)
   const [activeKey, setActiveKey] = React.useState('dashboard')
   const [navOpen, setNavOpen] = React.useState(false)
+  const drawerRef = React.useRef<HTMLDivElement | null>(null)
+
+  /**
+   * Mobile navigation drawer behaviour. The panel is a modal surface, so while it is open the page
+   * behind it must not scroll, Escape must close it, Tab must stay inside it, and focus must go back
+   * to the hamburger when it closes. (Selecting an item closes the drawer in goToModule.)
+   */
+  React.useEffect(() => {
+    if (!navOpen) return
+    const panel = drawerRef.current
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const bodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden' // no background scroll on touch or wheel
+
+    const focusables = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null)
+
+    focusables()[0]?.focus()
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setNavOpen(false)
+        return
+      }
+      if (e.key !== 'Tab') return
+      const list = focusables()
+      if (list.length === 0) return
+      const first = list[0]
+      const last = list[list.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = bodyOverflow
+      previouslyFocused?.focus?.()
+    }
+  }, [navOpen])
   const [switching, setSwitching] = React.useState(false)
   const socketRef = React.useRef<Socket | null>(null)
 
@@ -595,7 +645,7 @@ export default function ErpApp() {
   // ---------- auth gate ----------
   if (booting) {
     return (
-      <div className="grid min-h-screen place-items-center bg-background" role="status" aria-live="polite">
+      <div className="min-h-screen-safe grid place-items-center bg-background" role="status" aria-live="polite">
         <div className="flex flex-col items-center gap-3">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground elev-1">
             <Factory className="h-5 w-5" aria-hidden="true" />
@@ -648,7 +698,7 @@ export default function ErpApp() {
             onClick={() => toggleFav(m.key)}
             className={cn(
               'mr-1.5 cursor-pointer rounded p-1 transition-opacity',
-              isFav ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+              isFav ? 'opacity-100' : 'opacity-100 hover:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100',
               active ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted',
             )}
             aria-label={isFav ? `Unpin ${m.label}` : `Pin ${m.label} to favorites`}
@@ -676,8 +726,14 @@ export default function ErpApp() {
             </div>
           )}
           {navOpen && (
-            <Button variant="ghost" size="icon" className="ml-auto lg:hidden h-8 w-8" onClick={() => setNavOpen(false)}>
-              <X className="h-4 w-4" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-9 w-9 shrink-0 lg:hidden"
+              onClick={() => setNavOpen(false)}
+              aria-label="Close navigation"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           )}
         </div>
@@ -753,23 +809,29 @@ export default function ErpApp() {
   const dark = themeMounted && resolvedTheme === 'dark'
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen-safe flex bg-background">
       {/* Desktop sidebar */}
-      <aside className={cn('sticky top-0 hidden h-screen shrink-0 border-r bg-sidebar transition-[width] duration-200 lg:block', collapsed ? 'w-[60px]' : 'w-60')}>
+      <aside className={cn('h-screen-safe sticky top-0 hidden shrink-0 border-r bg-sidebar transition-[width] duration-200 lg:block', collapsed ? 'w-[60px]' : 'w-60')}>
         {buildSidebar(collapsed)}
       </aside>
 
       {/* Mobile nav overlay */}
       {navOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
-        <div className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]" onClick={() => setNavOpen(false)} />
-        <div className="absolute inset-y-0 left-0 w-72 border-r bg-sidebar elev-2">{buildSidebar(false)}</div>
+          <div className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]" onClick={() => setNavOpen(false)} aria-hidden="true" />
+          <div
+            ref={drawerRef}
+            className="pb-safe pt-safe absolute inset-y-0 left-0 flex w-[min(18rem,85vw)] flex-col overflow-hidden border-r bg-sidebar elev-2"
+          >
+            {buildSidebar(false)}
+          </div>
         </div>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <ConnectionStatus />
         {/* Topbar */}
-        <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-card/85 px-3 backdrop-blur-md supports-[backdrop-filter]:bg-card/70 sm:px-4">
+        <header className="pt-safe sticky top-0 z-40 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center gap-1.5 border-b bg-card/85 px-2 backdrop-blur-md supports-[backdrop-filter]:bg-card/70 sm:gap-2 sm:px-4">
           <Button variant="ghost" size="icon" className="lg:hidden h-9 w-9 shrink-0" onClick={() => setNavOpen(true)} aria-label="Open navigation">
             <Menu className="h-5 w-5" />
           </Button>
@@ -812,7 +874,7 @@ export default function ErpApp() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 shrink-0"
+            className="hidden h-9 w-9 shrink-0 sm:inline-flex"
             onClick={toggleTheme}
             aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
             title={dark ? 'Light mode' : 'Dark mode'}
@@ -939,6 +1001,26 @@ export default function ErpApp() {
                 {dark ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
                 {dark ? 'Light mode' : 'Dark mode'}
               </DropdownMenuItem>
+              {/* The header tenant picker is desktop-only, so phones get the same control here. */}
+              <div className="sm:hidden">
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Company
+                </DropdownMenuLabel>
+                <div className="max-h-52 overflow-y-auto">
+                  {companyList.map((c) => (
+                    <DropdownMenuItem
+                      key={c.id}
+                      disabled={!canSwitch}
+                      onSelect={() => { if (c.id !== companyId) switchCompany(c.id) }}
+                    >
+                      <Check className={cn('mr-2 h-4 w-4', c.id === companyId ? 'opacity-100 text-primary' : 'opacity-0')} aria-hidden="true" />
+                      <span className="truncate">{c.name}</span>
+                      {c.id === companyId && <span className="sr-only"> (current company)</span>}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void logout()} className="text-destructive focus:text-destructive">
                 <LogOut className="h-4 w-4 mr-2" />Sign out
@@ -951,7 +1033,7 @@ export default function ErpApp() {
         <main
   id="erp-main"
   tabIndex={-1}
-  className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6"
+  className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-4 pb-6 sm:px-5 sm:py-5 lg:px-6 lg:py-6"
 >
           {!companyId || switching ? (
             <div className="h-64 grid place-items-center">
@@ -966,7 +1048,7 @@ export default function ErpApp() {
         </main>
 
         {/* Sticky footer */}
-        <footer className="mt-auto border-t bg-card/60">
+        <footer className="mt-auto border-t bg-card/60 pb-safe">
           <div className="mx-auto flex max-w-[1600px] flex-col items-center justify-between gap-1.5 px-4 py-3 text-xs text-muted-foreground sm:flex-row">
             <div className="flex items-center gap-1.5">
               <Factory className="h-3.5 w-3.5 text-primary" aria-hidden="true" />

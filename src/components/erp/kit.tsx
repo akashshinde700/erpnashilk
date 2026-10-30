@@ -309,8 +309,29 @@ function compareSortValues(a: unknown, b: unknown): number {
   return sa < sb ? -1 : sa > sb ? 1 : 0
 }
 
+/**
+ * Desktop/tablet vs phone, resolved after hydration.
+ *
+ * DataTable renders exactly one tree — never both — so screen readers, DOM queries and text search see a
+ * single copy of every record. The server snapshot says "desktop", which is also the pre-hydration paint:
+ * the table is the default document, and phones swap to record cards the moment React runs.
+ */
+const DESKTOP_QUERY = '(min-width: 768px)'
+function subscribeDesktop(onChange: () => void) {
+  const mql = window.matchMedia(DESKTOP_QUERY)
+  mql.addEventListener('change', onChange)
+  return () => mql.removeEventListener('change', onChange)
+}
+function useIsDesktop(): boolean {
+  return React.useSyncExternalStore(
+    subscribeDesktop,
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => true,
+  )
+}
+
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey, serverPagination, sortable,
+  columns, rows, loading, emptyText = 'No records yet', searchPlaceholder, onRowClick, maxHeight = 'auto', pageSize = 12, csvExport, xlsxExport, highlightId, moduleKey, savedViewsKey, serverPagination, sortable, mobileView = 'cards',
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -332,6 +353,15 @@ export function DataTable<T extends { id: string }>({
   savedViewsKey?: string
   /** Opts the whole table into column sorting: every column with usable values (a sortValue extractor, or at least one row with a non-null raw value under its key) gets a clickable header cycling asc → desc → off. Client mode sorts the full filtered set before pagination (filter → sort → paginate); server mode only reorders the current page slice (the API owns the real order). undefined/null values sort last in both directions. Sort state persists across refetches. No effect when omitted. */
   sortable?: boolean
+  /**
+   * How a phone (< 768px) shows the records:
+   *  • 'cards' (default) — one card per record: primary identifier, secondary fields as label/value
+   *    pairs, actions in the card header. Every non-`hideOnMobile` column is still shown, so nothing is
+   *    silently dropped; the desktop table is unchanged.
+   *  • 'scroll' — the full table with horizontal scrolling, for wide numeric matrices where the column
+   *    alignment itself carries meaning (a comparison across many periods, for example).
+   */
+  mobileView?: 'cards' | 'scroll'
   /** Opts into server-side pagination: `rows` must then be exactly the page slice the API returned (already filtered + paginated). The local text filter and internal page state are bypassed — Prev/Next and the "Showing …" footer are driven by `page`/`onPageChange`/`total`, and (with `onSearchChange`) the search text is pushed to the module debounced by 300ms (mount run skipped). Omit for the default fully client-side behavior (zero change). */
   serverPagination?: {
     /** 0-based page index, controlled by the module (Prev → onPageChange(page - 1), Next → onPageChange(page + 1)). */
@@ -554,6 +584,13 @@ export function DataTable<T extends { id: string }>({
     ? Math.max(1, Math.ceil(serverPagination.total / serverPagination.pageSize))
     : Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageRows = serverPagination ? displayRows : displayRows.slice(page * pageSize, page * pageSize + pageSize)
+
+  // Phone cards are cheap individually but a screen can hand us a 200-row page. Render a slice and
+  // let the user ask for more, so a mid-range Android does not build 200 DOM cards at once.
+  const CARD_PAGE = 40
+  const [cardLimit, setCardLimit] = React.useState(CARD_PAGE)
+  React.useEffect(() => { setCardLimit(CARD_PAGE) }, [q, pageRows.length])
+  const cardRows = pageRows.length > cardLimit ? pageRows.slice(0, cardLimit) : pageRows
   const pagerPage = serverPagination ? serverPagination.page : page
   const pagerPageSize = serverPagination ? serverPagination.pageSize : pageSize
   const pagerTotal = serverPagination ? serverPagination.total : filtered.length
@@ -584,6 +621,56 @@ export function DataTable<T extends { id: string }>({
     return map
   }, [hasSum, columns, sumRows])
   const showFooter = hasSum && !loading && sumRows.length > 0
+
+  // ---- Phone presentation (cards) ------------------------------------------------------------
+  const isDesktop = useIsDesktop()
+  const useCards = mobileView === 'cards' && !isDesktop
+
+  /** A column holding only row actions — rendered in the card header instead of as a field. */
+  const isActionColumn = (c: Column<T>) => c.key === 'actions' || c.key === 'action'
+  const cardColumns = columns.filter((c) => !c.hideOnMobile && !isActionColumn(c))
+  const cardActionColumns = columns.filter((c) => !c.hideOnMobile && isActionColumn(c))
+  const cardTitleColumn = cardColumns[0]
+  const cardFieldColumns = cardColumns.slice(1)
+
+  const emptyState = (
+    <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-muted-foreground">
+      <div className="grid h-11 w-11 place-items-center rounded-full bg-muted">
+        <Inbox className="h-5 w-5" aria-hidden="true" />
+      </div>
+      <p className="text-sm font-medium text-foreground">
+        {q.trim() ? `No matches for “${q.trim()}”` : emptyText}
+      </p>
+      <p className="text-xs">
+        {q.trim() ? 'Try a shorter search, or clear it to see everything.' : 'New records appear here as soon as they are saved.'}
+      </p>
+      {q.trim() && (
+        <Button variant="outline" size="sm" className="mt-1" onClick={() => { setQ(''); setAppliedView(null) }}>
+          Clear search
+        </Button>
+      )}
+    </div>
+  )
+
+  /** Totals for the card list: same numbers as the table footer, laid out as a summary panel. */
+  const cardTotals = showFooter && totals ? (
+    <dl className="grid grid-cols-2 gap-2 border-t bg-muted/40 px-3 py-2.5 text-xs">
+      <div className="col-span-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Total ({sumRows.length})
+      </div>
+      {columns.filter((c) => c.sum).map((c) => {
+        const total = totals.get(c.key) ?? null
+        return (
+          <div key={c.key} className="min-w-0">
+            <dt className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{c.header}</dt>
+            <dd className="whitespace-nowrap font-semibold tabular">
+              {total === null ? '—' : c.sumFormat === 'money' ? fmtMoney(total) : fmtNum(total)}
+            </dd>
+          </div>
+        )
+      })}
+    </dl>
+  ) : null
 
   return (
     <div className="space-y-3">
@@ -695,11 +782,94 @@ export function DataTable<T extends { id: string }>({
       )}
       <div
         ref={wrapperRef}
-        className="overflow-hidden rounded-xl border bg-card elev-1"
+        className={cn('overflow-hidden rounded-xl border bg-card elev-1', mobileView === 'scroll' && 'scroll-shadow-x')}
         aria-busy={loading || undefined}
         role="region"
         aria-label={searchPlaceholder ? `${searchPlaceholder} table` : 'Records table'}
       >
+        {useCards ? (
+          <div>
+            {loading ? (
+              <div className="space-y-2 p-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={`sk-${i}`} className="rounded-xl border bg-card p-3">
+                    <Skeleton className="h-4 w-2/5" />
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <Skeleton className="h-3 w-3/4" />
+                      <Skeleton className="h-3 w-2/3" />
+                      <Skeleton className="h-3 w-1/2" />
+                      <Skeleton className="h-3 w-1/2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : pageRows.length === 0 ? (
+              emptyState
+            ) : (
+              <ul className="divide-y">
+                {cardRows.map((row) => {
+                  const highlighted = highlightId !== null && highlightId !== undefined && String(row.id) === highlightId
+                  return (
+                    <li
+                      key={row.id}
+                      data-row-id={String(row.id)}
+                      onClick={() => onRowClick?.(row)}
+                      onKeyDown={onRowClick ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row) }
+                      } : undefined}
+                      tabIndex={onRowClick ? 0 : undefined}
+                      aria-label={onRowClick ? (searchPlaceholder ? `Open record from ${searchPlaceholder}` : 'Open record') : undefined}
+                      className={cn(
+                        'px-3 py-3 transition-colors',
+                        onRowClick && 'cursor-pointer focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring',
+                        highlighted ? 'bg-warning-soft' : 'hover:bg-primary/5',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1 text-sm font-medium">
+                          {cardTitleColumn ? cardTitleColumn.render(row) : null}
+                        </div>
+                        {cardActionColumns.length > 0 && (
+                          // Action menus are interactive islands inside a clickable card: stop the row
+                          // click so "delete"/"edit" never also opens the record.
+                          <div
+                            className="flex shrink-0 items-center gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            {cardActionColumns.map((c) => (
+                              <React.Fragment key={c.key}>{c.render(row)}</React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {cardFieldColumns.length > 0 && (
+                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                          {cardFieldColumns.map((c) => (
+                            <div key={c.key} className="min-w-0">
+                              <dt className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                {c.header || c.key}
+                              </dt>
+                              <dd className="text-[13px] leading-snug">{c.render(row)}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            {!loading && pageRows.length > cardRows.length && (
+              <div className="border-t p-3">
+                <Button variant="outline" className="w-full" onClick={() => setCardLimit((n) => n + CARD_PAGE)}>
+                  Show {Math.min(CARD_PAGE, pageRows.length - cardRows.length)} more of {pageRows.length - cardRows.length}
+                </Button>
+              </div>
+            )}
+            {cardTotals}
+          </div>
+        ) : (
         <ScrollArea className={maxHeight !== 'auto' ? maxHeight : undefined} style={maxHeight !== 'auto' ? { height: maxHeight } : undefined}>
           <Table>
             <TableHeader className="erp-table-head">
@@ -740,23 +910,8 @@ export function DataTable<T extends { id: string }>({
                 ))
               ) : pageRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={columns.length} className="h-44 text-center">
-                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                      <div className="grid h-11 w-11 place-items-center rounded-full bg-muted">
-                        <Inbox className="h-5 w-5" aria-hidden="true" />
-                      </div>
-                      <p className="text-sm font-medium text-foreground">
-                        {q.trim() ? `No matches for “${q.trim()}”` : emptyText}
-                      </p>
-                      <p className="text-xs">
-                        {q.trim() ? 'Try a shorter search, or clear it to see everything.' : 'New records appear here as soon as they are saved.'}
-                      </p>
-                      {q.trim() && (
-                        <Button variant="outline" size="sm" className="mt-1" onClick={() => { setQ(''); setAppliedView(null) }}>
-                          Clear search
-                        </Button>
-                      )}
-                    </div>
+                  <TableCell colSpan={columns.length} className="p-0">
+                    {emptyState}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -813,6 +968,7 @@ export function DataTable<T extends { id: string }>({
             )}
           </Table>
         </ScrollArea>
+        )}
       </div>
       {pagerTotal > pagerPageSize && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
@@ -882,7 +1038,7 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Phones: full-screen sheet so long forms scroll naturally; desktop: centred dialog */}
       <DialogContent className={cn(
-        'max-h-[90vh] overflow-y-auto max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:max-w-full max-sm:w-full max-sm:rounded-none max-sm:p-4',
+        'max-h-[90dvh] overflow-y-auto max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:max-w-full max-sm:w-full max-sm:rounded-none max-sm:p-4 max-sm:pt-safe',
         wide ? 'sm:max-w-3xl' : 'sm:max-w-lg',
       )}>
         <DialogHeader>
@@ -910,7 +1066,7 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
           <div className="grid gap-4 py-2">{children}</div>
           {/* Solid, bordered footer: on long forms the actions stay reachable while the body scrolls,
               and content never shows through the bar. */}
-          <DialogFooter className="sticky bottom-0 -mx-6 mt-4 items-center gap-2 border-t bg-popover px-6 py-3">
+          <DialogFooter className="pb-safe-4 sticky bottom-0 -mx-6 mt-4 items-center gap-2 border-t bg-popover px-6 pt-3 sm:pb-3">
             <span className="mr-auto hidden text-[11px] text-muted-foreground sm:inline">
               <Kbd>Ctrl</Kbd> <span className="mx-0.5">+</span> <Kbd>S</Kbd> to save
             </span>

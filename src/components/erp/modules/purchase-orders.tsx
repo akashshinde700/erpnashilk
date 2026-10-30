@@ -463,7 +463,7 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           </DialogHeader>
           {detail && (
             <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
                 <div>Order date: <span className="text-foreground font-medium"><DateCell value={detail.orderDate} /></span></div>
                 <div>Expected: <span className="text-foreground font-medium"><DateCell value={detail.expectedDate} /></span></div>
                 <div>{detail.approvedBy ? `Approved by ${detail.approvedBy}` : 'Not approved yet'}</div>

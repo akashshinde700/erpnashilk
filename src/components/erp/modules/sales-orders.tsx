@@ -490,7 +490,7 @@ export default function SalesOrdersModule({ companyId }: { companyId: string }) 
           </DialogHeader>
           {detail && (
             <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-3">
                 <div>Order date: <span className="text-foreground font-medium"><DateCell value={detail.orderDate} /></span></div>
                 <div>Delivery: <span className="text-foreground font-medium"><DateCell value={detail.deliveryDate} /></span></div>
                 <div>Lines: <span className="text-foreground font-medium">{detail.items?.length ?? 0}</span></div>
