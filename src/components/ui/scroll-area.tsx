@@ -8,8 +8,15 @@ import { cn } from "@/lib/utils"
 function ScrollArea({
   className,
   children,
+  fitWidth = false,
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
+  /**
+   * Keep the content as wide as the area. Radix wraps children in a `display: table` box that grows to the content
+   * and clips it (overflow-x: hidden), so a wide table is cut off instead of wrapping or scrolling itself.
+   */
+  fitWidth?: boolean
+}) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -18,7 +25,7 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+        className={cn("focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1", fitWidth && "[&>div]:!block")}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

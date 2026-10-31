@@ -71,6 +71,8 @@ const SESSION_KEY = 'erp_user'
 const FAV_KEY = 'erp_fav_modules'
 const RECENT_KEY = 'erp_recent_modules'
 const COLLAPSE_KEY = 'erp_sidebar_collapsed'
+// Below this width the sidebar starts as the icon rail, so small laptops keep the room for the data
+const SIDEBAR_FULL_MIN_WIDTH = 1280
 
 const LEVEL_DOT: Record<string, string> = {
   INFO: 'bg-info',
@@ -268,10 +270,23 @@ export default function ErpApp() {
   const { resolvedTheme, setTheme } = useTheme()
   const [themeMounted, setThemeMounted] = React.useState(false)
 
+  // No choice saved yet: the sidebar follows the window size. A click on the toggle saves a choice, which then wins.
+  React.useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${SIDEBAR_FULL_MIN_WIDTH - 1}px)`)
+    const follow = () => {
+      try {
+        if (window.localStorage.getItem(COLLAPSE_KEY) === null) setCollapsed(mql.matches)
+      } catch { /* private mode */ }
+    }
+    mql.addEventListener('change', follow)
+    return () => mql.removeEventListener('change', follow)
+  }, [])
+
   // ---------- boot: restore session + prefs ----------
   React.useEffect(() => {
     try {
-      setCollapsed(window.localStorage.getItem(COLLAPSE_KEY) === '1')
+      const savedCollapse = window.localStorage.getItem(COLLAPSE_KEY)
+      setCollapsed(savedCollapse === null ? window.innerWidth < SIDEBAR_FULL_MIN_WIDTH : savedCollapse === '1')
       setFavs(readJsonArray(FAV_KEY))
       setRecents(readJsonArray(RECENT_KEY))
     } catch { /* private mode */ }
@@ -859,13 +874,13 @@ export default function ErpApp() {
           <Button
             variant="outline"
             size="sm"
-            className="h-9 w-9 shrink-0 gap-1.5 px-0 font-normal text-muted-foreground transition-colors hover:text-foreground sm:w-auto sm:px-3"
+            className="h-9 w-9 shrink-0 gap-1.5 px-0 font-normal text-muted-foreground transition-colors hover:text-foreground lg:w-auto lg:px-3"
             onClick={() => setPaletteOpen(true)}
             aria-label="Search records (Ctrl+K)"
           >
             <Search className="h-4 w-4" aria-hidden="true" />
-            <span className="hidden text-xs sm:inline">Search…</span>
-            <kbd className="ml-1 hidden h-5 items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground md:inline-flex">
+            <span className="hidden text-xs lg:inline">Search…</span>
+            <kbd className="ml-1 hidden h-5 items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground lg:inline-flex">
             <CommandIcon className="h-2.5 w-2.5" aria-hidden="true" />K
             </kbd>
           </Button>
@@ -885,10 +900,10 @@ export default function ErpApp() {
           {/* Company switcher */}
           <div className="hidden sm:flex items-center gap-2">
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              {switching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="hidden md:inline">Tenant:</span>}
+              {switching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="hidden lg:inline">Tenant:</span>}
             </div>
             <Select value={companyId ?? ''} onValueChange={switchCompany} disabled={!canSwitch}>
-              <SelectTrigger className="h-9 w-[130px] sm:w-[200px] text-xs" aria-label="Switch company (tenant)">
+              <SelectTrigger className="h-9 w-[130px] lg:w-[200px] text-xs" aria-label="Switch company (tenant)">
                 <SelectValue placeholder="Loading…" />
               </SelectTrigger>
               <SelectContent>
@@ -1052,8 +1067,8 @@ export default function ErpApp() {
           <div className="mx-auto flex max-w-[1600px] flex-col items-center justify-between gap-1.5 px-4 py-3 text-xs text-muted-foreground sm:flex-row">
             <div className="flex items-center gap-1.5">
               <Factory className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
-              <span className="font-medium text-foreground/80">ManuFlow ERP</span>
-              <span className="hidden sm:inline">— Lead → Quotation → SO → Production → QC → Dispatch → GST Invoice → Payment</span>
+              <span className="whitespace-nowrap font-medium text-foreground/80">ManuFlow ERP</span>
+              <span className="hidden xl:inline">— Lead → Quotation → SO → Production → QC → Dispatch → GST Invoice → Payment</span>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-[10px] font-normal">Signed in as {ROLE_LABEL[session.user.role] || session.user.role}</Badge>

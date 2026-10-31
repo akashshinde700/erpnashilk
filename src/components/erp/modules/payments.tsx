@@ -298,7 +298,7 @@ export default function PaymentsModule({ companyId }: { companyId: string }) {
         title="Payment In / Out"
         description="Payment In (from customers) & Payment Out (to suppliers)"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="w-40">
               <SelectInput
                 value={typeFilter} onChange={setTypeFilter} placeholder="All types"

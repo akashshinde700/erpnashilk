@@ -628,6 +628,16 @@ export function DataTable<T extends { id: string }>({
 
   /** A column holding only row actions — rendered in the card header instead of as a field. */
   const isActionColumn = (c: Column<T>) => c.key === 'actions' || c.key === 'action'
+  /**
+   * Table mode: row actions stay on screen. The column is pinned to the right edge while the other columns scroll
+   * under it, and long button rows wrap on narrower screens instead of pushing the column out of view.
+   */
+  const pinnedActions = (c: Column<T>) => isActionColumn(c)
+    && 'md:sticky md:right-0 md:shadow-[-6px_0_6px_-6px_oklch(0_0_0/18%)] min-[1700px]:shadow-none'
+  const pinnedActionCell = (c: Column<T>) => isActionColumn(c)
+    && '[&>div]:w-max [&>div]:max-w-[11.5rem] [&>div]:flex-wrap [&_button]:!px-1.5 xl:[&>div]:max-w-[14rem] min-[1700px]:[&>div]:max-w-none min-[1700px]:[&_button]:!px-2.5'
+  // The pinned cell has to be opaque, so it repeats the background the rest of its row has
+  const pinnedRowBg = 'md:z-[1] md:bg-card md:group-hover/row:bg-[color-mix(in_oklab,var(--primary)_5%,var(--card))]'
   const cardColumns = columns.filter((c) => !c.hideOnMobile && !isActionColumn(c))
   const cardActionColumns = columns.filter((c) => !c.hideOnMobile && isActionColumn(c))
   const cardTitleColumn = cardColumns[0]
@@ -825,15 +835,15 @@ export function DataTable<T extends { id: string }>({
                         highlighted ? 'bg-warning-soft' : 'hover:bg-primary/5',
                       )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1 text-sm font-medium">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-[8rem] flex-1 text-sm font-medium">
                           {cardTitleColumn ? cardTitleColumn.render(row) : null}
                         </div>
                         {cardActionColumns.length > 0 && (
                           // Action menus are interactive islands inside a clickable card: stop the row
                           // click so "delete"/"edit" never also opens the record.
                           <div
-                            className="flex shrink-0 items-center gap-1"
+                            className="flex max-w-full items-center gap-1 [&>div]:flex-wrap"
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => e.stopPropagation()}
                           >
@@ -870,7 +880,7 @@ export function DataTable<T extends { id: string }>({
             {cardTotals}
           </div>
         ) : (
-        <ScrollArea className={maxHeight !== 'auto' ? maxHeight : undefined} style={maxHeight !== 'auto' ? { height: maxHeight } : undefined}>
+        <ScrollArea fitWidth className={maxHeight !== 'auto' ? maxHeight : undefined} style={maxHeight !== 'auto' ? { height: maxHeight } : undefined}>
           <Table>
             <TableHeader className="erp-table-head">
               <TableRow className="bg-transparent hover:bg-transparent">
@@ -881,7 +891,7 @@ export function DataTable<T extends { id: string }>({
                     <TableHead
                       key={c.key}
                       aria-sort={sortedDir === 'asc' ? 'ascending' : sortedDir === 'desc' ? 'descending' : undefined}
-                      className={cn('font-medium whitespace-nowrap', c.hideOnMobile && 'hidden md:table-cell', c.className)}
+                      className={cn('font-medium whitespace-nowrap', c.hideOnMobile && 'hidden md:table-cell', pinnedActions(c), c.className)}
                     >
                       {canSort ? (
                         <button
@@ -930,13 +940,13 @@ export function DataTable<T extends { id: string }>({
                         }
                       } : undefined}
                       className={cn(
-                        'erp-row-hover transition-colors duration-150',
+                        'group/row erp-row-hover transition-colors duration-150',
                         onRowClick && 'cursor-pointer focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring',
                         highlighted && 'bg-warning-soft ring-2 ring-inset ring-warning-border',
                       )}
                     >
                       {columns.map((c) => (
-                        <TableCell key={c.key} className={cn('align-middle', c.hideOnMobile && 'hidden md:table-cell', c.className)}>{c.render(row)}</TableCell>
+                        <TableCell key={c.key} className={cn('align-middle whitespace-normal', c.hideOnMobile && 'hidden md:table-cell', pinnedActions(c), pinnedActionCell(c), isActionColumn(c) && pinnedRowBg, isActionColumn(c) && highlighted && 'md:bg-warning-soft', c.className)}>{c.render(row)}</TableCell>
                       ))}
                     </TableRow>
                   )
@@ -949,7 +959,7 @@ export function DataTable<T extends { id: string }>({
                   {columns.map((c, ci) => {
                     const total = c.sum ? (totals.get(c.key) ?? null) : null
                     return (
-                      <TableCell key={c.key} className={cn(c.hideOnMobile && 'hidden md:table-cell', c.className)}>
+                      <TableCell key={c.key} className={cn(c.hideOnMobile && 'hidden md:table-cell', pinnedActions(c), isActionColumn(c) && 'md:z-[1] md:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))]', c.className)}>
                         {ci === 0 && (
                           <span className={cn('text-muted-foreground', c.sum ? 'block text-[11px] uppercase tracking-wide' : 'text-xs font-medium')}>
                             Total ({sumRows.length})
@@ -1066,7 +1076,7 @@ export function FormDialog({ open, onOpenChange, title, description, children, o
           <div className="grid gap-4 py-2">{children}</div>
           {/* Solid, bordered footer: on long forms the actions stay reachable while the body scrolls,
               and content never shows through the bar. */}
-          <DialogFooter className="pb-safe-4 sticky bottom-0 -mx-6 mt-4 items-center gap-2 border-t bg-popover px-6 pt-3 sm:pb-3">
+          <DialogFooter className="pb-safe-4 sticky bottom-0 -mx-6 mt-4 items-center gap-2 border-t bg-popover px-6 pt-3 max-sm:-mx-4 max-sm:px-4 sm:pb-3">
             <span className="mr-auto hidden text-[11px] text-muted-foreground sm:inline">
               <Kbd>Ctrl</Kbd> <span className="mx-0.5">+</span> <Kbd>S</Kbd> to save
             </span>
