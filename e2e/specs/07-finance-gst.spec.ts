@@ -52,6 +52,8 @@ test.describe('Finance', () => {
 
 test.describe('GST reporting', () => {
   test('GST Reports: GSTR-1 lists outward invoices', async ({ page, store }) => {
+    // The report opens on the current month, and this invoice is dated October 2026 in the fixtures
+    await page.clock.setFixedTime(new Date('2026-10-31T10:00:00'))
     await loginFast(page, store)
     await openModule(page, 'GST Reports')
 

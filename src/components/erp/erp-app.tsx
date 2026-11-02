@@ -380,7 +380,14 @@ export default function ErpApp() {
 
   // Browser tab title follows the active module
   React.useEffect(() => {
-    document.title = session ? `${activeModule.label} · ManuFlow ERP` : 'ManuFlow ERP — Manufacturing SaaS Suite'
+    const title = session ? `${activeModule.label} · ManuFlow ERP` : 'ManuFlow ERP — Manufacturing SaaS Suite'
+    document.title = title
+    // Next.js can add its page metadata <title> after this effect has run, which would bring the static title back
+    const keep = new MutationObserver(() => {
+      if (document.title !== title) document.title = title
+    })
+    keep.observe(document.head, { childList: true, subtree: true, characterData: true })
+    return () => keep.disconnect()
   }, [activeModule, session])
 
   const notifications = useList<{ items: NotificationRow[]; unreadCount: number }>(

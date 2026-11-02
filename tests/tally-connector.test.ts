@@ -152,7 +152,7 @@ describe('pairing', () => {
     // the token is not stored in clear
     const rec = await connectorStore().getConnector(p.json.data.connectorId)
     expect(rec!.companyId).toBe(company.id)
-    expect(rec!.secretHash).not.toContain(p.json.data.token.split('_')[2])
+    expect(rec!.secretHash).not.toContain(p.json.data.token.split('_').slice(2).join('_'))
 
     const again = await pairWith(c.json.data.code)
     expect([again.status, again.json.error?.code]).toEqual([401, 'PAIRING_CODE_INVALID'])
