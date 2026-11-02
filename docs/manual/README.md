@@ -70,3 +70,20 @@ python3 build_docx.py                                        # -> ../ManuFlow-Us
 - Offline behaviour is described as it is — **no offline queue/replay**, nothing is saved
   offline.
 - Brand colour is the repo's emerald `#047857`.
+
+## Second deliverable: the Vyapar import guide
+
+`docs/ManuFlow-Vyapar-Import-Guide-Hinglish.docx` is a standalone 12-chapter guide for taking a
+customer from Vyapar to ManuFlow (backup → upload → choices → preview → import → checks), plus the
+Excel/CSV and Tally routes. Same kit, same honesty rule about the images.
+
+```bash
+cd docs/manual
+python3 gen_vyapar.py          # -> shots-vyapar/v01…v06.png
+python3 build_vyapar_docx.py   # -> ../ManuFlow-Vyapar-Import-Guide-Hinglish.docx
+```
+
+| File | Figures |
+| --- | --- |
+| `gen_vyapar.py` | `v01-import-center`, `v02-upload`, `v03-choose`, `v04-review`, `v05-done`, `v06-vyapar-backup` |
+| `build_vyapar_docx.py` | The whole guide (cover, 12 chapters, role/message/check tables, callout lists) |

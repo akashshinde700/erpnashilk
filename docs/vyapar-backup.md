@@ -91,6 +91,12 @@ Inactive parties / items are skipped (the import has no "inactive" column) and c
 Permissions: Import Center write access, plus write access to the target module (customers, suppliers,
 items, stock), company from the session (another company's id → 403).
 
+## End-user guide (Hinglish, with screen visuals)
+
+`docs/ManuFlow-Vyapar-Import-Guide-Hinglish.docx` — beginner guide for the whole import flow
+(menus, upload, choices, preview, post-import checks, common messages). Rebuild it with
+`docs/manual/gen_vyapar.py` + `docs/manual/build_vyapar_docx.py`; see `docs/manual/README.md`.
+
 ## Tests
 
 `tests/vyapar-backup.test.ts` — reads the real backup in `data/` (SQLite reader, ids, snapshot totals,
