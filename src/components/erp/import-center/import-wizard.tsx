@@ -3,7 +3,7 @@
 import * as React from 'react'
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Ban, Building2, CheckCircle2, ChevronDown, Download, FileSpreadsheet, FileUp, HelpCircle,
-  Info, Loader2, PlugZap, RefreshCw, RotateCcw, Unplug, Upload, XCircle,
+  Info, Loader2, PlugZap, RefreshCw, RotateCcw, Store, Unplug, Upload, XCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -119,10 +119,12 @@ function SummaryCard({ label, value, tone, icon: Icon }: { label: string; value:
   )
 }
 
-export default function ImportWizard({ entry, open, onOpenChange, companyId, companyName, onConnectDirect }: {
+export default function ImportWizard({ entry, open, onOpenChange, companyId, companyName, onConnectDirect, onUseVyaparBackup }: {
   entry: ImportEntry; open: boolean; onOpenChange: (o: boolean) => void; companyId: string; companyName: string
   /** Tally: "Connect to Tally directly" opens the connector flow (tally-import.tsx) instead of this wizard's step. */
   onConnectDirect?: () => void
+  /** Vyapar: "Upload a Vyapar backup" opens the backup flow (vyapar-backup.tsx) instead of this wizard's step. */
+  onUseVyaparBackup?: () => void
 }) {
   const meta = ENTRY[entry]
   const [step, setStep] = React.useState(1)
@@ -381,10 +383,12 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                 )}
                 {entry === 'vyapar' && (
                   <>
+                    <Choice selected={route === 'direct'} onSelect={() => (onUseVyaparBackup ? onUseVyaparBackup() : setRoute('direct'))} icon={Store} title="Upload a Vyapar backup (.vyb)"
+                      text="Read the backup Vyapar creates and import customers, suppliers, items and opening stock — nothing to export by hand." badge="Recommended" />
+                    <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Choose a report exported from Vyapar"
+                      text="Export a party, item or stock report from Vyapar to Excel / CSV and choose that file." />
                     <Choice selected={false} disabled onSelect={() => {}} icon={Unplug} title="Connect to Vyapar" badge="Not available"
-                      text="Vyapar has no official API or connector, so a direct connection is not possible." />
-                    <Choice selected={route === 'file'} onSelect={() => setRoute('file')} icon={FileSpreadsheet} title="Choose a file exported from Vyapar"
-                      text="Export the party or item report from Vyapar to Excel and choose that file." badge="Recommended" />
+                      text="Vyapar has no official API or connector, so a direct connection is not possible — the backup file is the way." />
                   </>
                 )}
                 {entry === 'excel' && (
@@ -465,7 +469,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                 <AlertTitle>{entry === 'tally' ? 'How to export a file from Tally' : entry === 'vyapar' ? 'How to export a file from Vyapar' : 'Supported files'}</AlertTitle>
                 <AlertDescription>
                   {entry === 'tally' && <p>In TallyPrime, open the report you need (for example List of Ledgers or Stock Summary) → Export → Excel (.xlsx) or CSV. Title rows at the top are detected automatically.</p>}
-                  {entry === 'vyapar' && <p>In Vyapar, open the party or item report → export it to Excel. Vyapar backup files (.vyb) are not supported.</p>}
+                  {entry === 'vyapar' && <p>Best: Vyapar → Settings → Backup &amp; Restore → take a backup, then upload the .vyb file (step 1). A party or item report exported to Excel works as well.</p>}
                   {entry === 'excel' && <p>The first row should contain the column names (for example Customer Name, GSTIN, Mobile). A sample template is available in step 3.</p>}
                 </AlertDescription>
               </Alert>

@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/erp/kit'
 import ImportWizard, { type ImportEntry } from '@/components/erp/import-center/import-wizard'
 import ImportHistory from '@/components/erp/import-center/import-history'
 import TallyImport from '@/components/erp/import-center/tally-import'
+import VyaparBackup from '@/components/erp/import-center/vyapar-backup'
 import { useList } from '@/lib/use-api'
 import { cn } from '@/lib/utils'
 
@@ -19,7 +20,7 @@ const CARDS: { entry: ImportEntry; emoji: string; title: string; text: string; b
   },
   {
     entry: 'vyapar', emoji: '🟢', title: 'Vyapar', icon: Store,
-    text: 'Import supported Vyapar data or exported files into ManuFlow ERP.',
+    text: 'Import customers, suppliers, items and opening stock from a Vyapar backup (.vyb) or an exported file.',
     button: 'Import from Vyapar',
     tone: 'text-success bg-success-soft dark:bg-success-soft',
   },
@@ -36,6 +37,8 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
   const [wizard, setWizard] = React.useState<{ entry: ImportEntry; key: number } | null>(null)
   // Tally opens the connector flow; its "use a file instead" link opens the file wizard
   const [tally, setTally] = React.useState<number | null>(null)
+  // Vyapar opens the backup flow (.vyb); its "use a file instead" link opens the file wizard
+  const [vyapar, setVyapar] = React.useState<number | null>(null)
   const companies = useList<{ companies: { id: string; name: string }[] }>('/api/companies')
   const companyName = companies.data?.companies.find((c) => c.id === companyId)?.name ?? ''
 
@@ -58,7 +61,7 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
                 <p className="mt-1 flex-1 text-sm text-muted-foreground">{c.text}</p>
                 <button
                   type="button"
-                  onClick={() => (c.entry === 'tally' ? setTally(Date.now()) : setWizard({ entry: c.entry, key: Date.now() }))}
+                  onClick={() => (c.entry === 'tally' ? setTally(Date.now()) : c.entry === 'vyapar' ? setVyapar(Date.now()) : setWizard({ entry: c.entry, key: Date.now() }))}
                   className="mt-4 inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
                   {c.button} <ArrowRight className="h-4 w-4" aria-hidden />
@@ -85,6 +88,15 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
           onUseFile={() => { setTally(null); setWizard({ entry: 'tally', key: Date.now() }) }}
         />
       )}
+      {vyapar !== null && (
+        <VyaparBackup
+          key={vyapar}
+          open
+          onOpenChange={(o) => { if (!o) setVyapar(null) }}
+          companyId={companyId}
+          onUseFile={() => { setVyapar(null); setWizard({ entry: 'vyapar', key: Date.now() }) }}
+        />
+      )}
       {wizard && (
         <ImportWizard
           key={wizard.key}
@@ -94,6 +106,7 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
           companyId={companyId}
           companyName={companyName}
           onConnectDirect={wizard.entry === 'tally' ? () => { setWizard(null); setTally(Date.now()) } : undefined}
+          onUseVyaparBackup={() => { setWizard(null); setVyapar(Date.now()) }}
         />
       )}
     </div>

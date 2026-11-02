@@ -728,3 +728,25 @@ signed-in smoke test of a cash payment over the balance (refused), a duplicate (
 accountant / sales manager login (reports and account picker), the supplier statement print; rollback =
 `deploy.py --rollback` (code only — the extra table is harmless to the old code). The deployed code is not in git:
 commit first (separate approval; see the `.env` note in the final report).
+
+---
+
+## Import Center — Vyapar backup import (2026-11-02, local only)
+
+A customer's real Vyapar backup (`data/02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb/`) was analysed
+and the Import Center now reads `.vyb` / `.vyp` files directly: Import Center → **Vyapar** → *Upload a Vyapar
+backup*. Details: `docs/vyapar-backup.md`; test: `tests/vyapar-backup.test.ts`.
+
+| | |
+|---|---|
+| Added | `src/lib/vyapar/{sqlite,zip,backup,store,to-import,shared}.ts`, `src/app/api/import-center/vyapar/{inspect,import}/route.ts`, `src/components/erp/import-center/vyapar-backup.tsx`; Vyapar card opens the backup flow (`modules/import-center.tsx`, `import-wizard.tsx`) |
+| Imports | Customers, suppliers, items, opening stock (same services, duplicate rules and Import History as a file import; ≤ 500 records per batch) |
+| Reads but does not import | Vyapar vouchers (sales, purchases, receipts, payments, expenses), party balances, cash / bank opening balances, credit limits — counted and stated in the flow |
+| No schema change | No new tables, no migration; the backup snapshot lives in server memory for 30 minutes |
+| Not imported yet (unchanged decisions) | Invoice / payment import, party opening balances, cash / bank opening balances (`docs/opening-balances.md`) |
+
+Checked against the real backup: 205 parties (187 customers, 18 suppliers), 2 512 items, 2 084 stock rows worth
+₹3,95,81,845.82 — 0 errors from the column mapping, party validation (`partyData`) and item validation
+(`prepareItem`) with the GST / unit fallbacks the flow asks for. 17 new tests pass; TypeScript and ESLint are
+clean for every touched file. **Not run:** the full `bun test` suite and a browser check (this sandbox has no
+MySQL test database and cannot download the Prisma engines), so the database-backed import path is untested here.

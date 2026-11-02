@@ -125,6 +125,9 @@ export function parseImportFile(buf: Buffer, fileName: string, sheetName?: strin
 
   if (isOle(buf)) fail('Legacy Excel 97-2003 (.xls) files are not supported — open the file in Excel and save it as .xlsx or CSV')
   if (isZip(buf)) {
+    if (ext === 'vyb' || ext === 'vyp') {
+      fail('This is a Vyapar backup — import it from Import Center → Vyapar → "Upload a Vyapar backup (.vyb)", where customers, suppliers, items and opening stock are read from the backup itself.')
+    }
     if (ext && ext !== 'xlsx') fail(`The file content is a ZIP / Excel workbook but the name ends in .${ext}`)
     const parts = inspectZip(buf)
     if (!parts.includes('xl/workbook.xml')) fail('Only Excel .xlsx workbooks are supported (this ZIP is not one — .xlsb, .ods and others are not supported)')
@@ -153,6 +156,9 @@ export function parseImportFile(buf: Buffer, fileName: string, sheetName?: strin
     return { format: 'xlsx', sheetNames, sheet, rows, totalRows }
   }
 
+  if (ext === 'xml') {
+    fail('Tally / Vyapar XML exports are not read as a file yet — export the report to Excel or CSV, or use the Tally connector in the Import Center.')
+  }
   if (ext && !['csv', 'tsv', 'txt'].includes(ext)) fail(`Unsupported file type .${ext} — upload .csv or .xlsx`)
   const text = decodeText(buf)
   const records = parseCsv(text, sniffDelimiter(text), { keepBlank: true })
