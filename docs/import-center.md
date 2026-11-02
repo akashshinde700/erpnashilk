@@ -4,15 +4,20 @@ Module key `import-center`, sidebar group **Utilities** (between Finance and Adm
 Tenant Admin, Management and Super Admin only. The app has no URL routing — like every module it is
 opened from the sidebar, the command palette (Ctrl/⌘ K), favourites and recents.
 
-Two methods: **Direct Import from Tally** (connection diagnostics only — see `docs/tally-connector.md`)
-and **File Upload**:
+Three routes in:
+
+- **Direct Import from Tally** — the ManuFlow Tally Connector (see `docs/tally-connector.md`).
+- **Vyapar backup (.vyb / .vyp)** — reads the backup Vyapar itself writes; nothing has to be exported
+  by hand. See `docs/vyapar-backup.md`. The flow is the same pipeline as a file import (preview, then
+  commit), batch by batch.
+- **File Upload** — Excel (.xlsx) / CSV for everything else.
 
 | Data type | Status |
 |---|---|
-| Customers, Suppliers, Items | Import end to end |
+| Customers, Suppliers, Items | Import end to end (file, Tally connector, Vyapar backup) |
 | Opening stock | Import end to end — needs the go-live date; reconciled (see `docs/opening-balances.md`) |
 | Opening balances (customers / suppliers) | **Check and reconcile only** — not importable until the accounting model in `docs/opening-balances.md` exists |
-| Sales / purchase invoices, receipts, payments | Listed as planned, not available |
+| Sales / purchase invoices, receipts, payments | Listed as planned, not available (the Vyapar backup flow counts them and says so) |
 
 ## File upload flow
 
@@ -39,7 +44,8 @@ Customers / Items screens), `src/app/api/import-center/*`, `src/components/erp/i
 | | |
 |---|---|
 | Accepted | `.xlsx` (Excel 2007+), `.csv` / `.tsv` / `.txt` (comma, semicolon or tab; UTF-8, UTF-8 BOM, UTF-16 "Unicode text", Windows-1252) |
-| Refused | `.xls` (Excel 97-2003 — save as .xlsx), `.xlsb`, `.ods`, password-protected workbooks, Vyapar backups (`.vyb`), anything else |
+| Refused | `.xls` (Excel 97-2003 — save as .xlsx), `.xlsb`, `.ods`, password-protected workbooks, Tally / Vyapar XML exports, anything else |
+| Vyapar backups | `.vyb` / `.vyp` are **not** uploaded into the file flow — the Vyapar card reads them (own 256 MB limit, `docs/vyapar-backup.md`); uploading one here explains exactly that |
 | File size | 2 MB (checked on Content-Length before reading, and again on the file) |
 | Rows | 500 data rows per import (+ up to 15 title rows) |
 | Columns / cells | 60 columns, 1 000 characters per cell |
@@ -127,4 +133,5 @@ reconciliation identify every posted row.
 ## Not done yet
 
 Party opening balances (model missing — `docs/opening-balances.md`), cash / bank opening balances, sales /
-purchase invoices, receipts / payments, Tally direct import, Vyapar backup files.
+purchase invoices, receipts / payments, Tally vouchers, Tally / Vyapar XML files as a file upload.
+The Vyapar backup flow (parties, items, opening stock) is done — `docs/vyapar-backup.md`.
