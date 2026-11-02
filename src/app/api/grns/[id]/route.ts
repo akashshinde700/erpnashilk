@@ -5,6 +5,10 @@ import {
   ok, handleError, companyRequired, postStock, logAudit, ApiError, r2, requireWrite, claimStatus,
 } from '@/lib/erp-helpers'
 import { receiveBatch, receiveSerials, parseSerials } from '@/lib/batches'
+import { QC_QTY_TOLERANCE, QC_TX, matchInspectionsToLines } from '@/lib/grn-qc'
+import { refreshPoReceiptStatus } from '@/lib/po-receipt'
+
+const POSTABLE = ['PENDING_QC', 'QC_COMPLETED']
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -63,11 +67,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const grn = await findGrn(id, companyId)
 
     if (body.action !== 'post') throw new ApiError(`Unknown action '${body.action}' (use post)`, 400)
-    if (grn.status !== 'PENDING_QC') throw new ApiError(`Only PENDING_QC GRNs can be posted (current: ${grn.status})`, 400)
+    if (grn.status === 'POSTED') throw new ApiError(`${grn.number} is already posted`, 409, 'GRN_ALREADY_POSTED')
+    if (!POSTABLE.includes(grn.status)) throw new ApiError(`${grn.number} cannot be posted (current: ${grn.status})`, 400)
 
+    let totals = { accepted: 0, rejected: 0 }
     const posted = await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
-      await claimStatus((tx as any).grn, grn.id, ['PENDING_QC'], 'POSTED')
+      // PENDING_QC is claimable for GRNs whose inspections all got results before QC_COMPLETED existed; the checks
+      // below roll this back while any inspection is pending.
+      await claimStatus((tx as any).grn, grn.id, POSTABLE, 'POSTED')
       // Lock the PO row so a concurrent PO cancel serializes with this post
       const poLock = await tx.purchaseOrder.updateMany({
         where: { id: grn.poId, companyId, status: { not: 'CANCELLED' } }, data: { updatedAt: new Date() },
@@ -76,17 +84,39 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const po = await tx.purchaseOrder.findFirst({ where: { id: grn.poId, companyId }, include: { items: true } })
       if (!po) throw new ApiError('Purchase order not found', 404)
 
-      for (const it of grn.items) {
+      // Read after the lock: results recorded while this request waited count
+      const lines = await tx.grnItem.findMany({ where: { grnId: grn.id } })
+      const inspections = await tx.qcInspection.findMany({ where: { companyId, refType: 'GRN', refId: grn.id } })
+      const pending = inspections.filter((i) => i.status === 'PENDING')
+      if (pending.length) {
+        throw new ApiError(`QC is still pending: ${pending.map((i) => i.number).join(', ')} — submit the results before posting`, 409, 'QC_PENDING')
+      }
+      const { byLine } = matchInspectionsToLines(lines, inspections)
+
+      for (const it of lines) {
+        const qc = byLine.get(it.id)
+        const label = () => `${grn.number} line ${lines.indexOf(it) + 1}`
+        if (!qc) throw new ApiError(`${label()} has no matching QC inspection — delete the GRN and receive it again`, 409, 'QC_LINE_UNKNOWN')
+        // Older results were not checked to add up: never guess what happened to the rest of the material
+        if (Math.abs(r2(qc.qtyAccepted + qc.qtyRejected) - r2(it.receivedQty)) > QC_QTY_TOLERANCE) {
+          throw new ApiError(`${qc.number}: accepted + rejected does not equal received qty ${it.receivedQty} — an authorized user must inspect the material and correct the result in QC Inspections`, 409, 'QC_RESULT_INCOMPLETE')
+        }
+        const acceptedQty = qc.qtyAccepted
+        totals = { accepted: r2(totals.accepted + acceptedQty), rejected: r2(totals.rejected + qc.qtyRejected) }
+        await tx.grnItem.update({ where: { id: it.id }, data: { acceptedQty, rejectedQty: qc.qtyRejected, qcStatus: qc.status } })
+        if (!qc.grnItemId) await tx.qcInspection.update({ where: { id: qc.id }, data: { grnItemId: it.id } })
+
         // Stock in for accepted qty @ PO rate (rejected qty never enters stock)
-        if (it.acceptedQty > 0) {
+        if (acceptedQty > 0) {
           const poItem = it.poItemId ? po.items.find((p) => p.id === it.poItemId) : undefined
+          if (!poItem) throw new ApiError(`${label()} has no purchase order line, so it has no rate — it cannot be posted`, 409, 'GRN_LINE_NO_RATE')
           await postStock(tx, {
             companyId,
             itemId: it.itemId,
             warehouseId: grn.warehouseId,
             type: 'GRN_IN',
-            qtyIn: it.acceptedQty,
-            rate: poItem ? poItem.rate : 0,
+            qtyIn: acceptedQty,
+            rate: poItem.rate,
             date: grn.date,
             refType: 'GRN',
             refId: grn.id,
@@ -97,11 +127,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           // batch no goes into a batch named after the GRN.
           await receiveBatch(tx, {
             companyId, itemId: it.itemId, warehouseId: grn.warehouseId, batchNo: it.batchNo || grn.number,
-            mfgDate: it.mfgDate, expiryDate: it.expiryDate, qty: it.acceptedQty,
+            mfgDate: it.mfgDate, expiryDate: it.expiryDate, qty: acceptedQty,
           })
           await receiveSerials(tx, {
             companyId, itemId: it.itemId, warehouseId: grn.warehouseId, serials: parseSerials(it.serials),
-            qty: it.acceptedQty, ref: { type: 'GRN', id: grn.id },
+            qty: acceptedQty, ref: { type: 'GRN', id: grn.id },
           })
         }
         // PO receivedQty was NOT incremented at GRN create — increment here by receivedQty
@@ -113,21 +143,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         }
       }
 
-      const freshPoItems = await tx.purchaseOrderItem.findMany({ where: { poId: po.id } })
-      const allReceived = freshPoItems.length > 0 && freshPoItems.every((p) => p.receivedQty + 0.01 >= p.qty)
-      await tx.purchaseOrder.update({
-        where: { id: po.id },
-        data: { status: allReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED' },
-      })
+      // Complete only when every line is accepted or formally closed; rejected material stays outstanding
+      const poStatus = await refreshPoReceiptStatus(tx, po.id)
 
       const u = await tx.grn.update({ where: { id: grn.id }, data: { status: 'POSTED' }, include: { items: true } })
       await logAudit(tx, {
         companyId, userName: body.userName, action: 'POST', entity: 'Grn',
         entityId: grn.id,
-        details: `Posted ${grn.number} — stock in ${r2(grn.items.reduce((s, i) => s + i.acceptedQty, 0))} qty against ${po.number} (${allReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED'})`,
+        details: `Posted ${grn.number} — stock in ${totals.accepted} qty, rejected ${totals.rejected}, against ${po.number} (${poStatus})`,
       })
       return u
-    })
+    }, QC_TX)
     const [row] = await attachItemInfo(companyId, [posted])
     return ok(row, 'GRN posted — stock updated')
   } catch (e) {
@@ -144,17 +170,17 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const companyId = await companyRequired(req, body.companyId)
     await requireSecurityPin(req, companyId)
     const grn = await findGrn(id, companyId)
-    if (grn.status !== 'PENDING_QC') throw new ApiError('Only PENDING_QC GRNs can be deleted', 400)
+    if (!POSTABLE.includes(grn.status)) throw new ApiError('Only GRNs that are not posted yet can be deleted', 400)
 
     await db.$transaction(async (txRaw) => {
       const tx = txRaw as HelperTx
       // Conditional delete (items cascade): a concurrent post makes this a no-op → 409
-      const del = await tx.grn.deleteMany({ where: { id: grn.id, status: 'PENDING_QC' } })
+      const del = await tx.grn.deleteMany({ where: { id: grn.id, status: { in: POSTABLE } } })
       if (del.count !== 1) throw new ApiError('This document was just changed by someone else — refresh and try again', 409)
       await tx.qcInspection.deleteMany({ where: { companyId, refType: 'GRN', refId: grn.id } })
       await logAudit(tx, {
         companyId, userName: body.userName, action: 'DELETE', entity: 'Grn',
-        entityId: grn.id, details: `Deleted ${grn.number} (was PENDING_QC, no stock impact)`,
+        entityId: grn.id, details: `Deleted ${grn.number} (was ${grn.status}, no stock impact)`,
       })
     })
     return ok({ id: grn.id }, 'GRN deleted')

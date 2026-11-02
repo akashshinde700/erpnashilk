@@ -54,3 +54,33 @@ test.describe('Manufacturing', () => {
     await expect(page.getByText('FINAL').first()).toBeVisible()
   })
 })
+
+test.describe('QC inspection records', () => {
+  test('a completed inspection opens read only', async ({ page, store }) => {
+    await loginFast(page, store)
+    await openModule(page, 'QC Inspections')
+    await page.getByText('QC/26-27/0002').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('QC Details — QC/26-27/0002')).toBeVisible()
+    await expect(dialog.getByText('Read only')).toBeVisible()
+    await expect(dialog.getByText('GRN/26-27/0001')).toBeVisible()
+    for (const label of ['Checked', 'Accepted', 'Rejected', 'Inspector']) await expect(dialog.getByText(label, { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Submit Result' })).toHaveCount(0)
+    await expect(dialog.getByRole('textbox')).toHaveCount(0)
+  })
+
+  test('a pending inspection opens the result form, which shows unaccounted qty', async ({ page, store }) => {
+    const done = store.collections['qc-inspections'][1] as Record<string, unknown>
+    store.collections['qc-inspections'].push({ ...done, id: 'qc_open', number: 'QC/26-27/0099', status: 'PENDING', qtyAccepted: 0, qtyRejected: 0, inspector: 'pending' })
+    await loginFast(page, store)
+    await openModule(page, 'QC Inspections')
+    await page.getByText('QC/26-27/0099').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('Submit Result — QC/26-27/0099')).toBeVisible()
+    await dialog.locator('input').first().fill('1')
+    await expect(dialog.getByText(/399 unaccounted for/)).toBeVisible()
+    await dialog.getByRole('button', { name: 'Submit Result' }).click()
+    await expect(page.getByText(/must equal the checked qty/).first()).toBeVisible()
+    await expect(dialog).toBeVisible()
+  })
+})

@@ -129,7 +129,7 @@ flowchart LR
 flowchart LR
     M[MRP<br/>kami dikhata hai] -->|Create PR| R[Requisition<br/>PENDING → APPROVED]
     R -->|Create PO| P[Purchase Order<br/>PENDING_APPROVAL → APPROVED]
-    P -->|Receive| G[GRN<br/>PENDING_QC → Post]
+    P -->|Receive| G[GRN<br/>PENDING_QC → QC_COMPLETED → Post]
     G -->|Bill| B[Purchase Invoice<br/>UNPAID]
     B -->|Pay| Y[Payment Out]
     X[Seedha bill<br/>bina PO/GRN] -->|Add to stock tick| B

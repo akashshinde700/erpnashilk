@@ -9,7 +9,7 @@ import {
   Column, ConfirmAction, DataTable, DateCell, DateInput, Field, FormDialog, Money,
   NumberInput, PageHeader, SelectInput, StatusBadge, TextInput, printHtml, useRowHighlight, useCreatePreset, openCreate,
 } from '@/components/erp/kit'
-import { apiGet, apiPatch, apiPost, useList } from '@/lib/use-api'
+import { apiGet, apiPatch, apiPost, currentRole, useList } from '@/lib/use-api'
 import { fmtMoney } from '@/lib/erp-constants'
 import { amountInWords } from '@/lib/number-to-words'
 import { baseQtyHint, convertRate, lineToBase, unitOptions } from '@/lib/units'
@@ -18,7 +18,9 @@ import { ItemPicker, QuickItemDialog, ScanToAdd, pickIntoLines, scanIntoLines, t
 interface PartyRow { id: string; name?: string | null; code?: string | null }
 interface ItemRow { id: string; code?: string | null; name?: string | null; uom?: string | null; purchasePrice?: number | null; gstRate?: number | null; barcode?: string | null; partNo?: string | null
   altUom?: string | null; altFactor?: number | null }
-interface PoItem { id: string; itemId: string; qty: number; rate: number; gstRate: number; lineTotal: number; receivedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null; hsn?: string | null } | null }
+interface PoClosure { id: string; poItemId: string; qty: number; type: string; reason: string; reference?: string | null; createdBy: string }
+const CLOSURE_ROLES = ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN', 'PURCHASE_MANAGER']
+interface PoItem { id: string; itemId: string; qty: number; rate: number; gstRate: number; lineTotal: number; receivedQty?: number; acceptedQty?: number; rejectedQty?: number; closedQty?: number; inQcQty?: number; outstandingQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null; hsn?: string | null } | null }
 interface CompanyBlock { id?: string; name?: string | null; gstin?: string | null; pan?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; phone?: string | null; email?: string | null }
 interface PoSupplier { name?: string | null; gstin?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; addressLine?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; paymentTermsDays?: number | null }
 interface PoRow {
@@ -72,6 +74,47 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
   const [deliveryTerms, setDeliveryTerms] = React.useState('')
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine()])
   const [detail, setDetail] = React.useState<PoRow | null>(null)
+  // Receipt progress per line (accepted / rejected / closed / outstanding) of the PO on show
+  const [receipt, setReceipt] = React.useState<Record<string, PoItem> | null>(null)
+  const [closures, setClosures] = React.useState<PoClosure[]>([])
+  const [closing, setClosing] = React.useState<{ poItemId: string; qty: number; type: string; reason: string; reference: string } | null>(null)
+  const [closingBusy, setClosingBusy] = React.useState(false)
+
+  const loadReceipt = React.useCallback(async (poId: string) => {
+    try {
+      const d = await apiGet<{ items?: PoItem[] | null; closures?: PoClosure[] }>(`/api/purchase-orders/${poId}?companyId=${companyId}`)
+      setReceipt(Object.fromEntries((d.items ?? []).map((i) => [i.id, i])))
+      setClosures(d.closures ?? [])
+    } catch { setReceipt(null); setClosures([]) }
+  }, [companyId])
+
+  const detailId = detail?.id
+  React.useEffect(() => {
+    setReceipt(null); setClosures([])
+    if (detailId) void loadReceipt(detailId)
+  }, [detailId, loadReceipt])
+
+  const closableQty = (id: string) => {
+    const l = receipt?.[id]
+    if (!l) return 0
+    return Math.min((l.rejectedQty ?? 0) - (l.closedQty ?? 0), (l.outstandingQty ?? 0) - (l.inQcQty ?? 0))
+  }
+  const canClose = (id: string) => !!detail && ['APPROVED', 'PARTIALLY_RECEIVED'].includes(detail.status) && CLOSURE_ROLES.includes(currentRole()) && closableQty(id) > 0
+  const openClosure = (id: string) => setClosing({ poItemId: id, qty: closableQty(id), type: 'WAIVED', reason: '', reference: '' })
+
+  async function saveClosure() {
+    if (!closing || !detail) return
+    if (!closing.reason.trim()) { toast.error('Enter a reason'); return }
+    if (closing.type === 'CREDIT_NOTE' && !closing.reference.trim()) { toast.error('Enter the supplier credit note number'); return }
+    setClosingBusy(true)
+    try {
+      await apiPost(`/api/purchase-orders/${detail.id}/closures`, { companyId, ...closing })
+      toast.success('Rejected quantity closed')
+      setClosing(null); void loadReceipt(detail.id); void list.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not close the quantity')
+    } finally { setClosingBusy(false) }
+  }
   const [newItemFor, setNewItemFor] = React.useState<{ idx: number; name: string } | null>(null)
 
   const rows = list.data?.items ?? []
@@ -472,7 +515,9 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
                 <table className="w-full text-xs">
                   <thead><tr className="bg-muted/50">
                     <th className="text-left p-2">Item</th><th className="text-right p-2">Qty</th><th className="text-right p-2">Rate</th>
-                    <th className="text-right p-2">GST %</th><th className="text-right p-2">Received</th><th className="text-right p-2">Line Total</th>
+                    <th className="text-right p-2">GST %</th><th className="text-right p-2">Received</th>
+                    <th className="text-right p-2">Accepted</th><th className="text-right p-2">Rejected</th><th className="text-right p-2">Closed</th><th className="text-right p-2">Outstanding</th>
+                    <th className="text-right p-2">Line Total</th>
                   </tr></thead>
                   <tbody>
                     {(detail.items ?? []).map((it) => (
@@ -482,6 +527,15 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
                         <td className="p-2 text-right tabular-nums">{fmtMoney(it.rate)}</td>
                         <td className="p-2 text-right tabular-nums">{it.gstRate}%</td>
                         <td className="p-2 text-right tabular-nums">{it.receivedQty ?? 0}</td>
+                        <td className="p-2 text-right tabular-nums text-success">{receipt?.[it.id]?.acceptedQty ?? '—'}</td>
+                        <td className="p-2 text-right tabular-nums text-destructive">
+                          {receipt?.[it.id]?.rejectedQty ?? '—'}
+                          {canClose(it.id) && (
+                            <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-xs" onClick={() => openClosure(it.id)}>Close</Button>
+                          )}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">{receipt?.[it.id]?.closedQty ?? '—'}</td>
+                        <td className="p-2 text-right tabular-nums font-medium">{receipt?.[it.id]?.outstandingQty ?? '—'}</td>
                         <td className="p-2 text-right tabular-nums font-medium">{fmtMoney(it.lineTotal)}</td>
                       </tr>
                     ))}
@@ -495,6 +549,18 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
                 {detail.igst ? <span>IGST <Money value={detail.igst} /></span> : null}
                 <span className="font-bold text-base">Grand Total <Money value={detail.grandTotal} /></span>
               </div>
+              {closures.length > 0 && (
+                <div className="text-xs">
+                  <p className="font-medium">Closed quantities</p>
+                  <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                    {closures.map((c) => (
+                      <li key={c.id}>
+                        {c.qty} of {detail.items?.find((i) => i.id === c.poItemId)?.item?.name || 'item'} · {c.type === 'WAIVED' ? 'Waived' : `Credit note ${c.reference || ''}`} · {c.reason} · {c.createdBy}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {detail.paymentTerms && <p className="text-xs text-muted-foreground">Payment terms: {detail.paymentTerms}</p>}
               {detail.deliveryTerms && <p className="text-xs text-muted-foreground">Delivery terms: {detail.deliveryTerms}</p>}
               {detail.notes && <p className="text-xs text-muted-foreground">Notes: {detail.notes}</p>}
@@ -502,6 +568,26 @@ export default function PurchaseOrdersModule({ companyId }: { companyId: string 
           )}
         </DialogContent>
       </Dialog>
+      <FormDialog
+        open={!!closing} onOpenChange={(o) => { if (!o) setClosing(null) }}
+        title="Close rejected quantity"
+        description="Use this only when the supplier will not replace the material. The PO then stops expecting it. Stock and bills do not change, and this record cannot be edited."
+        submitLabel="Close quantity" loading={closingBusy} onSubmit={saveClosure}
+      >
+        {closing && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Qty" required><NumberInput value={closing.qty} min={0} step="any" onChange={(n) => setClosing({ ...closing, qty: n })} /></Field>
+            <Field label="How it was settled" required>
+              <SelectInput value={closing.type} onChange={(v) => setClosing({ ...closing, type: v })}
+                options={[{ value: 'WAIVED', label: 'Waived' }, { value: 'CREDIT_NOTE', label: 'Supplier credit note' }]} />
+            </Field>
+            {closing.type === 'CREDIT_NOTE' && (
+              <Field label="Credit note no." required><TextInput value={closing.reference} onChange={(e) => setClosing({ ...closing, reference: e.target.value })} /></Field>
+            )}
+            <Field label="Reason" required className="sm:col-span-2"><TextInput value={closing.reason} onChange={(e) => setClosing({ ...closing, reason: e.target.value })} /></Field>
+          </div>
+        )}
+      </FormDialog>
     </div>
   )
 }

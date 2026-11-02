@@ -665,7 +665,7 @@ model Grn {
   warehouseId String
   date        DateTime
   supplierInvNo String?
-  status      String   @default("PENDING_QC") // PENDING_QC|PARTIALLY_ACCEPTED|POSTED|CANCELLED
+  status      String   @default("PENDING_QC") // PENDING_QC|QC_COMPLETED|PARTIALLY_ACCEPTED|POSTED|CANCELLED
   notes       String? @db.Text
   supplierInvDate   DateTime?
   supplierChallanNo String?
@@ -912,6 +912,7 @@ model QcInspection {
   refType     String // GRN|WORK_ORDER
   refId       String
   refNumber   String?
+  grnItemId   String? // INCOMING inspections: the GRN line this result belongs to (empty on older rows)
   itemId      String
   qtyChecked  Float
   qtyAccepted Float    @default(0)
@@ -927,6 +928,7 @@ model QcInspection {
   @@unique([companyId, number])
   @@index([companyId, status])
   @@index([refType, refId])
+  @@index([grnItemId])
 }
 
 // ---------------- Inventory ----------------
@@ -1014,6 +1016,50 @@ model NumberSeq {
 // Cash & Bank Phase 5: one row per Idempotency-Key a client sent with a money-creating request. The row is
 // claimed (PENDING) before the business transaction and marked DONE inside it, together with the response that a
 // retry with the same key gets back. Failed requests remove their row; rows are purged after 7 days.
+// One change to an already submitted GRN inspection result, with the values before and after. Append-only: the first
+// row of an inspection holds its original result.
+model QcCorrection {
+  id                String   @id @default(cuid())
+  companyId         String
+  inspectionId      String
+  inspectionNumber  String
+  grnId             String
+  grnNumber         String?
+  grnItemId         String?
+  previousAccepted  Float
+  previousRejected  Float
+  previousStatus    String
+  previousInspector String?
+  newAccepted       Float
+  newRejected       Float
+  newStatus         String
+  inspectedBy       String
+  reason            String   @db.Text
+  correctedByUserId String
+  correctedBy       String
+  createdAt         DateTime @default(now())
+
+  @@index([companyId, inspectionId])
+  @@index([grnId])
+}
+
+// Rejected PO quantity that will not be replaced: waived, or settled by a supplier credit note. Append-only.
+model PurchaseOrderClosure {
+  id        String   @id @default(cuid())
+  companyId String
+  poId      String
+  poItemId  String
+  qty       Float
+  type      String // WAIVED|CREDIT_NOTE
+  reason    String   @db.Text
+  reference String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([companyId, poId])
+  @@index([poItemId])
+}
+
 model IdempotencyKey {
   id          String   @id @default(cuid())
   companyId   String

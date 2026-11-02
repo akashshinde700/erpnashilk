@@ -1,3 +1,4 @@
+import { outstandingQty, poLineProgress, type PoLineProgress } from '@/lib/po-receipt'
 import { db } from '@/lib/db'
 import { ok, handleError, companyRequired, r2 } from '@/lib/erp-helpers'
 
@@ -78,9 +79,11 @@ export async function GET(req: Request) {
 
     // ---- Incoming from open purchase orders ----
     const incoming = new Map<string, number>()
+    // Rejected material is still owed by the supplier unless it was closed, so it counts as incoming
+    const receipts = await poLineProgress(db, purchaseOrders.flatMap((po) => po.items.map((l) => l.id)))
     for (const po of purchaseOrders) {
       for (const line of po.items) {
-        const pending = r2(line.qty - line.receivedQty)
+        const pending = outstandingQty(line.qty, receipts.get(line.id) as PoLineProgress)
         if (pending > 0) {
           incoming.set(line.itemId, r2((incoming.get(line.itemId) || 0) + pending))
         }

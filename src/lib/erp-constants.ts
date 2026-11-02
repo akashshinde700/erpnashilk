@@ -8,6 +8,9 @@ export const ITEM_TYPE_LABEL: Record<string, string> = {
 
 export const UOMS = ['NOS', 'PCS', 'KG', 'GM', 'LTR', 'MTR', 'MTR2', 'BOX', 'SET', 'ROLL', 'HRS'] as const
 
+/** May correct an already submitted QC result on a GRN that is not posted yet (the server checks this too). */
+export const QC_CORRECTION_ROLES = ['TENANT_ADMIN', 'MANAGEMENT', 'SUPER_ADMIN', 'QUALITY_MANAGER']
+
 export const ROLES = ['TENANT_ADMIN', 'MANAGEMENT', 'PLANT_MANAGER', 'PRODUCTION_MANAGER', 'PRODUCTION_SUPERVISOR', 'OPERATOR', 'PURCHASE_MANAGER', 'PURCHASE_EXECUTIVE', 'SALES_MANAGER', 'SALES_EXECUTIVE', 'STORE_MANAGER', 'STORE_OPERATOR', 'QUALITY_MANAGER', 'QC_INSPECTOR', 'ACCOUNTS_MANAGER', 'ACCOUNTANT', 'MAINTENANCE_MANAGER', 'DISPATCH_MANAGER', 'VIEWER'] as const
 export const ROLE_LABEL: Record<string, string> = {
   TENANT_ADMIN: 'Tenant Admin', MANAGEMENT: 'Management', PLANT_MANAGER: 'Plant Manager',
@@ -26,7 +29,7 @@ export type Tone = 'gray' | 'green' | 'amber' | 'red' | 'blue' | 'purple' | 'tea
 export const STATUS_TONE: Record<string, Tone> = {
   // generic
   ACTIVE: 'green', INACTIVE: 'gray', DRAFT: 'gray', PENDING: 'amber', PENDING_APPROVAL: 'amber',
-  PENDING_QC: 'amber', APPROVED: 'green', REJECTED: 'red', CANCELLED: 'red', CLOSED: 'gray', POSTED: 'green',
+  PENDING_QC: 'amber', QC_COMPLETED: 'blue', APPROVED: 'green', REJECTED: 'red', CANCELLED: 'red', CLOSED: 'gray', POSTED: 'green',
   // sales / purchase docs
   OPEN: 'blue', QUOTED: 'purple', WON: 'green', LOST: 'red',
   SENT: 'blue', CONVERTED: 'teal',

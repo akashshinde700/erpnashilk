@@ -2,15 +2,17 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { CheckCircle2, ClipboardCheck, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Eye, History, PencilLine, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   DataTable, DateCell, Field, FormDialog, NumberInput, PageHeader, SelectInput, StatCard, StatusBadge, TextInput, type Column,
 } from '@/components/erp/kit'
-import { apiPatch, apiPost, useList } from '@/lib/use-api'
-import { fmtNum } from '@/lib/erp-constants'
+import { apiGet, apiPatch, apiPost, currentRole, useList } from '@/lib/use-api'
+import { QC_CORRECTION_ROLES, fmtDate, fmtDateTime, fmtNum } from '@/lib/erp-constants'
 
 const todayISO = () => {
   const d = new Date()
@@ -27,6 +29,13 @@ interface QcRow {
   qtyAccepted?: number | null; qtyRejected?: number | null
   parameters?: string | null
   inspector?: string | null; remarks?: string | null
+  lineSerials?: string | null
+  grnStatus?: string | null; correctionCount?: number
+}
+interface QcCorrectionRow {
+  id: string; createdAt: string; correctedBy: string; inspectedBy: string; reason: string
+  previousAccepted: number; previousRejected: number; previousStatus: string
+  newAccepted: number; newRejected: number; newStatus: string
 }
 interface ItemRow { id: string; code?: string; name?: string; uom?: string }
 interface ParamDraft { key: number; name: string; expected: string; actual: string; ok: boolean }
@@ -48,6 +57,20 @@ function TypeChip({ t }: { t: string }) {
 }
 
 let paramKey = 0
+
+function parseParams(raw?: string | null): { name: string; expected: string; actual: string; ok: boolean }[] {
+  try {
+    const parsed = raw ? (JSON.parse(raw) as { name?: string; expected?: unknown; actual?: unknown; ok?: boolean }[]) : []
+    return (Array.isArray(parsed) ? parsed : []).map((p) => ({
+      name: p.name || '', expected: p.expected != null ? String(p.expected) : '',
+      actual: p.actual != null ? String(p.actual) : '', ok: p.ok !== false,
+    }))
+  } catch { return [] }
+}
+
+const statusFromQty = (accepted: number, rejected: number) => (rejected <= 0 ? 'PASSED' : accepted <= 0 ? 'FAILED' : 'PARTIAL')
+const r2 = (n: number) => Math.round(n * 100) / 100
+const lines = (s?: string | null) => (s || '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
 
 export default function QcInspectionsModule({ companyId }: { companyId: string }) {
   const list = useList<{ items?: QcRow[] } | QcRow[]>(`/api/qc-inspections?companyId=${companyId}`)
@@ -108,32 +131,20 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
   const [resRow, setResRow] = React.useState<QcRow | null>(null)
   const [qtyAccepted, setQtyAccepted] = React.useState(0)
   const [qtyRejected, setQtyRejected] = React.useState(0)
-  const [status, setStatus] = React.useState<string>('PASSED')
+  const [acceptedSerials, setAcceptedSerials] = React.useState('')
+  const [viewRow, setViewRow] = React.useState<QcRow | null>(null)
   const [resRemarks, setResRemarks] = React.useState('')
   const [resInspector, setResInspector] = React.useState('')
   const [params, setParams] = React.useState<ParamDraft[]>([{ key: ++paramKey, name: '', expected: '', actual: '', ok: true }])
 
-  // auto-suggest: rejected==0 → PASSED, accepted==0 → FAILED, else PARTIAL
-  function applyQty(a: number, rj: number) {
-    const suggested = rj === 0 ? 'PASSED' : a === 0 ? 'FAILED' : 'PARTIAL'
-    setStatus(suggested)
-  }
-
   function openResult(r: QcRow) {
     setResRow(r)
-    setQtyAccepted(r.qtyAccepted ?? r.qtyChecked ?? 0)
-    setQtyRejected(r.qtyRejected ?? 0)
-    setStatus('PASSED')
+    setQtyAccepted(r.qtyChecked ?? 0)
+    setQtyRejected(0)
+    setAcceptedSerials('')
     setResRemarks(r.remarks || '')
-    setResInspector(r.inspector || '')
-    let initial: ParamDraft[] = []
-    try {
-      const parsed = r.parameters ? (JSON.parse(r.parameters) as { name?: string; expected?: string; actual?: string; ok?: boolean }[]) : []
-      initial = (Array.isArray(parsed) ? parsed : []).map((p) => ({
-        key: ++paramKey, name: p.name || '', expected: p.expected != null ? String(p.expected) : '',
-        actual: p.actual != null ? String(p.actual) : '', ok: p.ok !== false,
-      }))
-    } catch { initial = [] }
+    setResInspector(r.inspector && r.inspector !== 'pending' ? r.inspector : '')
+    const initial: ParamDraft[] = parseParams(r.parameters).map((p) => ({ key: ++paramKey, ...p }))
     setParams(initial.length > 0 ? initial : [{ key: ++paramKey, name: '', expected: '', actual: '', ok: true }])
     setResOpen(true)
   }
@@ -146,24 +157,73 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
     if (!resRow) return
     const accepted = qtyAccepted || 0
     const rejected = qtyRejected || 0
-    if (accepted + rejected <= 0) { toast.error('Accepted + rejected must be greater than 0'); return }
+    if (Math.abs(r2(accepted + rejected) - r2(resRow.qtyChecked)) > 0.01) {
+      toast.error(`Accepted + rejected must equal the checked qty ${fmtNum(resRow.qtyChecked)}`); return
+    }
     setResSaving(true)
     try {
       await apiPatch(`/api/qc-inspections/${resRow.id}`, {
         companyId,
         qtyAccepted: accepted,
         qtyRejected: rejected,
-        status,
+        ...(needSerials ? { acceptedSerials } : {}),
         parameters: JSON.stringify(params.filter((p) => p.name.trim()).map((p) => ({ name: p.name.trim(), expected: p.expected, actual: p.actual, ok: p.ok }))),
         remarks: resRemarks || undefined,
         inspector: resInspector || undefined,
         userName: 'QC Inspector',
       })
-      toast.success(`Result recorded — ${resRow.number} ${status}`)
+      toast.success(`Result recorded — ${resRow.number} ${resStatus}`)
       setResOpen(false); setResRow(null); void list.refetch()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to submit result')
     } finally { setResSaving(false) }
+  }
+
+  const unaccounted = resRow ? r2(resRow.qtyChecked - (qtyAccepted || 0) - (qtyRejected || 0)) : 0
+  const resStatus = statusFromQty(qtyAccepted || 0, qtyRejected || 0)
+  const lineSerials = lines(resRow?.lineSerials)
+  // Serial-tracked and only partly accepted: stock needs to know which serials stay
+  const needSerials = lineSerials.length > 0 && (qtyAccepted || 0) > 0 && (qtyAccepted || 0) < lineSerials.length
+
+  // ---- correction of a submitted result (GRN not posted yet) ----
+  const [history, setHistory] = React.useState<QcCorrectionRow[]>([])
+  const [fix, setFix] = React.useState<{ row: QcRow; accepted: number; rejected: number; inspectedBy: string; reason: string; checked: boolean; serials: string } | null>(null)
+  const [fixSaving, setFixSaving] = React.useState(false)
+
+  const viewId = viewRow?.id
+  React.useEffect(() => {
+    setHistory([])
+    if (!viewId) return
+    apiGet<{ corrections?: QcCorrectionRow[] }>(`/api/qc-inspections/${viewId}?companyId=${companyId}`)
+      .then((d) => setHistory(d.corrections ?? []))
+      .catch(() => toast.error('Could not load the correction history'))
+  }, [viewId, companyId])
+
+  const unaccountedOf = (r: QcRow) => r2((r.qtyChecked || 0) - (r.qtyAccepted || 0) - (r.qtyRejected || 0))
+  const canCorrect = (r: QcRow) => r.refType === 'GRN' && r.status !== 'PENDING' && ['PENDING_QC', 'QC_COMPLETED'].includes(r.grnStatus || '') && QC_CORRECTION_ROLES.includes(currentRole())
+  // The form starts from the recorded result, never from a guess about the missing qty
+  const openFix = (r: QcRow) => setFix({ row: r, accepted: r.qtyAccepted || 0, rejected: r.qtyRejected || 0, inspectedBy: '', reason: '', checked: false, serials: '' })
+  const fixGap = fix ? r2(fix.row.qtyChecked - (fix.accepted || 0) - (fix.rejected || 0)) : 0
+
+  async function saveFix() {
+    if (!fix) return
+    if (fixGap !== 0) { toast.error(`Accepted + rejected must equal the checked qty ${fmtNum(fix.row.qtyChecked)}`); return }
+    if (!fix.inspectedBy.trim()) { toast.error('Enter who inspected the material'); return }
+    if (fix.reason.trim().length < 10) { toast.error('Explain the correction (at least 10 characters)'); return }
+    if (!fix.checked) { toast.error('Confirm that the material was physically inspected'); return }
+    setFixSaving(true)
+    try {
+      await apiPost(`/api/qc-inspections/${fix.row.id}/corrections`, {
+        companyId, qtyAccepted: fix.accepted, qtyRejected: fix.rejected,
+        basedOn: { qtyAccepted: fix.row.qtyAccepted || 0, qtyRejected: fix.row.qtyRejected || 0 },
+        inspectedBy: fix.inspectedBy, reason: fix.reason, physicalCheckConfirmed: fix.checked,
+        ...(fix.serials ? { acceptedSerials: fix.serials } : {}),
+      })
+      toast.success(`Result corrected — ${fix.row.number}`)
+      setFix(null); setViewRow(null); void list.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not correct the result')
+    } finally { setFixSaving(false) }
   }
 
   const pendingCount = qcRows.filter((r) => r.status === 'PENDING').length
@@ -191,7 +251,15 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
         </span>
       ),
     },
-    { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
+    {
+      key: 'status', header: 'Status', render: (r) => (
+        <div className="flex flex-col items-start gap-0.5">
+          <StatusBadge status={r.status} />
+          {r.status !== 'PENDING' && unaccountedOf(r) !== 0 && <span className="text-[11px] font-medium text-destructive whitespace-nowrap">Needs reconciliation</span>}
+          {!!r.correctionCount && <span className="text-[11px] text-muted-foreground whitespace-nowrap">Corrected</span>}
+        </div>
+      ),
+    },
     { key: 'inspector', header: 'Inspector', hideOnMobile: true, render: (r) => r.inspector || '—' },
   ]
 
@@ -232,7 +300,7 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
       <DataTable
         columns={columns} rows={filtered} loading={list.loading}
         searchPlaceholder="Search inspections…"
-        onRowClick={(r) => { if (r.status === 'PENDING') openResult(r) }}
+        onRowClick={(r) => { if (r.status === 'PENDING') openResult(r); else setViewRow(r) }}
       />
 
       {/* ---- Ad-hoc create dialog ---- */}
@@ -276,22 +344,25 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
       >
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Qty Accepted" required>
-            <NumberInput value={qtyAccepted} min={0} step="any" onChange={(n) => { setQtyAccepted(n); applyQty(n, qtyRejected) }} />
+            <NumberInput value={qtyAccepted} min={0} step="any" onChange={setQtyAccepted} />
           </Field>
           <Field label="Qty Rejected" required>
-            <NumberInput value={qtyRejected} min={0} step="any" onChange={(n) => { setQtyRejected(n); applyQty(qtyAccepted, n) }} />
+            <NumberInput value={qtyRejected} min={0} step="any" onChange={setQtyRejected} />
           </Field>
-          <Field label="Status" required>
-            <SelectInput
-              value={status} onChange={setStatus}
-              options={[{ value: 'PASSED', label: 'PASSED' }, { value: 'FAILED', label: 'FAILED' }, { value: 'PARTIAL', label: 'PARTIAL' }]}
-            />
+          <Field label="Result">
+            <div className="flex h-9 items-center"><StatusBadge status={resStatus} /></div>
           </Field>
         </div>
         {resRow && (
-          <p className="text-xs text-muted-foreground">
-            Checked qty: <b className="text-foreground tabular-nums">{fmtNum(resRow.qtyChecked)}</b> · accepted + rejected should not exceed it.
+          <p className={`text-xs ${unaccounted !== 0 ? 'text-destructive' : 'text-muted-foreground'}`} role="status">
+            Checked qty: <b className="tabular-nums">{fmtNum(resRow.qtyChecked)}</b> · accepted + rejected must equal it
+            {unaccounted > 0 ? ` — ${fmtNum(unaccounted)} unaccounted for` : unaccounted < 0 ? ` — over by ${fmtNum(-unaccounted)}` : ''}.
           </p>
+        )}
+        {needSerials && (
+          <Field label={`Accepted serial nos — one per line (${lines(acceptedSerials).length} of ${qtyAccepted})`} required>
+            <Textarea rows={3} value={acceptedSerials} onChange={(e) => setAcceptedSerials(e.target.value)} placeholder={lineSerials.join('\n')} />
+          </Field>
         )}
 
         <div className="space-y-2">
@@ -330,8 +401,139 @@ export default function QcInspectionsModule({ companyId }: { companyId: string }
           </Field>
         </div>
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <CheckCircle2 className="h-3.5 w-3.5" />Incoming QC result syncs to GRN line status.
+          <CheckCircle2 className="h-3.5 w-3.5" />Incoming QC result sets the GRN line's accepted and rejected qty. It cannot be changed after submitting.
         </p>
+      </FormDialog>
+
+      {/* ---- Completed inspection: read only ---- */}
+      <Dialog open={!!viewRow} onOpenChange={(o) => { if (!o) setViewRow(null) }}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              <Eye className="h-4 w-4" aria-hidden="true" />QC Details — {viewRow?.number}
+              {viewRow && <StatusBadge status={viewRow.status} />}
+            </DialogTitle>
+            <DialogDescription>Read only: this is the submitted result. Any correction is recorded separately and the earlier values stay in its history.</DialogDescription>
+          </DialogHeader>
+          {viewRow && (
+            <div className="space-y-4 text-sm">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                {([
+                  ['Item', viewRow.itemId ? itemLabel(viewRow.itemId) : '—'],
+                  ['Type', viewRow.type.replaceAll('_', ' ')],
+                  ['Reference', viewRow.refNumber || '—'],
+                  ['Date', fmtDate(viewRow.date)],
+                  ['Inspector', viewRow.inspector && viewRow.inspector !== 'pending' ? viewRow.inspector : '—'],
+                  ['Remarks', viewRow.remarks || '—'],
+                ] as const).map(([k, v]) => (
+                  <div key={k} className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">{k}</dt>
+                    <dd className="break-words">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="grid grid-cols-3 gap-2 rounded-lg border p-3 text-center">
+                <div><p className="text-xs text-muted-foreground">Checked</p><p className="font-semibold tabular-nums">{fmtNum(viewRow.qtyChecked)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Accepted</p><p className="font-semibold tabular-nums text-success">{fmtNum(viewRow.qtyAccepted)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Rejected</p><p className="font-semibold tabular-nums text-destructive">{fmtNum(viewRow.qtyRejected)}</p></div>
+              </div>
+              {unaccountedOf(viewRow) !== 0 && (
+                <p className="flex items-start gap-1.5 rounded-lg border border-danger-border bg-danger-soft p-2.5 text-destructive" role="alert">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{fmtNum(Math.abs(unaccountedOf(viewRow)))} of the checked qty {unaccountedOf(viewRow) > 0 ? 'is unaccounted for' : 'is over-counted'}. This GRN cannot be posted until an authorized user inspects the material and corrects the result.</span>
+                </p>
+              )}
+              {canCorrect(viewRow) && (
+                <Button type="button" variant="outline" onClick={() => openFix(viewRow)}>
+                  <PencilLine className="h-4 w-4 mr-1.5" aria-hidden="true" />Correct result
+                </Button>
+              )}
+              {history.length > 0 && (
+                <div>
+                  <p className="mb-1.5 flex items-center gap-1.5 font-medium"><History className="h-4 w-4" aria-hidden="true" />Correction history</p>
+                  <ol className="space-y-2">
+                    {history.map((c) => (
+                      <li key={c.id} className="rounded-lg border p-2.5 text-xs">
+                        <p className="font-medium">
+                          Accepted {fmtNum(c.previousAccepted)} / rejected {fmtNum(c.previousRejected)} ({c.previousStatus}) → accepted {fmtNum(c.newAccepted)} / rejected {fmtNum(c.newRejected)} ({c.newStatus})
+                        </p>
+                        <p className="mt-0.5 text-muted-foreground">{fmtDateTime(c.createdAt)} · corrected by {c.correctedBy} · inspected by {c.inspectedBy}</p>
+                        <p className="mt-0.5">{c.reason}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+              <div>
+                <p className="mb-1.5 flex items-center gap-1.5 font-medium"><ClipboardCheck className="h-4 w-4" aria-hidden="true" />Parameters</p>
+                {parseParams(viewRow.parameters).length === 0 ? (
+                  <p className="text-muted-foreground">No parameters recorded.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow><TableHead>Name</TableHead><TableHead>Expected</TableHead><TableHead>Actual</TableHead><TableHead>Result</TableHead></TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {parseParams(viewRow.parameters).map((p, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="whitespace-normal">{p.name}</TableCell>
+                          <TableCell>{p.expected || '—'}</TableCell>
+                          <TableCell>{p.actual || '—'}</TableCell>
+                          <TableCell className={p.ok ? 'text-success' : 'text-destructive'}>{p.ok ? 'OK' : 'Not OK'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ---- Correct a submitted result ---- */}
+      <FormDialog
+        open={!!fix} onOpenChange={(o) => { if (!o) setFix(null) }}
+        title={`Correct Result — ${fix?.row.number || ''}`}
+        description={`${fix?.row.refNumber || ''} · ${fix ? itemLabel(fix.row.itemId) : ''}. Recorded in the audit log and the correction history; the earlier values are kept.`}
+        submitLabel="Save Correction" loading={fixSaving} onSubmit={saveFix} wide
+      >
+        {fix && (
+          <>
+            <p className="text-sm">
+              Recorded now: checked <b className="tabular-nums">{fmtNum(fix.row.qtyChecked)}</b>, accepted <b className="tabular-nums">{fmtNum(fix.row.qtyAccepted)}</b>, rejected <b className="tabular-nums">{fmtNum(fix.row.qtyRejected)}</b>.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Qty Accepted" required>
+                <NumberInput value={fix.accepted} min={0} step="any" onChange={(n) => setFix({ ...fix, accepted: n })} />
+              </Field>
+              <Field label="Qty Rejected" required>
+                <NumberInput value={fix.rejected} min={0} step="any" onChange={(n) => setFix({ ...fix, rejected: n })} />
+              </Field>
+            </div>
+            <p className={`text-xs ${fixGap !== 0 ? 'text-destructive' : 'text-muted-foreground'}`} role="status">
+              Accepted + rejected must equal {fmtNum(fix.row.qtyChecked)}
+              {fixGap > 0 ? ` — ${fmtNum(fixGap)} unaccounted for` : fixGap < 0 ? ` — over by ${fmtNum(-fixGap)}` : ''}. Count the material; nothing is assumed about the rest.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Inspected by" required>
+                <TextInput value={fix.inspectedBy} onChange={(e) => setFix({ ...fix, inspectedBy: e.target.value })} placeholder="Who checked the material" />
+              </Field>
+              <Field label="Reason for correction" required>
+                <TextInput value={fix.reason} onChange={(e) => setFix({ ...fix, reason: e.target.value })} placeholder="What was found" />
+              </Field>
+            </div>
+            {lines(fix.row.lineSerials).length > (fix.accepted || 0) && (fix.accepted || 0) > 0 && (
+              <Field label={`Accepted serial nos — one per line (${lines(fix.serials).length} of ${fix.accepted})`} required>
+                <Textarea rows={3} value={fix.serials} onChange={(e) => setFix({ ...fix, serials: e.target.value })} />
+              </Field>
+            )}
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={fix.checked} onCheckedChange={(v) => setFix({ ...fix, checked: v === true })} aria-label="Material was physically inspected" className="mt-0.5" />
+              <span>I confirm the material was physically inspected and these quantities are the count.</span>
+            </label>
+          </>
+        )}
       </FormDialog>
     </div>
   )

@@ -17,10 +17,11 @@ interface PoRow { id: string; number: string; status: string }
 interface PoDetail {
   id: string; number: string
   supplier?: { name?: string | null } | null
-  items?: { id: string; itemId: string; qty: number; receivedQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }[] | null
+  items?: { id: string; itemId: string; qty: number; receivedQty?: number; receivableQty?: number; item?: { code?: string | null; name?: string | null; uom?: string | null } | null }[] | null
 }
 interface GrnRow {
   id: string; number: string; date: string; supplierInvNo?: string | null; status: string; notes?: string | null
+  qcPending?: number; qcUnreconciled?: number
   poId?: string | null; supplierInvDate?: string | null; supplierChallanNo?: string | null; vehicleNo?: string | null
   po?: { id?: string | null; number?: string | null; supplier?: { name?: string | null } | null } | null
   items?: {
@@ -31,7 +32,7 @@ interface GrnRow {
 }
 interface DraftRow {
   poItemId: string; itemId: string; label: string; uom: string
-  orderedQty: number; pending: number; receivedQty: number; acceptedQty: number; rejectedQty: number
+  orderedQty: number; pending: number; receivedQty: number
   batchTracked: boolean; trackSerial: boolean
   batchNo: string; mfgDate: string; expiryDate: string; serials: string
 }
@@ -84,14 +85,14 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
     try {
       const po = await apiGet<PoDetail>(`/api/purchase-orders/${pid}?companyId=${companyId}`)
       const mapped: DraftRow[] = (po.items ?? [])
-        .filter((it) => it.qty - (it.receivedQty || 0) > 0)
+        .filter((it) => (it.receivableQty ?? it.qty - (it.receivedQty || 0)) > 0)
         .map((it) => {
-          const pending = it.qty - (it.receivedQty || 0)
+          const pending = it.receivableQty ?? it.qty - (it.receivedQty || 0)
           return {
             poItemId: it.id, itemId: it.itemId,
             label: it.item?.name ? `${it.item.code ? it.item.code + ' — ' : ''}${it.item.name}` : it.itemId,
             uom: it.item?.uom || '', orderedQty: it.qty, pending,
-            receivedQty: pending, acceptedQty: pending, rejectedQty: 0,
+            receivedQty: pending,
             batchTracked: !!flagMap.get(it.itemId)?.batchTracked, trackSerial: !!flagMap.get(it.itemId)?.trackSerial,
             batchNo: '', mfgDate: '', expiryDate: '', serials: '',
           }
@@ -106,8 +107,6 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
       if (i !== idx) return r
       const next = { ...r, ...patch }
       next.receivedQty = Math.min(Math.max(0, next.receivedQty), next.pending)
-      next.acceptedQty = Math.min(Math.max(0, next.acceptedQty), next.receivedQty)
-      next.rejectedQty = Math.min(Math.max(0, next.rejectedQty), next.receivedQty - next.acceptedQty)
       return next
     }))
   }
@@ -117,8 +116,8 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
     if (!warehouseId) { toast.error('Select a warehouse'); return }
     const valid = rows.filter((r) => r.receivedQty > 0)
     if (!valid.length) { toast.error('Enter received qty for at least one line'); return }
-    const badSerial = valid.find((r) => r.trackSerial && r.acceptedQty > 0 && serialList(r.serials).length !== r.acceptedQty)
-    if (badSerial) { toast.error(`${badSerial.label}: enter exactly ${badSerial.acceptedQty} serial no(s)`); return }
+    const badSerial = valid.find((r) => r.trackSerial && serialList(r.serials).length !== r.receivedQty)
+    if (badSerial) { toast.error(`${badSerial.label}: enter exactly ${badSerial.receivedQty} serial no(s)`); return }
     setSaving(true)
     try {
       await apiPost('/api/grns', {
@@ -127,7 +126,7 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
         vehicleNo: vehicleNo.trim() || undefined, notes: notes || undefined,
         items: valid.map((r) => ({
           poItemId: r.poItemId, itemId: r.itemId, orderedQty: r.orderedQty,
-          receivedQty: r.receivedQty, acceptedQty: r.acceptedQty, rejectedQty: r.rejectedQty,
+          receivedQty: r.receivedQty,
           ...(r.batchTracked ? { batchNo: r.batchNo.trim() || undefined, mfgDate: r.mfgDate || undefined, expiryDate: r.expiryDate || undefined } : {}),
           ...(r.trackSerial ? { serials: r.serials } : {}),
         })),
@@ -176,13 +175,20 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
               <ClipboardCheck className="h-3.5 w-3.5 mr-0.5" />QC
             </Button>
           )}
-          {r.status === 'PENDING_QC' && (
+          {(r.status === 'PENDING_QC' || r.status === 'QC_COMPLETED') && (
             <>
-              <ConfirmAction
-                trigger={<Button size="sm" className="h-7"><PackageCheck className="h-3.5 w-3.5 mr-1" />Post to Stock</Button>}
-                title="Post GRN to stock?" message={`Post ${r.number}? Accepted quantities will be added to warehouse stock at PO rate.`}
-                onConfirm={() => post(r)}
-              />
+              {r.qcPending || r.qcUnreconciled ? (
+                <Button size="sm" className="h-7" disabled title={r.qcPending ? 'Submit the QC results first' : 'A QC result leaves material unaccounted for: correct it in QC Inspections'}>
+                  <PackageCheck className="h-3.5 w-3.5 mr-1" />
+                  {r.qcPending ? `${r.qcPending} QC pending` : `${r.qcUnreconciled} QC to reconcile`}
+                </Button>
+              ) : (
+                <ConfirmAction
+                  trigger={<Button size="sm" className="h-7"><PackageCheck className="h-3.5 w-3.5 mr-1" />Post to Stock</Button>}
+                  title="Post GRN to stock?" message={`Post ${r.number}? Only the QC accepted quantities will be added to warehouse stock at PO rate. Rejected quantities stay out of stock.`}
+                  onConfirm={() => post(r)}
+                />
+              )}
               <ConfirmAction
                 trigger={<Button variant="ghost" size="sm" className="h-7 text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>}
                 title="Delete GRN?" message={`Delete GRN ${r.number}?`} tone="destructive" onConfirm={() => remove(r)}
@@ -231,16 +237,9 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
               </div>
               <div className="sm:col-span-2">
                 <span className="text-[10px] text-muted-foreground uppercase">Received</span>
-                <NumberInput value={r.receivedQty} min={0} max={r.pending} onChange={(n) => updateRow(idx, { receivedQty: n, acceptedQty: n })} />
+                <NumberInput value={r.receivedQty} min={0} max={r.pending} onChange={(n) => updateRow(idx, { receivedQty: n })} />
               </div>
-              <div className="sm:col-span-2">
-                <span className="text-[10px] text-muted-foreground uppercase">Accepted</span>
-                <NumberInput value={r.acceptedQty} min={0} max={r.receivedQty} onChange={(n) => updateRow(idx, { acceptedQty: n })} />
-              </div>
-              <div className="sm:col-span-2">
-                <span className="text-[10px] text-muted-foreground uppercase">Rejected</span>
-                <NumberInput value={r.rejectedQty} min={0} onChange={(n) => updateRow(idx, { rejectedQty: n })} />
-              </div>
+              <p className="sm:col-span-4 self-center text-[11px] text-muted-foreground">Accepted and rejected qty are recorded in QC Inspections.</p>
               <div className="col-span-2 sm:col-span-2 flex justify-end">
                 <Button type="button" variant="ghost" size="sm"
                   onClick={() => setRows((rs) => rs.filter((_, i) => i !== idx))}>
@@ -266,11 +265,11 @@ export default function GrnsModule({ companyId }: { companyId: string }) {
               {r.trackSerial && (
                 <div className="col-span-2 sm:col-span-12">
                   <span className="text-[10px] text-muted-foreground uppercase">
-                    Serial / IMEI nos — one per line ({serialList(r.serials).length} of {r.acceptedQty} entered)
+                    Serial / IMEI nos — one per line ({serialList(r.serials).length} of {r.receivedQty} entered)
                   </span>
                   <Textarea rows={3} value={r.serials} onChange={(e) => updateRow(idx, { serials: e.target.value })}
                     placeholder="One serial number per line (scan or paste)"
-                    className={serialList(r.serials).length !== r.acceptedQty ? 'border-warning-border' : ''} />
+                    className={serialList(r.serials).length !== r.receivedQty ? 'border-warning-border' : ''} />
                 </div>
               )}
             </div>

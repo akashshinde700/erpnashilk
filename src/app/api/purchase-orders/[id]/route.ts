@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireSecurityPin } from '@/lib/security-pin'
+import { outstandingQty, poLineProgress, type PoLineProgress } from '@/lib/po-receipt'
 import {
   ok, handleError, companyRequired, computeGst, isInterStateParty, logAudit, ApiError, r2, requireWrite, trustedUserName, claimStatus,
 } from '@/lib/erp-helpers'
@@ -70,7 +71,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       select: { name: true, gstin: true, pan: true, addressLine: true, city: true, state: true, stateCode: true, phone: true, email: true },
     })
     const [row] = await attachItemInfo(companyId, [{ ...po, company }])
-    return ok(row)
+    const progress = await poLineProgress(db, row.items.map((i) => i.id))
+    const closures = await db.purchaseOrderClosure.findMany({ where: { companyId, poId: po.id }, orderBy: { createdAt: 'asc' } })
+    const items = row.items.map((i) => {
+      const p = progress.get(i.id) as PoLineProgress
+      const outstanding = outstandingQty(i.qty, p)
+      return {
+        ...i, acceptedQty: p.accepted, rejectedQty: p.rejected, closedQty: p.closed, inQcQty: p.inQc,
+        outstandingQty: outstanding, receivableQty: Math.max(0, r2(outstanding - p.inQc)),
+      }
+    })
+    return ok({ ...row, items, closures })
   } catch (e) {
     return handleError(e)
   }

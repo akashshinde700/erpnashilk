@@ -12,10 +12,18 @@ type HelperTx = Prisma.TransactionClient & Parameters<typeof nextDocNumber>[0] &
 async function attachItem<T extends { itemId: string }>(companyId: string, rows: T[]) {
   const ids = Array.from(new Set(rows.map((r) => r.itemId)))
   const items = ids.length
-    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true } })
+    ? await db.item.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, code: true, name: true, uom: true, trackSerial: true } })
     : []
   const map = new Map(items.map((i) => [i.id, i]))
   return rows.map((r) => ({ ...r, item: map.get(r.itemId) || null }))
+}
+
+// The GRN line's received serials: a partly accepted serial-tracked line has to say which ones were accepted.
+async function attachLineSerials<T extends { grnItemId: string | null; status: string }>(rows: T[]) {
+  const ids = rows.filter((r) => r.grnItemId).map((r) => r.grnItemId as string)
+  const lines = ids.length ? await db.grnItem.findMany({ where: { id: { in: ids }, serials: { not: null } }, select: { id: true, serials: true } }) : []
+  const map = new Map(lines.map((l) => [l.id, l.serials]))
+  return rows.map((r) => ({ ...r, lineSerials: (r.grnItemId && map.get(r.grnItemId)) || null }))
 }
 
 function toDate(v: unknown): Date | null {
@@ -45,7 +53,18 @@ export async function GET(req: Request) {
       ]
     }
     const rows = await db.qcInspection.findMany({ where, orderBy: { date: 'desc' }, take: 300 })
-    return ok({ items: await attachItem(companyId, rows), total: rows.length })
+    const grnIds = Array.from(new Set(rows.filter((r) => r.refType === 'GRN').map((r) => r.refId)))
+    const [grns, corrected] = await Promise.all([
+      db.grn.findMany({ where: { companyId, id: { in: grnIds } }, select: { id: true, status: true } }),
+      db.qcCorrection.groupBy({ by: ['inspectionId'], where: { companyId, inspectionId: { in: rows.map((r) => r.id) } }, _count: { _all: true } }),
+    ])
+    const grnStatus = new Map(grns.map((g) => [g.id, g.status]))
+    const correctionCount = new Map(corrected.map((c) => [c.inspectionId, c._count._all]))
+    const withLines = await attachLineSerials(await attachItem(companyId, rows))
+    return ok({
+      items: withLines.map((r) => ({ ...r, grnStatus: grnStatus.get(r.refId) ?? null, correctionCount: correctionCount.get(r.id) ?? 0 })),
+      total: rows.length,
+    })
   } catch (e) {
     return handleError(e)
   }
@@ -61,6 +80,8 @@ export async function POST(req: Request) {
     if (!['INCOMING', 'IN_PROCESS', 'FINAL'].includes(type)) {
       throw new ApiError('type must be INCOMING, IN_PROCESS or FINAL', 400)
     }
+    // GRN inspections belong to a receipt line and are only created with the GRN: every one of them holds up posting
+    if (body.refType === 'GRN') throw new ApiError('GRN inspections are created with the GRN', 400)
     if (!body.itemId) throw new ApiError('itemId is required', 400)
     if (!(Number(body.qtyChecked) > 0)) throw new ApiError('qtyChecked must be greater than 0', 400)
     const item = await db.item.findFirst({ where: { id: body.itemId, companyId } })

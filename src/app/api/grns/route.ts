@@ -5,6 +5,8 @@ import {
 } from '@/lib/erp-helpers'
 import { emitEvent } from '@/lib/emit-event'
 import { parseSerials, joinSerials } from '@/lib/batches'
+import { qcResultAddsUp } from '@/lib/grn-qc'
+import { outstandingQty, poLineProgress, type PoLineProgress } from '@/lib/po-receipt'
 
 // prisma 6.x generated delegates are not structurally assignable to the shared helpers' minimal
 // tx types — intersect once and cast the transaction client at the boundary.
@@ -29,7 +31,6 @@ function toDate(v: unknown): Date | null {
 interface GrnLineInput {
   poItemId?: string; itemId?: string
   orderedQty?: number | string; receivedQty?: number | string
-  acceptedQty?: number | string; rejectedQty?: number | string
   batchNo?: string | null; mfgDate?: string | null; expiryDate?: string | null; serials?: string | string[] | null
 }
 
@@ -59,7 +60,20 @@ export async function GET(req: Request) {
         items: true,
       },
     })
-    return ok({ items: await attachItemInfo(companyId, rows), total: rows.length })
+    const inspections = await db.qcInspection.findMany({
+      where: { companyId, refType: 'GRN', refId: { in: rows.filter((r) => r.status !== 'POSTED').map((r) => r.id) } },
+      select: { refId: true, status: true, qtyChecked: true, qtyAccepted: true, qtyRejected: true },
+    })
+    const count = (id: string, test: (q: (typeof inspections)[number]) => boolean) => inspections.filter((q) => q.refId === id && test(q)).length
+    const withItems = await attachItemInfo(companyId, rows)
+    return ok({
+      items: withItems.map((r) => ({
+        ...r,
+        qcPending: count(r.id, (q) => q.status === 'PENDING'),
+        qcUnreconciled: count(r.id, (q) => !qcResultAddsUp(q)),
+      })),
+      total: rows.length,
+    })
   } catch (e) {
     return handleError(e)
   }
@@ -87,10 +101,10 @@ export async function POST(req: Request) {
       const warehouse = await tx.warehouse.findFirst({ where: { id: body.warehouseId, companyId } })
       if (!warehouse) throw new ApiError('Warehouse not found', 404)
 
-      // PO item receivedQty is only incremented at GRN POST — so also count unposted (PENDING_QC) GRN qty
+      // PO item receivedQty is only incremented at GRN POST — so also count unposted GRN qty
       // of this PO when guarding against over-receipt.
       const pendingGrnItems = await tx.grnItem.findMany({
-        where: { grn: { poId: po.id, status: 'PENDING_QC' } },
+        where: { grn: { poId: po.id, status: { in: ['PENDING_QC', 'QC_COMPLETED'] } } },
         select: { poItemId: true, receivedQty: true },
       })
       const pendingByPoItem = new Map<string, number>()
@@ -99,25 +113,22 @@ export async function POST(req: Request) {
         pendingByPoItem.set(gi.poItemId, r2((pendingByPoItem.get(gi.poItemId) || 0) + gi.receivedQty))
       }
       const batchByPoItem = new Map<string, number>()
+      const progress = await poLineProgress(tx, po.items.map((p) => p.id))
 
       for (const l of lines) {
         if (!l.poItemId) throw new ApiError('poItemId is required on every line', 400)
         if (!l.itemId) throw new ApiError('itemId is required on every line', 400)
         const received = Number(l.receivedQty) || 0
         if (received <= 0) throw new ApiError('Received qty must be greater than 0 on every line', 400)
-        const accepted = Number(l.acceptedQty) || 0
-        const rejected = Number(l.rejectedQty) || 0
-        if (accepted < 0 || rejected < 0) throw new ApiError('Accepted/rejected qty cannot be negative', 400)
-        if (accepted + rejected > received + 0.01) {
-          throw new ApiError('Accepted + rejected qty cannot exceed received qty', 400)
-        }
         const poItem = po.items.find((p) => p.id === l.poItemId)
         if (!poItem) throw new ApiError('poItemId does not belong to this purchase order', 400)
         if (poItem.itemId !== l.itemId) throw new ApiError('itemId does not match the selected PO line', 400)
         const pending = pendingByPoItem.get(l.poItemId) || 0
         const batch = batchByPoItem.get(l.poItemId) || 0
-        if (r2(poItem.receivedQty + pending + batch + received) > r2(poItem.qty + 0.01)) {
-          throw new ApiError('Received qty exceeds ordered', 400)
+        // Replacements for rejected material fit here: only accepted and formally closed qty uses up the order
+        const outstanding = outstandingQty(poItem.qty, progress.get(poItem.id) as PoLineProgress)
+        if (r2(pending + batch + received) > r2(outstanding + 0.01)) {
+          throw new ApiError(`Received qty exceeds what is outstanding on the order (${r2(Math.max(0, outstanding - pending - batch))})`, 400)
         }
         batchByPoItem.set(l.poItemId, r2(batch + received))
       }
@@ -131,16 +142,16 @@ export async function POST(req: Request) {
       const flags = new Map(flagRows.map((f) => [f.id, f]))
       const tracking = lines.map((l) => {
         const f = flags.get(String(l.itemId))
-        const accepted = r2(Number(l.acceptedQty) || 0)
+        const received = r2(Number(l.receivedQty) || 0)
         const batchNo = f?.batchTracked && l.batchNo ? String(l.batchNo).trim() || null : null
         const mfgDate = f?.batchTracked ? toDate(l.mfgDate) : null
         const expiryDate = f?.batchTracked ? toDate(l.expiryDate) : null
         if (mfgDate && expiryDate && expiryDate < mfgDate) throw new ApiError(`Expiry date is before the mfg date for ${f?.code}`, 400)
         const serials = f?.trackSerial ? parseSerials(l.serials) : []
-        if (f?.trackSerial && accepted > 0) {
-          if (Math.abs(accepted - Math.round(accepted)) > 0.0005) throw new ApiError(`${f.code} ${f.name} is serial-tracked — accepted qty must be a whole number`, 400)
-          if (serials.length !== Math.round(accepted)) {
-            throw new ApiError(`${f.code} ${f.name} is serial-tracked — enter exactly ${Math.round(accepted)} serial no(s) for the accepted qty (got ${serials.length})`, 400)
+        if (f?.trackSerial) {
+          if (Math.abs(received - Math.round(received)) > 0.0005) throw new ApiError(`${f.code} ${f.name} is serial-tracked — received qty must be a whole number`, 400)
+          if (serials.length !== Math.round(received)) {
+            throw new ApiError(`${f.code} ${f.name} is serial-tracked — enter exactly ${Math.round(received)} serial no(s) for the received qty (got ${serials.length})`, 400)
           }
         }
         return { batchNo, mfgDate, expiryDate, serials: joinSerials(serials) }
@@ -169,8 +180,7 @@ export async function POST(req: Request) {
                 itemId: l.itemId as string,
                 orderedQty: l.orderedQty != null && Number(l.orderedQty) > 0 ? r2(Number(l.orderedQty)) : poItem ? poItem.qty : 0,
                 receivedQty: r2(Number(l.receivedQty)),
-                acceptedQty: r2(Number(l.acceptedQty) || 0),
-                rejectedQty: r2(Number(l.rejectedQty) || 0),
+                // Accepted / rejected qty come only from the line's QC inspection
               }
             }),
           },
@@ -188,6 +198,7 @@ export async function POST(req: Request) {
             refType: 'GRN',
             refId: created.id,
             refNumber: created.number,
+            grnItemId: it.id,
             itemId: it.itemId,
             qtyChecked: it.receivedQty,
             status: 'PENDING',
