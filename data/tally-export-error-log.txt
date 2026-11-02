@@ -1,0 +1,5 @@
+----------------------------------
+11/2/2026, 4:31:23 PM
+Transactions With No Item or Transactions With Zero Total Amount
+Ref No: 7842, Txn Id: 3226, Txn Type: Purchase
+
