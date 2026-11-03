@@ -77,12 +77,8 @@ export interface ConnectorRecord {
 }
 
 /** Async on purpose: a database-backed store can replace the in-memory one without changing callers. */
-/**
- * `list-companies` / `export-*` read from Tally (fixed Export requests built by the connector).
- * `push-voucher` is the only direction that writes: the server builds one Import envelope from a
- * sales invoice and the connector posts it to Tally unchanged (see src/lib/tally/push.ts).
- */
-export type TallyJobType = 'list-companies' | 'export-customers' | 'export-suppliers' | 'export-items' | 'push-voucher'
+/** Read-only: every job is a fixed Export request built by the connector. Nothing writes to Tally. */
+export type TallyJobType = 'list-companies' | 'export-customers' | 'export-suppliers' | 'export-items'
 export type TallyJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
 export interface TallyJobRecord {
@@ -100,10 +96,6 @@ export interface TallyJobRecord {
   /** Machine code; the UI message is written by the server. */
   error: string | null
   records: Record<string, string>[] | null
-  /** push-voucher only: the Tally Import envelope, built by the server, sent to the connector as-is. */
-  payload?: string | null
-  /** push-voucher only: the sales invoice it was built from (dedupe + UI). */
-  targetId?: string | null
 }
 
 export interface ConnectorStore {
@@ -294,8 +286,7 @@ const ENDPOINT_RE = /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{
 
 export interface HeartbeatReply {
   nextHeartbeatSec: number
-  /** `xml` is only ever a server-built Import envelope for a push-voucher job. */
-  job?: { id: string; type: TallyJobType; company?: string; xml?: string }
+  job?: { id: string; type: TallyJobType; company?: string }
 }
 
 export async function recordHeartbeat(c: ConnectorRecord, body: unknown, store = connectorStore()): Promise<HeartbeatReply> {
@@ -346,7 +337,6 @@ async function takeNextJob(c: ConnectorRecord, store: ConnectorStore): Promise<H
     id: next.id,
     type: next.type,
     ...(next.tallyCompany ? { company: next.tallyCompany } : {}),
-    ...(next.type === 'push-voucher' && next.payload ? { xml: next.payload } : {}),
   }
 }
 

@@ -232,9 +232,8 @@ invoice balance drops, GSTR-1 shows it in the credit-note section.
 1. **Print title escaping (stored XSS fix):** create a customer named `</title><script>alert('xss')</script> Co`, then
    print its **Statement of Account** (Receivables → print). Expected: no alert, the title shows the literal text, and
    the printed body renders normally. Also try a party name with `&` and `"`.
-2. **Tally purchase-bill push:** with `TALLY_CONNECTOR_POC=1` and `TALLY_CONNECTOR_PUSH=1` on the server, open
-   **Purchase Invoices → Tally** on one bill. Expect a job, then either "imported" (real/mock connector) or a clear
-   refusal — never a silent no-op. Without those env flags it must answer **503** with the "not switched on" message.
+2. **Tally is read-only:** **Purchase Invoices** has no Tally push button and the **Sales Invoices** menu has no
+   "Push to Tally" item. `POST /api/import-center/tally/push` must not exist (404 when signed in).
 3. **GSTR-2:** mark one purchase bill as reverse charge → it shows the `RCM` badge, the supplier row shows `N RCM`, and
    the "self-assessed, claim under 3.1(d)" line sums it.
 4. **Stock transfer + adjustment:** move 5 KG between warehouses, then adjust −2 KG with a reason → balances and ledger

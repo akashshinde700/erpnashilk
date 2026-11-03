@@ -5,6 +5,13 @@ title ManuFlow ERP - Tally Import
 REM ===================================================================
 REM  ManuFlow ERP - TallyPrime XML import
 REM
+REM  WARNING: THIS TOOL WRITES DATA INTO TALLYPRIME.
+REM  It can create and alter vouchers and masters in the open company.
+REM  It requires EXPLICIT HUMAN APPROVAL before each run: check the file
+REM  and the Tally company first. It does not ask for confirmation.
+REM  This is a manual write exception, separate from the ManuFlow Tally
+REM  Connector, which only reads from Tally. See docs/tally-connector.md.
+REM
 REM  Usage:
 REM    1. Drag a *_tally.xml file (downloaded from Sales Invoices ->
 REM       Tally menu) onto this .bat file, OR
