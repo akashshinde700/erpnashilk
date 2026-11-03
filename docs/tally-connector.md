@@ -1,9 +1,37 @@
 # Direct import from Tally — connector design
 
-Status: **diagnostics only.** ManuFlow can check whether a configured TallyPrime XML server answers
-(`GET /api/import-center/tally/status`, self-hosted installs) and — as a proof of concept that is off by default —
-whether a paired ManuFlow Tally Connector can reach Tally (see below). It does not list Tally companies or import data
-from Tally yet. The Import Center shows "Not connected" until a check really succeeds.
+Status: **proof of concept, off by default, not tested against a real TallyPrime.**
+
+## Automated read-only connector and manual Tally imports
+
+These are two separate routes, and only the second can write to Tally.
+
+| | Automated connector | Manual Tally import |
+|---|---|---|
+| Direction | TallyPrime → ManuFlow only | ManuFlow → TallyPrime |
+| Started by | A ManuFlow user, through the connector on the office PC | A person, outside ManuFlow, on their own PC |
+| Reads from Tally | Companies, customers, suppliers, stock items | No |
+| Writes to Tally | **Never** | **Yes** |
+| Voucher sync | None, past or future | One invoice file at a time |
+
+The connector does not sync automatically: each read is started by a user in the Import Center. Vouchers are not read.
+
+### Manual write exception: `Tally-Import.bat`
+
+`public/downloads/tally/Tally-Import.bat` **writes data into TallyPrime**. It posts an XML file to Tally's port and can
+create or alter vouchers and masters in the open company. It is kept deliberately as a manual write exception.
+
+* **It requires explicit human approval before each run.** Whoever runs it must check the file and the Tally company
+  first. The approval is a procedure: the script itself does not ask for confirmation, and when double-clicked it
+  picks the newest `*_tally.xml` in Downloads.
+* ManuFlow only offers it as a download. The server never runs it and never contacts Tally to import anything.
+* The XML, JSON and Excel downloads do not contact Tally. The XML and masters files change Tally only when a person
+  imports them, by this script or from Tally's own import screen.
+* **Mark as sent to Tally** only updates the invoice in ManuFlow. It is a person's note: nothing checks Tally.
+* Purchase bills have no route to Tally.
+
+`tests/tally-read-only.test.ts` fails if this exception grows: another script in `public/`, a connector or server path
+to it, or this warning being removed.
 
 ## How TallyPrime exposes data
 
@@ -145,45 +173,18 @@ Admin ──"Disconnect"──► DELETE /api/import-center/tally/connector → 
   (Linux); file mode 0600, folder 0700 (on Windows the user-profile ACL applies instead). The token is never printed.
   Redirects from ManuFlow are refused, so the token cannot be forwarded elsewhere.
 
-### Push to Tally — sales vouchers (built, OFF by default)
+### Read-only: nothing writes to Tally
 
-The one direction that **writes**: **Sales → Sales Invoices → invoice menu → “Push to Tally (connector)”**
-sends that invoice to TallyPrime through the paired connector instead of downloading a file.
+The connector is strictly **TallyPrime → ManuFlow**. The earlier push of sales invoices and purchase bills was removed:
+there is no push endpoint, job type, menu item or switch, and `TALLY_CONNECTOR_PUSH` does nothing.
 
-```
-Invoice menu ──POST /api/import-center/tally/push { invoiceId }──►  server builds ONE Import envelope
-                                                                   (buildTallyVoucher → voucherToXml,
-                                                                    the same builder as the XML download)
-                                                                    and queues it as job type push-voucher
-Connector heartbeat ──► { job: { id, type: 'push-voucher', xml } }  ← the envelope, unchanged
-Connector ──POST <tally 127.0.0.1:9000> the envelope──────────────►  TallyPrime creates the voucher
-Connector ──POST /api/tally-connector/result { jobId, ok, records: [{ name, status }] }
-Browser ──GET /api/import-center/tally/jobs?id=…──► done → toast; the invoice is marked “sent to Tally”
-```
+* Every request from the connector goes through `postToTally()`, which refuses anything but a single
+  `TALLYREQUEST=Export` envelope with no voucher, `ACTION` attribute or DTD (`isExportRequest()`).
+* A job with any other name is refused without contacting Tally; XML sent along with a job is ignored.
+* `tests/tally-read-only.test.ts` proves this against a hostile server and fails if a write path comes back.
+* A connector copy from before this change still contains the old push code. Replace any such copy.
 
-What is deliberately narrow:
-
-* **One invoice, one envelope, one voucher.** `checkPushXml()` (server, `src/lib/tally/push-xml.ts`) and
-  `pushProblem()` (connector, `manuflow-tally-connector.mjs`) both require exactly one
-  `<VOUCHER … ACTION="Create">` inside an `<ENVELOPE>` with `TALLYREQUEST=Import Data`, no DTD and no
-  entity declaration, ≤ 256 KB. Two vouchers, an Update/Delete action or an Export request are refused
-  **on both sides**, so a server bug cannot become an arbitrary write in Tally.
-* **The connector never builds an Import request.** It posts the document it was handed, byte for byte
-  (asserted in `tests/tally-connector.test.ts`), and it only does so for a job that carries `xml`.
-* **The browser never supplies XML** — no endpoint accepts it. The payload is built from the invoice.
-* **Nothing to duplicate:** the voucher carries `REMOTEID="MANUFLOW-INV-<id>"`. If Tally answers
-  “already exists / duplicate”, the job is **done** with `result.status = 'exists'` and the UI says
-  “was already in TallyPrime” instead of failing.
-* **Off unless asked for:** the route answers 503 with `TALLY_PUSH_DISABLED` unless the server runs with
-  `TALLY_CONNECTOR_PUSH=1` **and** the connector feature switch `TALLY_CONNECTOR_POC=1` is on.
-  Cancelled invoices are refused; a second click while a push is still running returns the waiting job.
-* **Same permissions as raising the invoice:** `requireWrite('sales-invoices')` + `requireWrite('import-center')`.
-  The connector token still binds the company; the company is never taken from the request.
-
-Not verified (as everywhere else in this connector): the Import envelope against a **real** TallyPrime.
-The voucher only imports cleanly when the ledgers it names already exist in that Tally company — the
-**All Masters** file (or an existing chart of accounts) is a precondition, and a missing ledger shows up
-as `voucher_rejected` with a message that says so.
+The manual downloads are a separate route, described at the top of this document.
 
 ### Known limitations of the proof of concept
 
@@ -247,11 +248,5 @@ as `voucher_rejected` with a message that says so.
    process, `prisma db push` on deploy, no data-loss flags).
 4. Build and sign the connector app; document firewall settings (port 9000 reachable from
    127.0.0.1 only).
-5. Vouchers: **sales invoices and purchase bills can already be pushed** (see above; bills go out as
-   Purchase vouchers with the input-tax ledgers). Receipts and journals still need the accounting
-   decisions listed in the Smart Import audit (no general ledger, document numbering, bill-wise
-   outstanding, go-live date).
-6. Once a real TallyPrime is available: capture the exact reply of an Import (`<STATUS>1</STATUS>`,
-   line errors for a duplicate remote id) and replace the pattern matching in `pushVoucher()`.
-7. Persist push results (a `tallyPushedAt` / `tallyRemoteId` on the invoice would let the list show it).
-   Today the result lives in the 30-minute in-memory job and the “sent to Tally” flag on the invoice.
+5. Reading vouchers from Tally needs the accounting decisions listed in the Smart Import audit (no general ledger,
+   document numbering, bill-wise outstanding, go-live date).

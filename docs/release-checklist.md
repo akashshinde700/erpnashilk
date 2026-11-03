@@ -44,8 +44,8 @@ point-in-time recovery, in which case RPO = the PITR window; RTO = time to `db:p
 - [ ] `npm run db:push` runs clean (it drops the removed `Lead` / `LeadActivity` tables — that is expected, **take a dump first**)
 - [ ] `npx next build` succeeds; `npx playwright test` green (128 tests at the time of writing)
 - [ ] `bun test` green against the guarded test database (needs `TEST_DATABASE_URL`; includes the concurrency suite)
-- [ ] `.env` reviewed: `DATABASE_URL`, session secret, `TALLY_CONNECTOR_POC` / `TALLY_CONNECTOR_PUSH` (both **off** unless
-      the customer really wants voucher push), Tally ledger name overrides if the customer's Tally uses different names
+- [ ] `.env` reviewed: `DATABASE_URL`, session secret, `TALLY_CONNECTOR_POC` (**off** unless the customer really wants the
+      read-only Tally import), Tally ledger name overrides if the customer's Tally uses different names
 - [ ] Nightly backup job is actually installed on the server (`crontab -l`), and someone owns the backup folder
 - [ ] Smoke test after deploy: log in, create + print one invoice, receive one GRN, post one production entry, open
       Dashboard / GST reports

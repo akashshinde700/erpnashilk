@@ -39,34 +39,19 @@ test.describe('Tally + e-Invoice export', () => {
     expect(xml).toContain('<VOUCHERNUMBER>INV/26-27/0001</VOUCHERNUMBER>')
   })
 
-  test('a voucher can be pushed straight into Tally through the connector', async ({ page, store }) => {
+  test('nothing on the invoice or bill screens can push to Tally', async ({ page, store }) => {
     await loginFast(page, store)
     await openModule(page, 'Sales Invoices')
+    const menu = await openExportMenu(page, 'INV/26-27/0001')
+    await expect(menu.getByRole('menuitem', { name: 'Tally XML (import file)' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: /push to tally/i })).toHaveCount(0)
+    await page.keyboard.press('Escape')
 
-    // A different invoice than the mark/unmark test below, so the two do not share the flag.
-    const menu = await openExportMenu(page, 'INV/26-27/0002')
-    await menu.getByRole('menuitem', { name: 'Push to Tally (connector)' }).click()
-
-    // The server queues the job, the (fake) connector settles it, the invoice is marked imported.
-    await expect(page.getByText('Sending INV/26-27/0002 to Tally…')).toBeVisible()
-    await expect(page.getByText('INV/26-27/0002 imported into TallyPrime')).toBeVisible({ timeout: 20_000 })
-
-    const invoice = (store.collections['sales-invoices'] as { number: string; tallySentAt?: string | null }[])
-      .find((i) => i.number === 'INV/26-27/0002')
-    expect(invoice?.tallySentAt).toBeTruthy()
-  })
-
-  test('a purchase bill is pushed to Tally as a Purchase voucher', async ({ page, store }) => {
-    await loginFast(page, store)
     await openModule(page, 'Purchase Invoices')
-
     const row = page.getByRole('row').filter({ hasText: 'BILL/26-27/0002' }).first()
     await expect(row).toBeVisible()
-    await row.getByTitle('Push this bill to Tally (connector)').click()
-
-    // The server queues a push-voucher job for the bill; the fake connector settles it.
-    await expect(page.getByText('Sending bill BILL/26-27/0002 to Tally…')).toBeVisible()
-    await expect(page.getByText('BILL/26-27/0002 imported into TallyPrime')).toBeVisible({ timeout: 20_000 })
+    await expect(row.getByTitle(/to Tally/i)).toHaveCount(0)
+    await expect(row.getByRole('button', { name: 'Tally' })).toHaveCount(0)
   })
 
   test('Tally JSON download describes the same voucher', async ({ page, store }) => {

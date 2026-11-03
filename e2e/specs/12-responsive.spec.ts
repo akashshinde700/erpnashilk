@@ -19,7 +19,7 @@ const VIEWPORTS = [
 ]
 
 const TALLY_OPTIONS = [
-  'Tally XML (import file)', 'Push to Tally (connector)', 'Tally JSON', 'Tally Excel', 'Tally importer (.bat)',
+  'Tally XML (import file)', 'Tally JSON', 'Tally Excel', 'Tally importer (.bat)',
   'Tally masters (XML)', 'Mark as sent to Tally', 'e-Invoice JSON (GST portal)',
 ]
 

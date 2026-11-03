@@ -65,7 +65,16 @@ async function readCapped(res: Response, max: number): Promise<string | null> {
     }
     chunks.push(value)
   }
-  return new TextDecoder('utf-8').decode(Buffer.concat(chunks))
+  return decodeTallyBody(Buffer.concat(chunks))
+}
+
+/** TallyPrime may answer in UTF-16 (with or without a byte-order mark) or UTF-8. */
+export function decodeTallyBody(buf: Buffer): string {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf.subarray(2))
+  if (buf[0] === 0xfe && buf[1] === 0xff) return new TextDecoder('utf-16be').decode(buf.subarray(2))
+  if (buf[0] === 0x3c && buf[1] === 0) return new TextDecoder('utf-16le').decode(buf)
+  if (buf[0] === 0 && buf[1] === 0x3c) return new TextDecoder('utf-16be').decode(buf)
+  return new TextDecoder('utf-8').decode(buf)
 }
 
 /** Does the body look like a Tally XML reply? (root ENVELOPE or RESPONSE, closed; no DTD / entities) */

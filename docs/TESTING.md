@@ -74,8 +74,6 @@ e2e/
                                    ledger-name precedence, IRP validation, GST split
     gst-reports.spec.ts            currency → INR conversion (fxToInr/toInrAmount/sumInr)
                                    and the reverse-charge GSTR-1 rchrg flag
-    tally-push.spec.ts             the push envelope: one create-voucher, no DTD, size cap,
-                                   and the TALLY_CONNECTOR_PUSH switch
     billing-totals.spec.ts         paisa-exact bill maths: line column ↔ bill taxable, tax heads ↔
                                    Σ line tax, grand total ↔ printed components, discount cap,
                                    round-off to the rupee, 400 deterministic random bills

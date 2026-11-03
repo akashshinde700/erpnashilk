@@ -48,33 +48,17 @@ If a name in the invoice does not exist in Tally the import shows up in Tally's
 **Import Exceptions** report. The voucher preview (`?preview=1`) returns the same
 warnings the UI shows before the download.
 
-### Direct push
+### No direct push
 
-**Push to Tally (connector)** in the invoice menu sends the voucher straight into
-TallyPrime — but only through a **paired ManuFlow Tally Connector** running on the
-office PC, never to an address from the request (a request-supplied URL would let
-any signed-in user make the server call an internal address — SSRF).
+The ManuFlow server and the connector never write to TallyPrime. The connector only
+reads from Tally; vouchers reach Tally only when a person imports the downloaded file.
 
-The server builds the same Import envelope as the XML download, hands it to the
-connector as a `push-voucher` job, and the connector posts that document to
-TallyPrime unchanged.
-
-**Sales invoices and purchase bills both push.** A bill travels as a *Purchase*
-voucher (`REMOTEID="MANUFLOW-BILL-…"`): the supplier is credited with the bill
-total, while the purchase ledger, the input-tax ledgers and the stock lines are
-debited. Purchase-side ledger names have no per-company column yet, so they come
-from the environment — `TALLY_LEDGER_PURCHASE` (default `Purchase`),
-`TALLY_LEDGER_CGST_INPUT` / `TALLY_LEDGER_SGST_INPUT` (default
-`Input Central Tax @ 9%` / `Input State Tax @ 9%`),
-`TALLY_LEDGER_IGST_INPUT` (default `Input Integrated Tax @ 18%`) and
-`TALLY_LEDGER_CESS_INPUT` (default `Input Cess`); freight and round-off reuse the
-existing settings. Push the bill from **Purchase Invoices → Tally** on the row. The outcome comes back as the job's result and the invoice
-is marked “sent to Tally”. Off unless the server runs with
-`TALLY_CONNECTOR_PUSH=1`; the full rules (one voucher per job, no DTD, duplicate
-handling, permissions) are in `docs/tally-connector.md`.
+**`Tally-Import.bat` writes data into TallyPrime** and requires explicit human approval
+before each run. It does not ask for confirmation itself, so check the file and the Tally
+company first. It is the one manual write exception; see `docs/tally-connector.md`.
 
 Installs where ManuFlow runs next to Tally can also use the `TALLY_HTTP_URL`
-connectivity check; everything else uses the XML file (or the connector).
+connectivity check; everything else uses the XML file.
 
 ## GST e-Invoice (IRP / NIC)
 
@@ -161,11 +145,10 @@ envelope carries `REMOTEID="MANUFLOW-INV-<id>"`.
 ## Tests
 
 * `e2e/specs/10-tally-einvoice.spec.ts` — the UI flow: all three Tally downloads,
-  the connector push, the sent-to-Tally mark, and the e-Invoice JSON download
+  that no push action is offered, the sent-to-Tally mark, and the e-Invoice JSON download
   (content asserted).
-* `e2e/unit/tally-push.spec.ts` — the push envelope checks: a real voucher passes,
-  an Export / Delete / two-voucher / DTD / oversized document does not, and the
-  feature switch is off unless `TALLY_CONNECTOR_PUSH=1`.
+* `tests/tally-read-only.test.ts` — the connector cannot write to Tally, even when
+  told to by the server.
 * `e2e/unit/tally-export.spec.ts` — the builders themselves: voucher balances, the
   Round Off residual, XML escaping/invoice-mode entries, ledger-name precedence,
   IRP validation, the intra-state / inter-state tax split, and the masters file
