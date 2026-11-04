@@ -7,7 +7,7 @@ import { POST as pairRoute } from '@/app/api/tally-connector/pair/route'
 import { POST as heartbeatRoute } from '@/app/api/tally-connector/heartbeat/route'
 import { db } from '@/lib/db'
 import { TALLY_HEALTH_REQUEST } from '@/lib/tally/client'
-import { PAIRING_TTL_MS, connectorStore, normalizeCode, resetConnectorStore } from '@/lib/tally/connector'
+import { CONNECTOR_LATEST_VERSION, CONNECTOR_MIN_VERSION, PAIRING_TTL_MS, normalizeCode } from '@/lib/tally/connector'
 import * as connector from '../connector/tally/manuflow-tally-connector.mjs'
 import { apiRequest, call, type TestUser } from './helpers/api'
 import { resetDb } from './helpers/db'
@@ -52,7 +52,6 @@ afterAll(() => {
 })
 beforeEach(async () => {
   await resetDb()
-  resetConnectorStore()
   process.env.TALLY_CONNECTOR_POC = '1'
   tallyMode = 'tally'
   tallyBodies.length = 0
@@ -71,7 +70,7 @@ const pairWith = (code: unknown, headers: Record<string, string> = {}) =>
 const beat = (token: string | null, body: unknown = { tally: { status: 'connected', latencyMs: 12, endpoint: '127.0.0.1:9000' } }) =>
   call(heartbeatRoute(apiRequest('/api/tally-connector/heartbeat', { body, headers: token ? { authorization: `Bearer ${token}` } : {} })))
 
-/** Pair a connector for this admin's company; the in-process heartbeat limiter is cleared afterwards. */
+/** Pair a connector for this admin's company. */
 async function paired(user: TestUser) {
   const code = (await newCode(user)).json.data.code as string
   const r = await pairWith(code)
@@ -107,7 +106,7 @@ describe('pairing', () => {
     expect(p.status).toBe(200)
     expect(p.json.data.token).toMatch(/^mftc_[a-f0-9]{24}_/)
     // the token is not stored in clear
-    const rec = await connectorStore().getConnector(p.json.data.connectorId)
+    const rec = await db.tallyConnector.findUnique({ where: { id: p.json.data.connectorId } })
     expect(rec!.companyId).toBe(company.id)
     expect(rec!.secretHash).not.toContain(p.json.data.token.split('_').slice(2).join('_'))
 
@@ -174,14 +173,15 @@ describe('connector requests', () => {
     expect((await call(heartbeatRoute(apiRequest('/api/tally-connector/heartbeat', { body: { tally: { status: 'connected' } }, user })))).status).toBe(401)
     const ok = await beat(token)
     expect(ok.status).toBe(200)
-    expect(ok.json.data).toEqual({ nextHeartbeatSec: 30 }) // no command, URL or XML ever comes back
+    // no command, URL or XML ever comes back: the poll interval and the connector versions this server accepts
+    expect(ok.json.data).toEqual({ nextHeartbeatSec: 30, minVersion: CONNECTOR_MIN_VERSION, latestVersion: CONNECTOR_LATEST_VERSION })
   })
 
   test('heartbeat input is validated; unknown fields and public addresses are dropped', async () => {
     const { user } = await seedTenant()
     const token = await paired(user)
     expect((await beat(token, { tally: { status: 'drop tables' } })).status).toBe(400)
-    resetLimiter()
+    await resetLimiter()
     const r = await beat(token, { tally: { status: 'connected', endpoint: '8.8.8.8:9000', latencyMs: -5 }, command: 'IMPORT' })
     expect(r.status).toBe(200)
     const s = (await status(user)).json.data
@@ -190,7 +190,7 @@ describe('connector requests', () => {
     // too frequent
     expect((await beat(token)).status).toBe(429)
     // oversize body
-    resetLimiter()
+    await resetLimiter()
     expect((await beat(token, { tally: { status: 'connected' }, pad: 'x'.repeat(5000) })).status).toBe(413)
   })
 
@@ -205,19 +205,19 @@ describe('connector requests', () => {
     expect((await status(b.user, a.company.id)).status).toBe(403)
     // B disconnecting does not touch A
     await call(disconnect(apiRequest('/api/import-center/tally/connector', { method: 'DELETE', user: b.user })))
-    resetLimiter()
+    await resetLimiter()
     expect((await beat(tokenA)).status).toBe(200)
   })
 
-  test('states: offline, tally_error, connected with last success', async () => {
+  test('states: connecting, tally_error, connected with last success, reconnecting, offline', async () => {
     const { user } = await seedTenant()
     const token = await paired(user)
-    expect((await status(user)).json.data.state).toBe('offline')
+    expect((await status(user)).json.data.state).toBe('connecting') // paired, first check-in not seen yet
     await beat(token)
     const s1 = (await status(user)).json.data
     expect(s1.state).toBe('connected')
     expect(s1.message).toBe('The connector is online and TallyPrime is answering.') // a connection, not a claim about data
-    resetLimiter()
+    await resetLimiter()
     await beat(token, { tally: { status: 'unreachable' } })
     const s2 = (await status(user)).json.data
     expect(s2.state).toBe('tally_error')
@@ -225,6 +225,9 @@ describe('connector requests', () => {
     expect(s2.message).toContain('Data Synchronization')
     const realNow = Date.now
     Date.now = () => realNow() + 120_000
+    try { expect((await status(user)).json.data.state).toBe('reconnecting') } finally { Date.now = realNow }
+    // the connector retries at least every 5 minutes; after 6 minutes of silence it is offline
+    Date.now = () => realNow() + 7 * 60_000
     try { expect((await status(user)).json.data.state).toBe('offline') } finally { Date.now = realNow }
   })
 
@@ -243,9 +246,9 @@ describe('connector requests', () => {
   })
 })
 
-/** Heartbeats are limited to one per 5 s per connector: clear the limiters (keeping the store) instead of waiting. */
-function resetLimiter() {
-  resetConnectorStore(connectorStore())
+/** Heartbeats are limited to one per 5 s per connector: move the last check-in 6 s back instead of waiting. */
+async function resetLimiter() {
+  await db.tallyConnector.updateMany({ where: { lastSeenAt: { not: null } }, data: { lastSeenAt: new Date(Date.now() - 6000) } })
 }
 
 describe('connector program', () => {
@@ -291,13 +294,13 @@ describe('connector program', () => {
     expect(s.connector.tallyEndpoint).toBe(`127.0.0.1:${tally.port}`)
 
     // Tally closed → connector stays online, UI shows a Tally error
-    resetLimiter()
+    await resetLimiter()
     tallyMode = 'html'
     await connector.runLoop({ path, log: () => {}, maxBeats: 1 })
     expect((await status(user)).json.data.state).toBe('tally_error')
 
     await call(disconnect(apiRequest('/api/import-center/tally/connector', { method: 'DELETE', user })))
-    resetLimiter()
+    await resetLimiter()
     expect(await connector.runLoop({ path, log: () => {}, maxBeats: 1 })).toBe(2)
     expect(connector.loadConfig(path)).toBeNull()
     expect(tallyBodies.every((b) => b === TALLY_HEALTH_REQUEST)).toBe(true)

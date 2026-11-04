@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import {
-  ArrowLeft, ArrowRight, Building2, CalendarRange, CheckCircle2, ChevronDown, Download, FileSpreadsheet, Loader2, Lock,
+  ArrowLeft, ArrowRight, Building2, CalendarRange, CheckCircle2, ChevronDown, Circle, Download, FileSpreadsheet, Loader2, Lock,
   Package, RefreshCw, Search, Square, Upload, Users, XCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -13,12 +13,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
-import TallyConnectorPanel from '@/components/erp/import-center/tally-connector-panel'
+import TallyConnectorPanel, { CONNECTOR_BADGE } from '@/components/erp/import-center/tally-connector-panel'
 import { ITEM_TYPES, ITEM_TYPE_LABEL, fmtDate } from '@/lib/erp-constants'
 import type { RunResult, RunRow } from '@/lib/import/run'
 import { STATUS_LABEL, downloadText, friendlyError, problemRowsCsv } from '@/lib/import/wizard-helpers'
 import type { ConnectorStatus } from '@/lib/tally/connector'
+import { tallyFlow, type TallyFlow } from '@/lib/tally/flow'
 import type { JobView } from '@/lib/tally/jobs'
+import type { TallyPeriod } from '@/lib/tally/period'
 import { apiDelete, apiGet, apiPost } from '@/lib/use-api'
 import { cn } from '@/lib/utils'
 
@@ -26,7 +28,12 @@ import { cn } from '@/lib/utils'
  * Import from Tally through the ManuFlow Tally Connector: 1 Connect → 2 Company → 3 Data → 4 Review & import.
  * Everything shown comes from the server: the connector status, Tally's own company list, the records the connector
  * read, and the Import Center preview / import of those records (same checks and duplicate rules as a file import).
- * Vouchers, orders and date ranges are shown as not available — they are not built.
+ * Vouchers, orders, other masters, stock, balances and the period are shown as not available — they are not built.
+ * Automatic connection: a paired connector reconnects by itself, and whenever it is connected the dialog moves on to the
+ * company list (unless the user went back to step 1), which it fetches by itself; a list that failed is fetched again
+ * when the connection comes back. The connection is watched on every step. Nothing is read from a company until the
+ * user chooses it. The import needs an explicit confirmation, and its progress counts come from the server's batch
+ * results.
  */
 
 type Kind = 'customers' | 'suppliers' | 'items'
@@ -38,11 +45,15 @@ const KINDS: { kind: Kind; label: string; hint: string; job: string }[] = [
   { kind: 'suppliers', label: 'Suppliers', hint: 'Sundry Creditors ledgers', job: 'export-suppliers' },
   { kind: 'items', label: 'Stock items', hint: 'Name, unit, HSN, GST rate, stock group', job: 'export-items' },
 ]
-const LATER: { title: string; items: string[] }[] = [
-  { title: 'Vouchers', items: ['Sales', 'Purchase', 'Payment', 'Receipt', 'Contra', 'Debit notes', 'Credit notes'] },
-  { title: 'Orders & delivery', items: ['Sales orders', 'Purchase orders', 'Delivery notes'] },
-  { title: 'Other masters', items: ['Other ledgers (bank, expenses…)', 'Units, stock groups, godowns', 'Opening balances & stock'] },
+// Listed so users see what is not there yet; none can be selected (no Tally reader, mapping or accounting rules yet)
+const UNAVAILABLE: { title: string; items: string[] }[] = [
+  { title: 'Masters', items: ['Ledgers (bank, expenses, …)', 'Ledger groups', 'Stock groups', 'Units', 'Godowns / locations', 'Cost centres'] },
+  { title: 'Vouchers', items: ['Sales', 'Purchase', 'Payment', 'Receipt', 'Contra', 'Journal', 'Debit notes', 'Credit notes', 'Sales orders', 'Purchase orders', 'Delivery notes', 'Receipt notes', 'Stock journals'] },
+  { title: 'Stock', items: ['Opening stock', 'Stock movements', 'Stock summary / balances', 'Closing stock'] },
+  { title: 'Accounts', items: ['Opening balances', 'Closing balances', 'Ledger balances', 'Trial balance', 'Outstanding receivables', 'Outstanding payables'] },
 ]
+const UNAVAILABLE_COUNT = UNAVAILABLE.reduce((s, g) => s + g.items.length, 0)
+const WATCH_MS = 10_000
 const PAGE = 50
 const POLL_MS = 1500
 
@@ -62,10 +73,18 @@ const ZERO: Counts = { ready: 0, duplicates: 0, problems: 0, imported: 0 }
 type Phase = 'idle' | 'reading' | 'checking' | 'ready' | 'importing' | 'done' | 'stopped' | 'failed'
 interface BatchReply { batch: number; batches: number; totalRecords: number; result: RunResult }
 
-function fyLabel(offset: number) {
-  const now = new Date()
-  const start = (now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1) + offset
-  return `Apr ${start} – Mar ${start + 1}`
+type FixedPeriod = 'current-fy' | 'last-fy' | 'all'
+type PeriodOption = { ok: true; period: TallyPeriod } | { ok: false; message: string }
+const PERIODS: { kind: FixedPeriod | 'custom'; label: string }[] = [
+  { kind: 'current-fy', label: 'Current financial year' },
+  { kind: 'last-fy', label: 'Last financial year' },
+  { kind: 'all', label: 'All data (every financial year)' },
+  { kind: 'custom', label: 'Custom date range' },
+]
+
+function elapsed(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`
 }
 
 class Stopped extends Error {}
@@ -86,12 +105,18 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const [kinds, setKinds] = React.useState<Set<Kind>>(new Set())
   const [itemType, setItemType] = React.useState('')
   const [showLater, setShowLater] = React.useState(false)
+  // Step 3: what each period would cover for the chosen Tally company (worked out by the server from Tally's dates)
+  const [periodInfo, setPeriodInfo] = React.useState<{ company: string; options: Record<FixedPeriod, PeriodOption> } | null>(null)
   // Step 4
   const [phase, setPhase] = React.useState<Phase>('idle')
   const [cats, setCats] = React.useState<CatState[]>([])
   const [stage, setStage] = React.useState('')
   const [progress, setProgress] = React.useState({ done: 0, total: 0 })
   const [runError, setRunError] = React.useState('')
+  const [confirming, setConfirming] = React.useState(false)
+  const [importStarted, setImportStarted] = React.useState(false)
+  const [timing, setTiming] = React.useState<{ start: number; end: number | null } | null>(null)
+  const [, setTick] = React.useState(0)
   const stopRef = React.useRef(false)
   const busyRef = React.useRef(false)
   const openJobs = React.useRef(new Set<string>())
@@ -100,11 +125,45 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const connected = conn?.state === 'connected'
   const busy = phase === 'reading' || phase === 'checking' || phase === 'importing'
   const q = `companyId=${companyId}`
-  const onStatus = React.useCallback((s: ConnectorStatus) => setConn(s), [])
+  // Connected → straight on to the company list, also when the connection is made while step 1 is open. Not when the
+  // user went back to step 1 on purpose.
+  const stayOnConnect = React.useRef(false)
+  const stepRef = React.useRef(step)
+  React.useEffect(() => { stepRef.current = step }, [step])
+  const onStatus = React.useCallback((s: ConnectorStatus) => {
+    setConn(s)
+    if (s.state === 'connected' && stepRef.current === 1 && !stayOnConnect.current) setStep(2)
+  }, [])
+
+  // Steps 2–4: keep watching the connection (step 1 has the connector panel, which polls itself)
+  React.useEffect(() => {
+    if (step === 1) return
+    let alive = true
+    const t = setInterval(() => {
+      apiGet<ConnectorStatus>(`/api/import-center/tally/connector?${q}`).then((s) => { if (alive) setConn(s) }).catch(() => {})
+    }, WATCH_MS)
+    return () => { alive = false; clearInterval(t) }
+  }, [step, q])
+
+  React.useEffect(() => {
+    if (step !== 3 || !company || periodInfo?.company === company) return
+    let alive = true
+    apiGet<{ options: Record<FixedPeriod, PeriodOption> }>(`/api/import-center/tally/period?${q}&tallyCompany=${encodeURIComponent(company)}`)
+      .then((r) => { if (alive) setPeriodInfo({ company, options: r.options }) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [step, company])
+
+  // Elapsed time of a running import
+  React.useEffect(() => {
+    if (phase !== 'importing') return
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [phase])
 
   // ---------- Tally jobs ----------
-  async function waitForJob(type: string, tallyCompany?: string): Promise<JobView> {
-    let job = await apiPost<JobView>(`/api/import-center/tally/jobs?${q}`, { type, tallyCompany })
+  async function waitForJob(type: string, tallyCompany?: string, reuse = false): Promise<JobView> {
+    let job = await apiPost<JobView>(`/api/import-center/tally/jobs?${q}`, { type, tallyCompany, ...(reuse ? { reuse } : {}) })
     openJobs.current.add(job.id)
     try {
       while (job.status === 'queued' || job.status === 'running') {
@@ -122,18 +181,19 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     for (const id of openJobs.current) void apiDelete(`/api/import-center/tally/jobs?${q}&id=${id}`).catch(() => {})
   }
 
-  async function loadCompanies() {
+  /** reuse: asked for by the screen itself, so a list read a few seconds ago will do (Refresh always reads again). */
+  async function loadCompanies(reuse = false) {
     if (listing) return
     setListing(true); setListError(''); stopRef.current = false
     try {
-      const job = await waitForJob('list-companies')
+      const job = await waitForJob('list-companies', undefined, reuse)
       if (job.status !== 'done') { setListError(job.message || 'Tally did not return the company list.'); return }
       const list = job.companies ?? []
       setCompanies(list)
       setShown(PAGE)
-      // Keep the choice when it is still open in Tally
-      if (company && !list.some((c) => c.name === company)) setCompany('')
-      if (!company && list.length === 1) setCompany(list[0].name)
+      // Keep the choice when it is still open in Tally (and can still be told apart from other companies)
+      if (company && !list.some((c) => c.name === company && !c.ambiguous)) setCompany('')
+      if (!company && list.length === 1 && !list[0].ambiguous) setCompany(list[0].name)
     } catch (e) {
       if (!(e instanceof Stopped)) setListError(friendlyError(e))
     } finally {
@@ -141,8 +201,9 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     }
   }
 
+  // Company discovery: by itself once connected, and again when the connection comes back after a failed read
   React.useEffect(() => {
-    if (step === 2 && companies === null && !listing && connected) void loadCompanies()
+    if (step === 2 && connected && !listing && (companies === null || listError)) void loadCompanies(true)
   }, [step, connected])
 
   // Back out of step 4 / close while Tally is being read → stop and cancel
@@ -161,6 +222,9 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     stopRef.current = false
     checkedFor.current = signature
     setRunError('')
+    setConfirming(false)
+    setImportStarted(false)
+    setTiming(null)
     const list: CatState[] = selected.map((k) => ({ kind: k.kind, read: 'waiting', batches: 0, preview: { ...ZERO }, done: { ...ZERO }, problems: [] }))
     setCats(list)
     try {
@@ -214,6 +278,10 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     busyRef.current = true
     stopRef.current = false
     setRunError('')
+    setConfirming(false)
+    setImportStarted(true)
+    const startedAt = Date.now()
+    setTiming({ start: startedAt, end: null })
     const todo = cats.filter((c) => c.read === 'done' && c.preview.ready > 0)
     const total = todo.reduce((s, c) => s + c.preview.ready + c.preview.duplicates + c.preview.problems, 0)
     let processed = 0
@@ -244,6 +312,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
       if (e instanceof Stopped) { setPhase('stopped'); setStage('') } else { setPhase('failed'); setRunError(friendlyError(e)) }
     } finally {
       busyRef.current = false
+      setTiming({ start: startedAt, end: Date.now() })
     }
   }
 
@@ -255,6 +324,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
       : step === 3 ? (kinds.size === 0 ? 'Choose what to import' : kinds.has('items') && !itemType ? 'Choose the item type for stock items' : '') : ''
 
   function back() {
+    if (step === 2) stayOnConnect.current = true
     if (step === 4 && busy && phase !== 'importing') { stopRef.current = true; cancelOpenJobs() }
     setStep((s) => Math.max(1, s - 1))
   }
@@ -271,6 +341,10 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   // After an import has started, the table shows what was imported instead of what would be
   const afterImport = phase === 'importing' || phase === 'done' || (phase === 'stopped' && sum((c) => c.done.imported + c.done.duplicates + c.done.problems) > 0)
   const counted = phase !== 'reading' && phase !== 'checking' && phase !== 'idle'
+  const totals = { imported: sum((c) => c.done.imported), skipped: sum((c) => c.done.duplicates), failed: sum((c) => c.done.problems) }
+  const percent = phase === 'done' ? 100 : progress.total ? Math.min(99, Math.floor((progress.done / progress.total) * 100)) : 0
+  const lostConnection = step > 1 && conn && conn.state !== 'connected'
+  const flow = tallyFlow(conn, { listing, companies, error: listError })
   const allProblems = cats.flatMap((c) => c.problems.map((p) => ({ ...p, values: { ...p.values, name: `${KINDS.find((k) => k.kind === c.kind)!.label}: ${p.values.name ?? ''}` } })))
 
   return (
@@ -286,10 +360,18 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
         </DialogHeader>
 
         <div className="min-h-[18rem] flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+          {lostConnection && (
+            <Alert className="mb-4" data-testid="tally-connection-warning">
+              {conn.state === 'reconnecting' ? <RefreshCw className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4 text-destructive" />}
+              <AlertTitle>Tally connection: {CONNECTOR_BADGE[conn.state].label}</AlertTitle>
+              <AlertDescription>{conn.message} Reading from Tally waits until the connection is back.</AlertDescription>
+            </Alert>
+          )}
           {/* ---------------- 1 Connect ---------------- */}
           {step === 1 && (
             <section className="space-y-4" aria-labelledby="t-step1">
               <h3 id="t-step1" className="sr-only">Connect Tally</h3>
+              <FlowBar flow={flow} />
               <TallyConnectorPanel companyId={companyId} onStatus={onStatus} />
               <button type="button" onClick={onUseFile} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
                 <FileSpreadsheet className="h-4 w-4" aria-hidden /> No connector? Import an Excel / CSV file exported from Tally instead
@@ -306,14 +388,23 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                   <RefreshCw className={cn('mr-2 h-4 w-4', listing && 'animate-spin')} aria-hidden /> Refresh
                 </Button>
               </div>
-              <p className="text-sm text-muted-foreground">Tally lists only the companies that are open in TallyPrime right now.</p>
-              {(companies?.length ?? 0) > 6 && (
+              <FlowBar flow={flow} />
+              <p className="text-sm text-muted-foreground">
+                Tally lists only the companies that are open in TallyPrime right now{companies ? ` (${companies.length})` : ''}.
+              </p>
+              {(companies?.length ?? 0) > 0 && (
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
                   <Input value={search} onChange={(e) => { setSearch(e.target.value); setShown(PAGE) }} placeholder="Search companies" aria-label="Search companies" className="pl-9" />
                 </div>
               )}
-              {listError && <Problem text={listError} />}
+              {listError && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Problem text={listError} />
+                  <Button variant="outline" size="sm" onClick={() => void loadCompanies()} disabled={listing || !connected}>Try again</Button>
+                  {!connected && <span className="text-xs text-muted-foreground">Tried again by itself when the connection is back.</span>}
+                </div>
+              )}
               {listing && companies === null && (
                 <div className="grid gap-2 sm:grid-cols-2" aria-busy="true" aria-label="Loading companies from Tally">
                   {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-16 rounded-lg" />)}
@@ -329,17 +420,20 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               {companies && companies.length > 0 && (
                 <div role="radiogroup" aria-label="Tally company" className="grid gap-2 sm:grid-cols-2">
                   {filtered.slice(0, shown).map((c) => {
-                    const on = c.name === company
+                    const on = c.name === company && !c.ambiguous
                     return (
-                      <button key={c.name} type="button" role="radio" aria-checked={on} onClick={() => setCompany(c.name)}
+                      <button key={`${c.name}|${c.guid ?? ''}`} type="button" role="radio" aria-checked={on} onClick={() => setCompany(c.name)} disabled={c.ambiguous}
                         className={cn('flex items-start gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          on ? 'border-primary bg-success-soft ring-1 ring-ring dark:bg-success-soft' : 'hover:bg-muted/60')}>
+                          c.ambiguous ? 'cursor-not-allowed opacity-70' : on ? 'border-primary bg-success-soft ring-1 ring-ring dark:bg-success-soft' : 'hover:bg-muted/60')}>
                         <Building2 className={cn('mt-0.5 h-5 w-5 shrink-0', on ? 'text-success' : 'text-muted-foreground')} aria-hidden />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium">{c.name}</span>
                           <span className="block text-xs text-muted-foreground">
                             {c.booksFrom ? `Books from ${fmtDate(c.booksFrom)}` : c.startingFrom ? `Financial year from ${fmtDate(c.startingFrom)}` : 'Financial year not reported'}
                           </span>
+                          {c.ambiguous && (
+                            <span className="block text-xs text-destructive">Another open company has the same name. Close one of them in TallyPrime, then Refresh.</span>
+                          )}
                         </span>
                         {on && <CheckCircle2 className="h-5 w-5 shrink-0 text-success" aria-hidden />}
                       </button>
@@ -357,9 +451,10 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           {/* ---------------- 3 Data ---------------- */}
           {step === 3 && (
             <section className="space-y-4" aria-labelledby="t-step3">
+              <CompanyLine company={company} onChange={() => setStep(2)} />
               <div className="flex flex-wrap items-center gap-2">
                 <h3 id="t-step3" className="mr-auto text-base font-semibold">What should be imported?</h3>
-                <Button variant="ghost" size="sm" onClick={() => setKinds(new Set(KINDS.map((k) => k.kind)))}>Select all</Button>
+                <Button variant="ghost" size="sm" onClick={() => setKinds(new Set(KINDS.map((k) => k.kind)))} disabled={kinds.size === KINDS.length}>Select all</Button>
                 <Button variant="ghost" size="sm" onClick={() => setKinds(new Set())} disabled={kinds.size === 0}>Clear</Button>
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
@@ -390,32 +485,58 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </div>
               )}
 
+              <fieldset disabled aria-describedby="t-period-note" className="space-y-2 rounded-lg border p-3" data-testid="tally-period">
+                <legend className="flex items-center gap-1.5 px-1 text-sm font-medium">
+                  <CalendarRange className="h-4 w-4 text-muted-foreground" aria-hidden /> Period <span className="font-normal text-muted-foreground">— not available yet</span>
+                </legend>
+                <ul className="grid gap-1.5 sm:grid-cols-2">
+                  {PERIODS.map((p) => {
+                    const o = p.kind === 'custom' || periodInfo?.company !== company ? undefined : periodInfo.options[p.kind]
+                    return (
+                      <li key={p.kind}>
+                        <label className="flex cursor-not-allowed items-start gap-2 rounded-lg border px-2.5 py-1.5 text-xs text-muted-foreground">
+                          <input type="radio" name="t-period" disabled className="mt-0.5 h-3 w-3" aria-label={`${p.label} (not available yet)`} />
+                          <span>
+                            <span className="block font-medium">{p.label}</span>
+                            <span className="block" data-testid={`tally-period-${p.kind}`}>
+                              {p.kind === 'custom' ? 'Any dates up to the end of the current financial year' : periodText(o)}
+                            </span>
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+                <p id="t-period-note" className="text-xs text-muted-foreground">
+                  The dates come from {company ? `“${company}”` : 'the company'} in Tally. A period applies to vouchers, which cannot be read from Tally yet;
+                  customers, suppliers and stock items are read as they are in Tally today.
+                </p>
+              </fieldset>
+
               <div className="rounded-lg border bg-muted/30">
                 <button type="button" onClick={() => setShowLater((v) => !v)} aria-expanded={showLater}
                   className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm">
                   <Lock className="h-4 w-4 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Vouchers, orders, other masters and date range <span className="text-muted-foreground">— not available yet</span></span>
+                  <span className="flex-1">{UNAVAILABLE_COUNT} more kinds of data <span className="text-muted-foreground">— not available yet</span></span>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', showLater && 'rotate-180')} aria-hidden />
                 </button>
                 {showLater && (
-                  <div className="space-y-3 border-t px-3 py-3 text-sm">
-                    <p className="text-muted-foreground">These need accounting rules (ledgers, numbering, outstanding bills) that ManuFlow does not have for imported data yet, so they cannot be selected.</p>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      {LATER.map((g) => (
-                        <div key={g.title}>
-                          <p className="font-medium">{g.title}</p>
-                          <ul className="mt-1 space-y-0.5 text-muted-foreground">{g.items.map((i) => <li key={i}>{i}</li>)}</ul>
-                        </div>
+                  <div className="space-y-3 border-t px-3 py-3 text-sm" data-testid="tally-unavailable">
+                    <p className="text-muted-foreground">These cannot be read from Tally yet: vouchers, stock and balances need accounting rules (ledgers, numbering, outstanding bills) that ManuFlow does not have for imported data, and the Tally replies are not verified yet.</p>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {UNAVAILABLE.map((g) => (
+                        <fieldset key={g.title} disabled>
+                          <legend className="font-medium">{g.title}</legend>
+                          <ul className="mt-1 space-y-1">
+                            {g.items.map((item) => (
+                              <li key={item} className="flex items-center gap-2 text-muted-foreground">
+                                <Checkbox disabled aria-label={`${item} (not available yet)`} /> {item}
+                              </li>
+                            ))}
+                          </ul>
+                        </fieldset>
                       ))}
                     </div>
-                    <fieldset disabled className="flex flex-wrap items-center gap-2 opacity-60">
-                      <legend className="sr-only">Date range (vouchers only)</legend>
-                      <CalendarRange className="h-4 w-4" aria-hidden />
-                      {[`This financial year (${fyLabel(0)})`, `Previous financial year (${fyLabel(-1)})`, 'All available data', 'Custom range'].map((r) => (
-                        <span key={r} className="rounded-full border px-2.5 py-1 text-xs">{r}</span>
-                      ))}
-                      <span className="w-full text-xs text-muted-foreground">The date range applies to vouchers. Customers, suppliers and stock items are imported as they are in Tally today.</span>
-                    </fieldset>
                   </div>
                 )}
               </div>
@@ -436,16 +557,30 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 <h3 id="t-step4" className="text-base font-semibold">Review & import</h3>
                 <span className="text-sm text-muted-foreground">{company} → {companyName || 'this company'}</span>
               </div>
+              {!busy && phase !== 'done' && !importStarted && <CompanyLine company={company} onChange={() => setStep(2)} />}
+              {(phase === 'reading' || phase === 'checking' || phase === 'ready') && (
+                <p className="text-sm text-muted-foreground">Preview — nothing is saved in ManuFlow until you confirm the import.</p>
+              )}
 
               {(busy || stage) && (
                 <div className="space-y-2" aria-live="polite">
                   <p className="flex items-center gap-2 text-sm font-medium"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> {stage}</p>
-                  {phase === 'importing' && (
-                    <>
-                      <Progress value={progress.total ? Math.min(99, Math.floor((progress.done / progress.total) * 100)) : 0} aria-label="Import progress" />
-                      <p className="text-xs text-muted-foreground">{progress.done} of {progress.total} records processed</p>
-                    </>
-                  )}
+                </div>
+              )}
+              {importStarted && (
+                <div className="space-y-2" data-testid="tally-progress">
+                  <div className="flex items-center gap-3">
+                    <Progress value={percent} aria-label="Import progress" className="flex-1" />
+                    <span className="w-12 text-right text-sm font-semibold tabular-nums">{percent}%</span>
+                  </div>
+                  <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                    <Stat label="Processed" value={`${progress.done} of ${progress.total}`} />
+                    <Stat label="Remaining" value={Math.max(0, progress.total - progress.done)} />
+                    <Stat label="Imported" value={totals.imported} tone="text-success" />
+                    <Stat label="Skipped (already in ManuFlow)" value={totals.skipped} />
+                    <Stat label="Not imported" value={totals.failed} tone={totals.failed ? 'text-warning' : undefined} />
+                    <Stat label="Time" value={timing ? elapsed((timing.end ?? Date.now()) - timing.start) : '—'} />
+                  </dl>
                 </div>
               )}
 
@@ -493,11 +628,24 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                   <CheckCircle2 className="h-4 w-4 text-success" />
                   <AlertTitle>Import finished</AlertTitle>
                   <AlertDescription>
-                    {sum((c) => c.done.imported)} imported · {sum((c) => c.done.duplicates)} already in ManuFlow (skipped) · {sum((c) => c.done.problems)} not imported. Each part is recorded in Import History.
+                    {totals.imported} imported · {totals.skipped} already in ManuFlow (skipped) · {totals.failed} not imported{timing?.end ? ` · ${elapsed(timing.end - timing.start)}` : ''}. Each part is recorded in Import History.
                   </AlertDescription>
                 </Alert>
               )}
-              {phase === 'stopped' && <Problem text="Stopped. Parts that finished before stopping are imported and recorded in Import History; running it again skips them." tone="info" />}
+              {phase === 'stopped' && <Problem text="Stopped. Parts that finished before stopping are imported and recorded in Import History; continuing skips them." tone="info" />}
+              {confirming && phase === 'ready' && (
+                <Alert data-testid="tally-confirm">
+                  <Upload className="h-4 w-4" />
+                  <AlertTitle>Import {sum((c) => c.preview.ready)} new records into {companyName || 'this company'}?</AlertTitle>
+                  <AlertDescription>
+                    <p>From Tally company “{company}”. Existing ManuFlow records are not changed; {sum((c) => c.preview.duplicates)} already there will be skipped and {sum((c) => c.preview.problems)} that need attention are not imported. Nothing is written to Tally.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => void importAll()} className="bg-primary text-primary-foreground hover:bg-primary/90">Yes, import</Button>
+                      <Button size="sm" variant="outline" onClick={() => setConfirming(false)}>Cancel</Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
               {runError && <Problem text={runError} />}
 
               {allProblems.length > 0 && (phase === 'ready' || phase === 'done' || phase === 'stopped') && (
@@ -541,8 +689,13 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           {step === 4 && (phase === 'failed' || phase === 'stopped') && (
             <Button variant="outline" onClick={() => void readAndCheck()}><RefreshCw className="mr-2 h-4 w-4" aria-hidden /> Check again</Button>
           )}
-          {step === 4 && phase === 'ready' && (
-            <Button onClick={() => void importAll()} disabled={sum((c) => c.preview.ready) === 0} className="bg-primary text-primary-foreground hover:bg-primary/90">
+          {step === 4 && (phase === 'failed' || phase === 'stopped') && importStarted && (
+            <Button onClick={() => void importAll()} className="bg-primary text-primary-foreground hover:bg-primary/90">
+              <Upload className="mr-2 h-4 w-4" aria-hidden /> Continue import
+            </Button>
+          )}
+          {step === 4 && phase === 'ready' && !confirming && (
+            <Button onClick={() => setConfirming(true)} disabled={sum((c) => c.preview.ready) === 0} className="bg-primary text-primary-foreground hover:bg-primary/90">
               <Upload className="mr-2 h-4 w-4" aria-hidden /> Import data
             </Button>
           )}
@@ -552,6 +705,32 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+const FLOW_STAGES = ['Connector', 'TallyPrime', 'Companies']
+
+/** Where the automatic connection is: connector → TallyPrime → company list, and the current state in words. */
+function FlowBar({ flow }: { flow: TallyFlow }) {
+  const problem = ['auth_failed', 'connector_offline', 'tally_unreachable', 'retry', 'outdated', 'unavailable'].includes(flow.state)
+  const busy = ['detecting', 'connecting', 'fetching_companies'].includes(flow.state)
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm" data-testid="tally-flow" data-state={flow.state}>
+      <ol className="flex items-center gap-3" aria-label="Connection progress">
+        {FLOW_STAGES.map((s, i) => {
+          const done = flow.reached > i
+          return (
+            <li key={s} className={cn('flex items-center gap-1.5', done ? 'text-success' : 'text-muted-foreground')}>
+              {done ? <CheckCircle2 className="h-4 w-4" aria-hidden /> : <Circle className="h-4 w-4" aria-hidden />}
+              <span>{s}<span className="sr-only">{done ? ': done' : ': not yet'}</span></span>
+            </li>
+          )
+        })}
+      </ol>
+      <span className={cn('ml-auto flex items-center gap-1.5 font-medium', problem ? 'text-destructive' : flow.reached === 3 ? 'text-success' : '')} role="status">
+        {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />} {flow.label}
+      </span>
+    </div>
   )
 }
 
@@ -575,6 +754,32 @@ function Stepper({ step }: { step: number }) {
         })}
       </ol>
     </>
+  )
+}
+
+function periodText(o: PeriodOption | undefined) {
+  if (!o) return '…'
+  if (!o.ok) return o.message
+  const years = o.period.financialYears.length
+  return `${fmtDate(o.period.from)} – ${fmtDate(o.period.to)}${years > 1 ? ` · ${years} financial years` : ''}`
+}
+
+function CompanyLine({ company, onChange }: { company: string; onChange: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+      <Building2 className="h-4 w-4 text-muted-foreground" aria-hidden />
+      <span className="mr-auto">Tally company: <span className="font-medium">{company}</span></span>
+      <Button variant="outline" size="sm" onClick={onChange}>Change company</Button>
+    </div>
+  )
+}
+
+function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div className="rounded-lg border px-3 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={cn('text-base font-semibold tabular-nums', tone)}>{value}</dd>
+    </div>
   )
 }
 

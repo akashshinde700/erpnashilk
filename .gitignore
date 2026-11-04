@@ -65,3 +65,6 @@ __pycache__/
 
 # local database copy: never commit
 db/custom.db.backup
+
+# Anonymised real TallyPrime captures: local only until approved for Git (docs/tally-real-validation-plan.md)
+tests/fixtures/tally/real-*/

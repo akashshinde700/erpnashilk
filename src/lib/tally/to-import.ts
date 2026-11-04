@@ -11,8 +11,9 @@ import type { TableRow } from '@/lib/import/parse-file'
  *    email, address, state, pincode, contact person). Opening balances are NOT imported (go-live decision pending).
  *  - Stock items → items (name, unit, HSN, IGST rate as GST %, stock group as category). The item type is the user's
  *    choice. Opening stock is NOT imported.
- *  - Tally's GUID is not stored: ManuFlow has no column for it (schema change). Re-imports are kept duplicate-free by
- *    the import services' own name / code / GSTIN checks.
+ *  - Tally's GUID is kept in TallyMasterLink (src/lib/tally/links.ts), not in the business tables: a record whose GUID
+ *    was imported before is not imported again, even if renamed in Tally. Otherwise the import services' own name /
+ *    code / GSTIN checks keep re-imports duplicate-free.
  */
 
 export type TallyImportKind = 'customers' | 'suppliers' | 'items'
@@ -40,6 +41,8 @@ function cell(kind: TallyImportKind, field: string, v: string | undefined): stri
   const s = (v ?? '').trim()
   if (field === 'gstType') return GST_TYPES.has(s.toLowerCase()) ? s : ''
   if (field === 'gstRate' && kind === 'items') return /^\d+(\.\d+)?$/.test(s) ? s : ''
+  // Tally's root stock group means "no group", not a category called Primary (seen in the first real capture)
+  if (field === 'category' && kind === 'items' && s === 'Primary') return ''
   return s.slice(0, 1000)
 }
 

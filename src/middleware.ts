@@ -8,7 +8,7 @@ import { SESSION_COOKIE, verifySession } from '@/lib/session'
  * sessionUser in erp-helpers) re-check the user against the DB and enforce the tenant.
  */
 // The Tally connector program has no session: these routes check its pairing code / bearer token themselves.
-const PUBLIC_API = new Set(['/api/auth/login', '/api/auth/logout', '/api/tally-connector/pair', '/api/tally-connector/heartbeat', '/api/tally-connector/result'])
+const PUBLIC_API = new Set(['/api/auth/login', '/api/auth/logout', '/api/tally-connector/pair', '/api/tally-connector/heartbeat', '/api/tally-connector/result', '/api/tally-connector/ping'])
 const IDENTITY_HEADERS = ['x-erp-user-id', 'x-erp-role', 'x-erp-user-name', 'x-erp-pv']
 
 function unauthorized(message = 'Sign in to continue') {

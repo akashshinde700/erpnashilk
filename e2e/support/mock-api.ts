@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test'
+import { resolvePeriod, todayInIndia } from '../../src/lib/tally/period'
 import { ADMIN_EMAIL, ADMIN_PASSWORD, COMPANY_ID, SECOND_COMPANY_ID, createStore, type Store } from './store'
 
 /**
@@ -18,6 +19,38 @@ interface Json {
 }
 
 const ok = (data: unknown, status = 200) => ({ status, body: { success: true, data } })
+
+/** ConnectorStatus as src/lib/tally/connector.ts connectorStatus() builds it, for a mock scenario. */
+function tallyStatus(tc: Record<string, any>) {
+  const messages: Record<string, string> = {
+    not_paired: 'No connector is paired with this company.',
+    pairing: 'Waiting for the connector to be paired with the code.',
+    connected: 'The connector is online and TallyPrime is answering.',
+    reconnecting: 'The connector lost contact with ManuFlow and is retrying by itself (at least every 5 minutes). Nothing needs to be done if the computer running it is on and online.',
+    offline: 'The connector has not checked in for over a minute. Check that the computer running it is on, connected to the internet, and the connector is running.',
+    tally_error: 'The connector is online but cannot reach TallyPrime.',
+    connecting: 'Paired. Waiting for the connector’s first check-in.',
+    auth_failed: 'The connector was offline too long to reconnect by itself (its saved token has expired). Create a new code and pair it again; nothing else is lost.',
+    outdated: 'The connector on that computer (version 0.1.0) is too old for this ManuFlow.',
+  }
+  const at = new Date().toISOString()
+  const connector = ['connected', 'reconnecting', 'offline', 'tally_error', 'connecting', 'auth_failed', 'outdated'].includes(tc.state)
+    ? {
+        pairedAt: at, lastSeenAt: tc.state === 'connecting' ? null : at, lastSuccessAt: at, tallyStatus: tc.state === 'tally_error' ? 'unreachable' : 'connected',
+        tallyEndpoint: '192.168.1.20:9000', latencyMs: 12, version: tc.state === 'outdated' ? '0.1.0' : '0.3.0', platform: 'win32', deviceName: 'ACCOUNTS-PC', updateAvailable: false,
+      }
+    : undefined
+  return { state: tc.state, message: messages[tc.state] ?? '', ...(connector ? { connector } : {}) }
+}
+
+/** The scenario's companies as jobs.ts companyList() returns them (a name, or { name, guid }; same names are ambiguous). */
+function tallyCompanies(tc: Record<string, any>) {
+  const list = (tc.companies ?? []).map((c: string | { name: string; guid?: string }) => (typeof c === 'string' ? { name: c } : c))
+  return list.map((c: { name: string; guid?: string }) => ({
+    name: c.name, guid: c.guid ?? null, booksFrom: '2024-04-01', startingFrom: '2026-04-01',
+    ambiguous: list.filter((x: { name: string }) => x.name === c.name).length > 1,
+  }))
+}
 const fail = (message: string, code = 'BAD_REQUEST', status = 400) => ({
   status,
   body: { success: false, error: { code, message } },
@@ -536,9 +569,69 @@ export function makeApi(store: Store) {
       if (second === 'go-live') return ok({ ok: true })
       if (second === 'tally') {
         if (third === 'status') return ok({ configured: true, reachable: true, endpoint: 'http://127.0.0.1:9000', checkedAt: iso(), version: 'Tally Prime 4.1' })
-        if (third === 'jobs') return ok({ items: [] })
-        if (third === 'connector') return ok({ paired: true, code: '8421', expiresAt: iso(new Date(Date.now() + 900000)) })
-        if (third === 'import') return ok({ jobId: 'job_tally_1' })
+        // Connector flow (tally-import.tsx), same shapes as src/lib/tally/{connector,jobs}.ts and the import route.
+        // A test sets the scenario in store.collections['tally-connector'][0] (see tallyScenario in 13-tally-import.spec.ts).
+        const tc = (col('tally-connector')[0] ||= { state: 'not_paired' }) as Record<string, any>
+        if (third === 'connector') {
+          if (method === 'POST') {
+            tc.state = 'pairing'
+            return ok({ code: 'ABCDE-FGHJK', expiresAt: iso(new Date(Date.now() + 600000)) })
+          }
+          if (method === 'DELETE') {
+            const revoked = tc.state !== 'not_paired' && tc.state !== 'pairing'
+            tc.state = 'not_paired'
+            return ok({ revoked })
+          }
+          return ok(tallyStatus(tc))
+        }
+        if (third === 'jobs') {
+          const jobs = col('tally-jobs')
+          if (method === 'POST') {
+            if (tc.state !== 'connected') return fail('The Tally connector is offline — start it on your office computer', 'CONNECTOR_OFFLINE', 409)
+            const job = { id: store.nextId('tjob'), type: body?.type, tallyCompany: body?.tallyCompany ?? null, status: 'queued', count: null, message: null, createdAt: iso() }
+            jobs.push(job)
+            return ok(job)
+          }
+          const job = jobs.find((j) => j.id === query.get('id'))
+          if (!job) return fail('This Tally request was not found — start again', 'ERR', 404)
+          if (method === 'DELETE') { job.status = 'cancelled'; return ok(job) }
+          // The fake connector answers as soon as the UI asks for the status
+          if (job.status === 'queued') {
+            job.status = 'done'
+            if (job.type === 'list-companies') {
+              job.companies = tallyCompanies(tc)
+              job.count = job.companies.length
+            } else {
+              job.count = tc.data?.[job.type]?.total ?? 0
+            }
+          }
+          return ok(job)
+        }
+        if (third === 'period') {
+          // Same rules as the real route (src/lib/tally/period.ts); the mock company list says books from 1 Apr 2024
+          if (!tallyCompanies(tc).some((c: { name: string }) => c.name === query.get('tallyCompany'))) return fail('That company is not in the latest list from Tally', 'TALLY_COMPANY_UNKNOWN', 400)
+          const dates = { booksFrom: '2024-04-01', startingFrom: '2026-04-01' }
+          const option = (kind: 'current-fy' | 'last-fy' | 'all') => {
+            try { return { ok: true, period: resolvePeriod({ kind }, dates) } } catch (e) { return { ok: false, message: (e as Error).message } }
+          }
+          return ok({ today: todayInIndia(), options: { 'current-fy': option('current-fy'), 'last-fy': option('last-fy'), all: option('all') } })
+        }
+        if (third === 'import') {
+          const job = col('tally-jobs').find((j) => j.id === body?.jobId)
+          if (!job) return fail('This Tally request was not found — start again', 'ERR', 404)
+          if (body?.mode === 'commit' && body?.confirm !== true) return fail('Confirm the import first', 'ERR', 400)
+          col('tally-import-calls').push({ jobId: job.id, dataType: body?.dataType, mode: body?.mode, batch: body?.batch, tallyCompany: job.tallyCompany })
+          const d = tc.data?.[job.type] ?? { total: 0, ready: 0, duplicates: 0, errors: 0 }
+          const commit = body?.mode === 'commit'
+          const rows = Array.from({ length: d.errors }, (_, i) => ({ line: i + 2, status: 'error', messages: ['GSTIN is not valid'], warnings: [], values: { name: `Bad record ${i + 1}` } }))
+          return ok({
+            batch: body?.batch ?? 0, batches: 1, totalRecords: d.total, batchSize: 500,
+            result: {
+              headers: [], notes: [], rows,
+              counts: { total: d.total, ready: commit ? 0 : d.ready, imported: commit ? d.ready : 0, duplicates: d.duplicates, errors: d.errors, failed: 0, withWarnings: 0 },
+            },
+          })
+        }
       }
     }
 

@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { POST as createJobRoute } from '@/app/api/import-center/tally/jobs/route'
 import { TALLY_HEALTH_REQUEST, checkTally, decodeTallyBody, looksLikeTallyXml } from '@/lib/tally/client'
-import { memoryStore, recordHeartbeat, resetConnectorStore, type ConnectorRecord, type TallyJobRecord } from '@/lib/tally/connector'
+import { db } from '@/lib/db'
+import { recordHeartbeat } from '@/lib/tally/connector'
 import { JOB_TYPES } from '@/lib/tally/jobs'
 import * as connector from '../connector/tally/manuflow-tally-connector.mjs'
 import { apiRequest, call } from './helpers/api'
@@ -76,7 +77,11 @@ describe('connector program never writes to Tally', () => {
     expect(exported.pushVoucher).toBeUndefined()
     expect(exported.pushProblem).toBeUndefined()
     expect(exported.PUSH_MAX_BYTES).toBeUndefined()
-    expect(Object.keys(connector.JOBS).sort()).toEqual(['export-customers', 'export-items', 'export-suppliers', 'list-companies'])
+    // the complete list of things the connector can be asked to do: read-only exports only (Phase E added the masters)
+    expect(Object.keys(connector.JOBS).sort()).toEqual([
+      'export-customers', 'export-godowns', 'export-groups', 'export-items', 'export-ledgers', 'export-stockgroups', 'export-suppliers',
+      'export-units', 'list-companies',
+    ])
   })
 
   test('only a single plain Export request passes the guard', () => {
@@ -152,7 +157,6 @@ describe('server cannot queue or send a Tally write', () => {
   const savedPush = process.env.TALLY_CONNECTOR_PUSH
   beforeEach(async () => {
     await resetDb()
-    resetConnectorStore()
     process.env.TALLY_CONNECTOR_POC = '1'
     process.env.TALLY_CONNECTOR_PUSH = '1' // the old switch must do nothing
   })
@@ -170,19 +174,18 @@ describe('server cannot queue or send a Tally write', () => {
     expect(JOB_TYPES.every((t) => t === 'list-companies' || t.startsWith('export-'))).toBe(true)
   })
 
-  test('a heartbeat reply never carries XML, even for a planted old job', async () => {
-    const store = memoryStore()
-    const c: ConnectorRecord = {
-      id: 'c1', companyId: 'co', secretHash: '', pairedAt: 1, pairedBy: 'u', revokedAt: null, lastSeenAt: null, lastTallyStatus: null,
-      lastTallyCheckAt: null, lastTallySuccessAt: null, lastLatencyMs: null, tallyEndpoint: null, version: null, platform: null,
-    }
-    await store.putConnector(c)
-    await store.putJob({
-      id: 'j1', companyId: 'co', connectorId: 'c1', type: 'push-voucher', tallyCompany: null, status: 'queued', createdBy: 'u',
-      createdAt: Date.now(), startedAt: null, finishedAt: null, error: null, records: null, payload: IMPORT_XML,
-    } as unknown as TallyJobRecord)
-    const reply = await recordHeartbeat(c, { tally: { status: 'connected' } }, store)
-    expect(JSON.stringify(reply)).not.toMatch(/Import Data|<VOUCHER|"xml"|"payload"/)
+  test('a heartbeat reply never carries XML; a planted job of another type is failed, never handed out', async () => {
+    const { company } = await seedTenant()
+    const c = await db.tallyConnector.create({
+      data: { id: 'c'.repeat(24), companyId: company.id, activeFor: company.id, secretHash: 'x', pairedAt: new Date(), pairedBy: 'u' },
+    })
+    // The job table has no column for XML; a type name is all that could be planted
+    await db.tallyJob.create({ data: { id: 'j1', companyId: company.id, connectorId: c.id, type: 'push-voucher', status: 'queued', createdBy: 'u' } })
+    const reply = await recordHeartbeat({ ...c, via: 'current' }, { tally: { status: 'connected' } })
+    expect(reply.job).toBeUndefined()
+    expect(JSON.stringify(reply)).not.toMatch(/Import Data|<VOUCHER|"xml"|"payload"|push/)
+    expect((await db.tallyJob.findUnique({ where: { id: 'j1' } }))!.status).toBe('failed')
+    expect(JSON.stringify(Object.keys(db.tallyJob.fields))).not.toMatch(/xml|payload/i)
   })
 
   test('the push route and its code are gone; nothing in the app refers to a push', () => {

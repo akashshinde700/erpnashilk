@@ -3,8 +3,9 @@ import { assertConnectorEnabled, authenticateConnector, recordHeartbeat } from '
 import { connectorBody } from '../_shared'
 
 // POST /api/tally-connector/heartbeat (Authorization: Bearer <connector token>)
-//   { version, platform, tally: { status, latencyMs?, endpoint? } } → { nextHeartbeatSec }
-// The connector reports its own read-only check of Tally. The reply carries no command, URL or XML.
+//   { version, platform, tally: { status, latencyMs?, endpoint? } } → { nextHeartbeatSec, job?, newToken? }
+// The connector reports its own read-only check of Tally. The reply carries no command, URL or XML: at most one named
+// job and, when the token is rotated (every 7 days), the new token once.
 export async function POST(req: Request) {
   try {
     assertConnectorEnabled()

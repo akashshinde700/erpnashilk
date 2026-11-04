@@ -9,7 +9,7 @@ import { POST as heartbeatRoute } from '@/app/api/tally-connector/heartbeat/rout
 import { POST as pairRoute } from '@/app/api/tally-connector/pair/route'
 import { POST as resultRoute } from '@/app/api/tally-connector/result/route'
 import { db } from '@/lib/db'
-import { JOB_RUN_LIMIT_MS, connectorStore, resetConnectorStore } from '@/lib/tally/connector'
+import { JOB_RUN_LIMIT_MS } from '@/lib/tally/connector'
 import * as connector from '../connector/tally/manuflow-tally-connector.mjs'
 import { apiRequest, call, type TestUser } from './helpers/api'
 import { resetDb } from './helpers/db'
@@ -97,7 +97,6 @@ afterAll(() => {
 })
 beforeEach(async () => {
   await resetDb()
-  resetConnectorStore()
   process.env.TALLY_CONNECTOR_POC = '1'
   mode = 'ok'
   debtorCount = 3
@@ -119,16 +118,21 @@ async function linked(): Promise<Linked> {
   return { user, companyId: company.id, path }
 }
 
+/** Heartbeats are limited to one per 5 s per connector: move the last check-in 6 s back instead of waiting. */
+const resetLimiter = () => db.tallyConnector.updateMany({ where: { lastSeenAt: { not: null } }, data: { lastSeenAt: new Date(Date.now() - 6000) } })
+
 /** One connector cycle: Tally check + heartbeat + the job it was handed, if any. (Heartbeat limiter cleared.) */
 async function beat(path: string) {
-  resetConnectorStore(connectorStore())
+  await resetLimiter()
   return connector.heartbeatOnce(connector.loadConfig(path), path)
 }
 
 /** A bare heartbeat as the connector would send it, without running the job it gets. (Heartbeat limiter cleared.) */
-function rawBeat(token: string) {
-  resetConnectorStore(connectorStore())
-  return call(heartbeatRoute(apiRequest('/api/tally-connector/heartbeat', { body: { tally: { status: 'connected' } }, headers: { authorization: `Bearer ${token}` } })))
+/** A heartbeat as the connector sends it, with the device identity the token is bound to. */
+async function rawBeat(token: string) {
+  await resetLimiter()
+  const deviceId = (await db.tallyConnector.findUnique({ where: { id: token.split('_')[1] } }))?.deviceId
+  return call(heartbeatRoute(apiRequest('/api/tally-connector/heartbeat', { body: { tally: { status: 'connected' }, ...(deviceId ? { deviceId } : {}) }, headers: { authorization: `Bearer ${token}` } })))
 }
 
 const newJob = (user: TestUser, type: string, tallyCompany?: string) =>
@@ -157,7 +161,9 @@ describe('connector: Tally requests and XML', () => {
     for (const [type, def] of Object.entries(connector.JOBS)) {
       const xml = def.request('A & B <Ltd> "x"')
       expect([type, xml.match(/<TALLYREQUEST>([^<]*)<\/TALLYREQUEST>/g)]).toEqual([type, ['<TALLYREQUEST>Export</TALLYREQUEST>']])
-      expect(xml).not.toMatch(/Import|ACTION=|<IMPORTDATA|Alter|Delete/i)
+      // whole words: the field ALTERID (only read) must not hide an Alter request
+      expect(xml).not.toMatch(/Import|ACTION=|<IMPORTDATA|\bAlter\b|\bDelete\b|\bCreate\b/i)
+      expect(connector.isExportRequest(xml)).toBe(true)
       if (type !== 'list-companies') expect(xml).toContain('<SVCURRENTCOMPANY>A &amp; B &lt;Ltd&gt; &quot;x&quot;</SVCURRENTCOMPANY>')
     }
   })
@@ -189,8 +195,8 @@ describe('company list from Tally', () => {
     const j = await companies(l)
     expect(j.status).toBe('done')
     expect(j.companies).toEqual([
-      { name: 'Shree & Sons Pvt Ltd', booksFrom: '2024-04-01', startingFrom: '2026-04-01' },
-      { name: 'Trial Co', booksFrom: null, startingFrom: '2025-04-01' },
+      { name: 'Shree & Sons Pvt Ltd', guid: null, booksFrom: '2024-04-01', startingFrom: '2026-04-01', ambiguous: false },
+      { name: 'Trial Co', guid: null, booksFrom: null, startingFrom: '2025-04-01', ambiguous: false },
     ])
   })
 
@@ -287,15 +293,17 @@ describe('job rules', () => {
     expect((await jobStatus(l.user, j.json.data.id)).json.data.status).toBe('cancelled')
   })
 
-  test('a job the connector never answers fails after the time limit', async () => {
+  test('a job the connector never answers is handed out once more, then fails after the time limit', async () => {
     const l = await linked()
     const j = await newJob(l.user, 'list-companies')
     const token = connector.loadConfig(l.path).token
-    await rawBeat(token)
+    expect((await rawBeat(token)).json.data.job?.id).toBe(j.json.data.id)
     const realNow = Date.now
-    Date.now = () => realNow() + JOB_RUN_LIMIT_MS + 1000
     try {
-      await rawBeat(token)
+      Date.now = () => realNow() + JOB_RUN_LIMIT_MS + 1000
+      expect((await rawBeat(token)).json.data.job?.id).toBe(j.json.data.id) // lease ran out: second (last) attempt
+      Date.now = () => realNow() + 2 * (JOB_RUN_LIMIT_MS + 1000)
+      expect((await rawBeat(token)).json.data.job).toBeUndefined()
       const s = (await jobStatus(l.user, j.json.data.id)).json.data
       expect([s.status, s.message]).toEqual(['failed', expect.stringMatching(/too long/)])
     } finally { Date.now = realNow }
@@ -316,7 +324,7 @@ describe('job rules', () => {
     const k = await newJob(l.user, 'list-companies')
     await rawBeat(token)
     await post({ jobId: k.json.data.id, ok: true, records: [{ name: 'Real Co', password: 'x', booksFrom: '2024-04-01' }, { name: '' }] })
-    expect((await jobStatus(l.user, k.json.data.id)).json.data.companies).toEqual([{ name: 'Real Co', booksFrom: '2024-04-01', startingFrom: null }])
+    expect((await jobStatus(l.user, k.json.data.id)).json.data.companies).toEqual([{ name: 'Real Co', guid: null, booksFrom: '2024-04-01', startingFrom: null, ambiguous: false }])
   })
 })
 

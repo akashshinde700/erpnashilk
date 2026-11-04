@@ -1,0 +1,23 @@
+# systemd USER service for the ManuFlow Tally Connector (read-only: TallyPrime → ManuFlow).
+# Installation and removal: docs/tally-connector-startup.md. Runs as the user who paired the connector (the token is
+# in that user's ~/.config/manuflow-tally-connector/connector.json) — never as root.
+#
+# Before installing, replace NODE with the output of `command -v node` (an absolute path; with nvm it is under
+# ~/.nvm/...) and check the path of the .mjs file.
+
+[Unit]
+Description=ManuFlow Tally Connector (read-only: TallyPrime to ManuFlow)
+
+[Service]
+Type=simple
+ExecStart=NODE %h/manuflow-tally-connector/manuflow-tally-connector.mjs run
+# Network errors and server restarts are handled inside the program (it keeps its token and retries).
+# A crash restarts it after 30 s. Exit code 2 means "not paired" or "disconnected in ManuFlow": restarting cannot help.
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=2
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
