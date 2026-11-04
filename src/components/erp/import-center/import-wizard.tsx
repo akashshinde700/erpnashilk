@@ -16,11 +16,16 @@ import { Field, SelectInput } from '@/components/erp/kit'
 import GoLivePanel, { type GoLive } from '@/components/erp/import-center/go-live-panel'
 import TallyConnectorPanel from '@/components/erp/import-center/tally-connector-panel'
 import { ITEM_TYPES, ITEM_TYPE_LABEL, fmtDate, fmtDateTime } from '@/lib/erp-constants'
-import { IMPORT_DATA_TYPES, IMPORT_LIMITS, findDataType, suggestMapping, type ColumnMapping, type MappingSuggestion } from '@/lib/import/fields'
+import { IMPORT_DATA_TYPES, IMPORT_LIMITS, PARTS_DATA_TYPES, findDataType, suggestMapping, type ColumnMapping, type MappingSuggestion } from '@/lib/import/fields'
 import type { TableRow as FileRow } from '@/lib/import/parse-file'
 import type { RunResult, RunRow, RunRowStatus } from '@/lib/import/run'
 import type { TallyCheck } from '@/lib/tally/client'
-import { DATA_TYPE_UI, STATUS_LABEL, downloadText, friendlyError, problemRowsCsv, templateCsv } from '@/lib/import/wizard-helpers'
+import {
+  DATA_TYPE_UI, FILE_ACCEPT, FILE_TYPES, STATUS_LABEL, addFileDuplicates, downloadText, fileProblemFor, friendlyError, markFileDuplicates, mergeRunResults,
+  problemRowsCsv, splitParts, templateCsv, withoutLines,
+} from '@/lib/import/wizard-helpers'
+import type { FileFormat } from '@/lib/import/parse-file'
+import type { TallyVoucherCheck } from '@/lib/import/tally-xml'
 import { apiGet, apiPost, apiUpload, useList } from '@/lib/use-api'
 import { cn } from '@/lib/utils'
 
@@ -53,15 +58,22 @@ const STATUS_STYLE: Record<RunRowStatus, { cls: string; icon: typeof CheckCircle
 
 interface Parsed {
   fileName: string
-  format: 'csv' | 'xlsx'
+  format: FileFormat
   sheetNames: string[]
   sheet: string | null
   table: FileRow[]
   headerRow: number
   suggestion: MappingSuggestion
+  notes?: string[]
+  tally?: { layout: string; company: string | null; objectCounts: Record<string, number> }
+  vouchers?: TallyVoucherCheck
 }
 
-const ACCEPT = '.csv,.tsv,.txt,.xlsx'
+const FORMAT_LABEL: Record<FileFormat, string> = {
+  xlsx: 'Excel workbook', csv: 'CSV', txt: 'Text in columns', xml: 'XML', 'tally-xml': 'Tally XML', json: 'JSON',
+}
+const STRUCTURED = ['xml', 'json']
+const rupees = (paise: number | null | undefined) => (paise === null || paise === undefined ? '—' : `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
 const num = (v: unknown) => (typeof v === 'number' ? v.toLocaleString('en-IN', { maximumFractionDigits: 4 }) : String(v ?? ''))
 const columnLetter = (i: number) => {
   let s = ''
@@ -139,6 +151,8 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   const [dataTypeKey, setDataTypeKey] = React.useState('')
   const [parsed, setParsed] = React.useState<Parsed | null>(null)
   const [parsing, setParsing] = React.useState(false)
+  const [parseStage, setParseStage] = React.useState('')
+  const [partProgress, setPartProgress] = React.useState('')
   const [headerRow, setHeaderRow] = React.useState(0)
   const [mapping, setMapping] = React.useState<ColumnMapping>({})
   const [suggestion, setSuggestion] = React.useState<MappingSuggestion | null>(null)
@@ -149,6 +163,8 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   const [goLive, setGoLive] = React.useState<GoLive | null>(null)
   // Preview / import
   const [preview, setPreview] = React.useState<RunResult | null>(null)
+  // Rows that repeat an earlier row of the file (also across parts): shown as duplicates, never sent to the import
+  const [fileDuplicates, setFileDuplicates] = React.useState<Map<number, string>>(new Map())
   const [previewing, setPreviewing] = React.useState(false)
   const [showMapping, setShowMapping] = React.useState(false)
   const [mappingOk, setMappingOk] = React.useState(false)
@@ -189,7 +205,19 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
     setMappingOk(false)
     try {
       const form = new FormData()
-      form.set('file', file)
+      const ext = file.name.toLowerCase().split('.').pop() ?? ''
+      // XML / JSON exports are large and repetitive: sent gzip-compressed (unpacked and size-checked on the server)
+      if (STRUCTURED.includes(ext) && typeof CompressionStream !== 'undefined') {
+        setParseStage('Compressing the file for upload…')
+        const gz = await new Response(file.stream().pipeThrough(new CompressionStream('gzip'))).blob()
+        if (gz.size > IMPORT_LIMITS.maxUploadBytes) throw new Error(`The file is too large to upload even compressed (${(gz.size / 1024 / 1024).toFixed(1)} MB). Export a smaller part.`)
+        form.set('file', new File([gz], file.name))
+        form.set('encoding', 'gzip')
+      } else {
+        if (file.size > IMPORT_LIMITS.maxUploadBytes) throw new Error('This browser cannot compress the file and it is too large to upload. Use a current Chrome, Edge or Firefox.')
+        form.set('file', file)
+      }
+      setParseStage('Uploading and reading the file…')
       form.set('dataType', typeKey)
       form.set('companyId', companyId)
       if (sheet) form.set('sheet', sheet)
@@ -202,6 +230,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
       setError(friendlyError(e))
     } finally {
       setParsing(false)
+      setParseStage('')
     }
   }
 
@@ -213,17 +242,30 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
     },
   })
 
+  // More rows than one import takes (XML / JSON): checked and imported in parts of 500, in file order
+  const parts = () => (parsed ? splitParts(parsed.table, headerRow) : [])
+
   const runPreview = React.useCallback(async () => {
     setPreviewing(true)
     setError('')
     try {
-      setPreview(await apiPost<RunResult>('/api/import-center/preview', payload()))
+      const list = parts()
+      const results: RunResult[] = []
+      for (let i = 0; i < list.length; i++) {
+        if (list.length > 1) setPartProgress(`part ${i + 1} of ${list.length}`)
+        results.push(await apiPost<RunResult>('/api/import-center/preview', { ...payload(), ...list[i] }))
+      }
+      const merged = mergeRunResults(results)
+      const marked = PARTS_DATA_TYPES.includes(dataTypeKey) ? markFileDuplicates(dataTypeKey, merged) : { result: merged, fileDuplicates: new Map<number, string>() }
+      setPreview(marked.result)
+      setFileDuplicates(marked.fileDuplicates)
       setFilter('all')
     } catch (e) {
       setPreview(null)
       setError(friendlyError(e))
     } finally {
       setPreviewing(false)
+      setPartProgress('')
     }
     // payload() reads the state listed below
   }, [companyId, dataTypeKey, parsed, headerRow, mapping, itemType, defaultWarehouseId, partyKind, unsignedMeans, goLive])
@@ -231,14 +273,23 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   async function runImport() {
     setImporting(true)
     setError('')
+    // The rows found to repeat an earlier row of the file are left out (the server still checks the database)
+    const list = parsed ? splitParts(withoutLines(parsed.table, headerRow, new Set(fileDuplicates.keys())), headerRow) : []
+    const results: RunResult[] = []
     try {
-      const r = await apiPost<RunResult>('/api/import-center/commit', { ...payload(), confirm: true })
-      setResult(r)
+      for (let i = 0; i < list.length; i++) {
+        if (list.length > 1) setPartProgress(`part ${i + 1} of ${list.length}`)
+        const fileName = list.length > 1 ? `${parsed?.fileName} (part ${i + 1} of ${list.length})` : parsed?.fileName
+        results.push(await apiPost<RunResult>('/api/import-center/commit', { ...payload(), ...list[i], fileName, confirm: true }))
+      }
+      setResult(preview ? addFileDuplicates(mergeRunResults(results), preview, fileDuplicates) : mergeRunResults(results))
       setStep(6)
     } catch (e) {
-      setError(friendlyError(e))
+      // Parts already imported stay imported; trying again skips them as duplicates
+      setError(`${friendlyError(e)}${results.length ? ` (${results.length} of ${list.length} parts were imported before this; trying again skips them as duplicates)` : ''}`)
     } finally {
       setImporting(false)
+      setPartProgress('')
     }
   }
 
@@ -251,7 +302,8 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
   const missingRequired = dataType ? dataType.fields.filter((f) => f.required && mapping[f.key] === undefined) : []
   const missingOneOf = dataType ? (dataType.requireOneOf ?? []).filter((g) => !g.fields.some((f) => mapping[f] !== undefined)) : []
   const needsItemType = isItems && mapping.type === undefined && !itemType
-  const optionProblem = !parsed ? '' : missingRequired.length ? `No column was found for: ${missingRequired.map((f) => f.label).join(', ')} — use "Change columns" in step 4`
+  const isVouchers = kind === 'tally-vouchers'
+  const optionProblem = !parsed ? '' : isVouchers ? 'Check only: Tally vouchers are not imported into ManuFlow' : missingRequired.length ? `No column was found for: ${missingRequired.map((f) => f.label).join(', ')} — use "Change columns" in step 4`
     : missingOneOf.length ? `At least one of these columns is needed: ${missingOneOf.map((g) => g.label).join('; ')}`
       : dataType?.needsGoLive && !goLive?.goLiveDate ? 'Set the go-live date first'
         : needsItemType ? 'Choose the item type'
@@ -262,7 +314,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
 
   const canNext = step === 1 ? !!route
     : step === 2 ? route === 'file' && fileOk
-      : step === 3 ? !!parsed && !parsing && !optionProblem
+      : step === 3 ? !!parsed && !parsing && !optionProblem && !isVouchers
         : step === 4 ? !!preview && preview.counts.ready > 0 && mappingOk && dataType?.commit !== false
           : false
 
@@ -288,12 +340,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
     setPreview(null)
     setDataTypeKey('')
     if (!f) { setFileProblem(''); return }
-    const ext = f.name.toLowerCase().split('.').pop() ?? ''
-    if (ext === 'vyb') setFileProblem('Vyapar backup files (.vyb) cannot be read. Export the report from Vyapar to Excel and choose that file.')
-    else if (ext === 'xls') setFileProblem('Old Excel files (.xls) are not supported. Open the file in Excel and use "Save As → .xlsx".')
-    else if (!['csv', 'tsv', 'txt', 'xlsx'].includes(ext)) setFileProblem('Only .xlsx or .csv files are supported.')
-    else if (f.size > IMPORT_LIMITS.maxFileBytes) setFileProblem(`The file is too large (${(f.size / 1024 / 1024).toFixed(1)} MB). The limit is ${IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB.`)
-    else setFileProblem('')
+    setFileProblem(fileProblemFor(f.name, f.size))
   }
 
   function chooseDataType(key: string) {
@@ -459,8 +506,10 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
               <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center hover:border-success-border focus-within:ring-2 focus-within:ring-ring">
                 <Upload className="h-8 w-8 text-success" aria-hidden />
                 <span className="font-medium">{file ? file.name : 'Click here to choose a file'}</span>
-                <span className="text-xs text-muted-foreground">.xlsx or .csv · up to {IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB · up to {IMPORT_LIMITS.maxDataRows} rows</span>
-                <Input type="file" accept={ACCEPT} className="sr-only" aria-label="Choose the file to import" onChange={(e) => chooseFile(e.target.files?.[0] ?? null)} />
+                <span className="text-xs text-muted-foreground">
+                  .xlsx, .csv, .txt up to {IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB and {IMPORT_LIMITS.maxDataRows} rows · .xml, .json up to {IMPORT_LIMITS.maxStructuredBytes / 1024 / 1024} MB and {IMPORT_LIMITS.maxStructuredDataRows.toLocaleString('en-IN')} records
+                </span>
+                <Input type="file" accept={FILE_ACCEPT} className="sr-only" aria-label="Choose the file to import" onChange={(e) => chooseFile(e.target.files?.[0] ?? null)} />
               </label>
               {file && !fileProblem && <p className="flex items-center gap-1.5 text-sm text-success"><CheckCircle2 className="h-4 w-4" /> {file.name} · {(file.size / 1024).toFixed(0)} KB — the file is only read to check it; it is not stored.</p>}
               {fileProblem && <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert"><XCircle className="h-4 w-4" /> {fileProblem}</p>}
@@ -471,6 +520,11 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                   {entry === 'tally' && <p>In TallyPrime, open the report you need (for example List of Ledgers or Stock Summary) → Export → Excel (.xlsx) or CSV. Title rows at the top are detected automatically.</p>}
                   {entry === 'vyapar' && <p>Best: Vyapar → Settings → Backup &amp; Restore → take a backup, then upload the .vyb file (step 1). A party or item report exported to Excel works as well.</p>}
                   {entry === 'excel' && <p>The first row should contain the column names (for example Customer Name, GSTIN, Mobile). A sample template is available in step 3.</p>}
+                  <ul className="mt-2 grid gap-x-4 sm:grid-cols-2" data-testid="supported-file-types">
+                    {FILE_TYPES.map((t) => <li key={t.ext}><span className="font-medium">.{t.ext}</span> — {t.label}</li>)}
+                    <li className="text-muted-foreground"><span className="font-medium">.pdf</span> — not importable (tables in a PDF cannot be read reliably)</li>
+                  </ul>
+                  <p className="mt-1 text-xs">The file type is checked from its content, not only its name. Tally XML (masters exported from TallyPrime) is read directly; Tally vouchers can be checked but not imported.</p>
                 </AlertDescription>
               </Alert>
             </section>
@@ -505,13 +559,25 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                   <Download className="h-4 w-4 mr-1.5" /> Download the {DATA_TYPE_UI[dataType.key]?.name} sample template
                 </Button>
               )}
-              {parsing && <Working label="Reading the file…" />}
+              {parsing && <Working label={parseStage || 'Reading the file…'} />}
               {parsed && dataType && (
                 <div className="space-y-3 rounded-lg border p-3">
-                  <p className="flex items-center gap-1.5 text-sm"><CheckCircle2 className="h-4 w-4 text-success" /> {parsed.fileName} · {dataRowCount} rows found</p>
+                  <p className="flex flex-wrap items-center gap-1.5 text-sm" data-testid="parsed-file">
+                    <CheckCircle2 className="h-4 w-4 text-success" /> {parsed.fileName}
+                    <Badge variant="outline" className="font-normal">{FORMAT_LABEL[parsed.format]}</Badge>
+                    {isVouchers ? `${parsed.vouchers?.count ?? 0} vouchers found` : `${dataRowCount} rows found`}
+                    {!isVouchers && dataRowCount > IMPORT_LIMITS.maxDataRows && <span className="text-muted-foreground">· checked and imported in {Math.ceil(dataRowCount / IMPORT_LIMITS.maxDataRows)} parts of {IMPORT_LIMITS.maxDataRows}</span>}
+                  </p>
+                  {parsed.tally && (
+                    <p className="text-xs text-muted-foreground">
+                      Tally file{parsed.tally.company ? ` of company “${parsed.tally.company}”` : ''}: {Object.entries(parsed.tally.objectCounts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ')}
+                    </p>
+                  )}
+                  {!!parsed.notes?.length && <ul className="list-disc pl-5 text-xs text-muted-foreground">{parsed.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+                  {isVouchers && parsed.vouchers && <VoucherCheck check={parsed.vouchers} />}
                   {parsed.sheetNames.length > 1 && (
-                    <div className="max-w-xs">
-                      <Field label="Excel sheet">
+                    <div className="max-w-md">
+                      <Field label={parsed.format === 'xlsx' ? 'Excel sheet' : 'Records in the file'}>
                         <SelectInput value={parsed.sheet ?? ''} onChange={(v) => void parseFile(dataType.key, v)} options={parsed.sheetNames.map((s) => ({ value: s, label: s }))} />
                       </Field>
                     </div>
@@ -551,7 +617,10 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
           {step === 4 && dataType && (
             <section className="space-y-4">
               <h3 className="text-base font-semibold">Step 4 · Preview and checks <span className="text-sm font-normal text-muted-foreground">— nothing has been saved yet</span></h3>
-              {previewing && <Working label="Checking all rows…" />}
+              {previewing && <Working label={`Checking all rows${partProgress ? ` — ${partProgress}` : ''}…`} />}
+              {preview && dataRowCount > IMPORT_LIMITS.maxDataRows && (
+                <p className="text-xs text-muted-foreground">Checked in parts of {IMPORT_LIMITS.maxDataRows}; duplicates are found across the whole file, and a repeated record is not imported.</p>
+              )}
               {preview && (
                 <>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -662,7 +731,7 @@ export default function ImportWizard({ entry, open, onOpenChange, companyId, com
                 {kind === 'opening-stock' && goLive?.goLiveDate && <li>Stock date: {fmtDate(goLive.openingDate)} (go-live {fmtDate(goLive.goLiveDate)}) — the go-live date cannot be changed after this import</li>}
               </ul>
               {importing ? (
-                <Working label={`Importing ${preview.counts.ready} rows… Please do not close this window.`} />
+                <Working label={`Importing ${preview.counts.ready} rows${partProgress ? ` — ${partProgress}` : ''}… Please do not close this window.`} />
               ) : (
                 <div className="flex flex-wrap gap-2">
                   <Button size="lg" onClick={() => void runImport()}>
@@ -769,6 +838,87 @@ function RowsTable({ rows, keyCols, nameOf, cellOf }: {
           })}
         </TableBody>
       </Table>
+    </div>
+  )
+}
+
+/** Tally vouchers from an XML file: what is in it, checked — never imported. */
+function VoucherCheck({ check }: { check: TallyVoucherCheck }) {
+  const [open, setOpen] = React.useState<number | null>(null)
+  return (
+    <div className="space-y-3" data-testid="voucher-check">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <SummaryCard label="Vouchers" value={check.count} tone="" icon={FileSpreadsheet} />
+        <SummaryCard label="Not balanced" value={check.unbalanced} tone={check.unbalanced ? 'border-danger-border text-destructive' : ''} icon={XCircle} />
+        <SummaryCard label="Ledger lines" value={check.ledgerLines} tone="" icon={Info} />
+        <SummaryCard label="Inventory lines" value={check.inventoryLines} tone="" icon={Info} />
+      </div>
+      <p className="text-sm">
+        {check.from ? `Dates ${fmtDate(check.from)} – ${fmtDate(check.to)}` : 'No dates'} · {check.billAllocations} bill allocations · {check.batchAllocations} batch / godown allocations
+        {Object.keys(check.actions).length > 0 && <> · actions in the file: {Object.entries(check.actions).map(([a, n]) => `${a} ${n}`).join(', ')} (reported only)</>}
+      </p>
+      <div className="overflow-auto rounded-lg border">
+        <Table>
+          <TableHeader><TableRow><TableHead>Voucher type</TableHead><TableHead className="text-right">Vouchers</TableHead><TableHead className="text-right">Cancelled</TableHead><TableHead className="text-right">Optional</TableHead><TableHead className="text-right">Not balanced</TableHead><TableHead className="text-right">Value (not cancelled)</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {check.byType.map((t) => (
+              <TableRow key={t.type}>
+                <TableCell className="font-medium">{t.type}</TableCell><TableCell className="text-right tabular-nums">{t.count}</TableCell>
+                <TableCell className="text-right tabular-nums">{t.cancelled}</TableCell><TableCell className="text-right tabular-nums">{t.optional}</TableCell>
+                <TableCell className="text-right tabular-nums">{t.unbalanced}</TableCell><TableCell className="text-right tabular-nums">{rupees(t.amountPaise)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <p className="text-xs text-muted-foreground">The first {check.shown} of {check.count} vouchers — select one to see its lines and allocations.</p>
+      <div className="max-h-80 overflow-auto rounded-lg border">
+        <Table>
+          <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>No.</TableHead><TableHead>Party</TableHead><TableHead className="text-right">Value</TableHead><TableHead>Check</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {check.vouchers.map((v, i) => (
+              <React.Fragment key={i}>
+                <TableRow className="cursor-pointer" onClick={() => setOpen(open === i ? null : i)} aria-expanded={open === i}>
+                  <TableCell className="whitespace-nowrap">{v.date ? fmtDate(v.date) : '—'}</TableCell>
+                  <TableCell>{v.type}</TableCell><TableCell>{v.number ?? '—'}</TableCell>
+                  <TableCell className="max-w-48 truncate">{v.party ?? '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{rupees(v.amountPaise)}</TableCell>
+                  <TableCell className="text-xs">
+                    {v.cancelled ? <span className="text-warning">Cancelled</span> : v.balanced ? <span className="text-success">Balanced</span> : <span className="text-destructive">Not balanced</span>}
+                    {v.optional && <span className="text-muted-foreground"> · optional</span>}
+                  </TableCell>
+                </TableRow>
+                {open === i && (
+                  <TableRow className="bg-muted/30 hover:bg-muted/30">
+                    <TableCell colSpan={6} className="space-y-2 text-xs">
+                      {v.issues.map((m) => <p key={m} className="text-destructive">{m}</p>)}
+                      <p className="font-medium">Ledger lines</p>
+                      <ul className="space-y-0.5">
+                        {v.ledgerLines.map((l, j) => (
+                          <li key={j}>
+                            {l.ledger || '(no ledger)'} · {rupees(Math.abs(l.amountPaise))} {l.drCr}{l.fromItem ? ' · from an item line' : ''}
+                            {l.bills.map((b, k) => <span key={k} className="block pl-4 text-muted-foreground">bill {b.name || '—'} ({b.type ?? '—'}) {rupees(b.amountPaise === null ? null : Math.abs(b.amountPaise))}</span>)}
+                          </li>
+                        ))}
+                      </ul>
+                      {v.inventoryLines.length > 0 && <p className="font-medium">Inventory lines</p>}
+                      <ul className="space-y-0.5">
+                        {v.inventoryLines.map((l, j) => (
+                          <li key={j}>
+                            {l.item} · {l.qty ?? '—'} {l.unit ?? ''} × {rupees(l.ratePaise)} = {rupees(l.amountPaise === null ? null : Math.abs(l.amountPaise))}
+                            {l.batches.map((b, k) => <span key={k} className="block pl-4 text-muted-foreground">{[b.godown, b.batch, b.qty].filter(Boolean).join(' · ')}</span>)}
+                          </li>
+                        ))}
+                      </ul>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </React.Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <Alert><Info className="h-4 w-4" /><AlertTitle>Check only — vouchers are not imported</AlertTitle><AlertDescription>ManuFlow does not post vouchers from a file into its books: invoices, stock and accounts would change without ManuFlow's own checks. Masters (customers, suppliers, items, opening stock) from a Tally master XML can be imported.</AlertDescription></Alert>
     </div>
   )
 }

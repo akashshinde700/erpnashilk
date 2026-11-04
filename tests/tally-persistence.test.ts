@@ -200,7 +200,7 @@ describe('token rotation and revocation', () => {
     expect(t2).toMatch(/^mftc_[a-f0-9]{24}_[A-Za-z0-9_-]{43}$/)
     expect(idOf(t2)).toBe(idOf(t1))
     const row = await db.tallyConnector.findUniqueOrThrow({ where: { id: idOf(t1) } })
-    expect(JSON.stringify(row)).not.toContain(t2.split('_')[2]) // only hashes are stored
+    expect(JSON.stringify(row)).not.toContain(t2.slice(30)) // only hashes are stored (the secret follows mftc_<24-hex id>_; it may itself contain _)
     expect(row.prevValidUntil!.getTime()).toBeGreaterThan(Date.now() + TOKEN_RECOVERY_MS - 60_000)
 
     await resetLimiter()

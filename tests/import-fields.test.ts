@@ -35,8 +35,9 @@ describe('column alias suggestions', () => {
   })
 
   test('enabled data types; opening balances are check-only; vouchers are listed as planned', () => {
-    expect(IMPORT_DATA_TYPES.filter((d) => d.available).map((d) => d.key)).toEqual(['customers', 'suppliers', 'items', 'opening-stock', 'opening-balances'])
+    expect(IMPORT_DATA_TYPES.filter((d) => d.available).map((d) => d.key)).toEqual(['customers', 'suppliers', 'items', 'opening-stock', 'opening-balances', 'tally-vouchers'])
     expect(findDataType('opening-balances')).toMatchObject({ commit: false })
+    expect(findDataType('tally-vouchers')).toMatchObject({ commit: false }) // checked from a Tally XML file, never imported
     expect(findDataType('opening-stock')?.commit).not.toBe(false)
     for (const k of ['sales', 'purchases', 'receipts', 'payments']) {
       expect(findDataType(k)?.available).toBe(false)

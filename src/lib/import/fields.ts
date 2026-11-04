@@ -19,6 +19,12 @@ export const IMPORT_LIMITS = {
   /** Total uncompressed size of an .xlsx (zip) — guards against zip bombs. */
   maxXlsxUncompressedBytes: 40 * 1024 * 1024,
   maxXlsxEntries: 2000,
+  /** XML and JSON (Tally / software exports are verbose): size once unpacked, and records per file. */
+  maxStructuredBytes: 32 * 1024 * 1024,
+  maxStructuredDataRows: 5000,
+  /** Bytes of one upload request: below the 10 MB the Next.js proxy passes on. Large XML / JSON is sent gzip-compressed. */
+  maxUploadBytes: 9 * 1024 * 1024,
+  maxJsonDepth: 20,
 } as const
 
 export interface ImportField {
@@ -173,6 +179,16 @@ export const IMPORT_DATA_TYPES: ImportDataType[] = [
     ],
     notImported: [],
   },
+  {
+    key: 'tally-vouchers',
+    label: 'Tally vouchers',
+    module: 'import-center',
+    available: true,
+    commit: false,
+    commitBlocked: 'Tally vouchers can be checked here, but not imported: ManuFlow does not post vouchers from a file into its books (invoices, stock and accounts would change without its own checks).',
+    fields: [],
+    notImported: [],
+  },
   ...[
     ['sales', 'Sales invoices', 'sales-invoices', 'Historical vouchers: original numbers, GST returns and stock effects must be verified first'],
     ['purchases', 'Purchase invoices', 'purchase-invoices', 'Historical vouchers: original numbers, GST returns and stock effects must be verified first'],
@@ -183,6 +199,9 @@ export const IMPORT_DATA_TYPES: ImportDataType[] = [
     ['company-info', 'Company information', 'settings', 'Set the company profile in Settings — importing it is not supported yet'],
   ].map(([key, label, module, plannedNote]) => ({ key, label, module, available: false, plannedNote, fields: [], notImported: [] })),
 ]
+
+/** Data types an XML / JSON file may bring with more than one import's rows: checked and imported in parts of 500. */
+export const PARTS_DATA_TYPES = ['customers', 'suppliers', 'items']
 
 /** AuditLog entity of each importable data type — the import history reads these rows. */
 export const IMPORT_HISTORY_ENTITY: Record<string, string> = { customers: 'CUSTOMER', suppliers: 'SUPPLIER', items: 'ITEM', 'opening-stock': 'OPENING_STOCK' }
