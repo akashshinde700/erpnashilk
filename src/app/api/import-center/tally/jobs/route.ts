@@ -15,22 +15,23 @@ export async function GET(req: Request) {
     requireWrite(req, 'import-center')
     const companyId = await companyRequired(req)
     assertConnectorEnabled()
-    markWatching(companyId)
-    return ok(jobView(await getJobFor(companyId, new URL(req.url).searchParams.get('id'))))
+    await markWatching(companyId)
+    return ok(await jobView(await getJobFor(companyId, new URL(req.url).searchParams.get('id'))))
   } catch (e) {
     return handleError(e)
   }
 }
 
-// POST /api/import-center/tally/jobs { type, tallyCompany? } → JobView (queued; the connector picks it up)
+// POST /api/import-center/tally/jobs { type, tallyCompany?, reuse? } → JobView (queued; the connector picks it up).
+// reuse: true (company list asked for by the screen itself) may answer with a list read in the last few seconds.
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
     const actor = requireJobAccess(req, body.type)
     const companyId = await companyRequired(req, typeof body.companyId === 'string' ? body.companyId : undefined)
     assertConnectorEnabled()
-    markWatching(companyId)
-    return ok(await createJob(companyId, actor.userId, body.type, body.tallyCompany))
+    await markWatching(companyId)
+    return ok(await createJob(companyId, actor.userId, body.type, body.tallyCompany, { reuseRecentList: body.reuse === true }))
   } catch (e) {
     return handleError(e)
   }

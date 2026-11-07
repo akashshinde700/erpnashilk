@@ -84,3 +84,24 @@ export function readOptions(raw: unknown): MappingOptions {
   }
   return out
 }
+
+// ---------------------------------------------------------------- large uploads (memory)
+
+/**
+ * Large uploads in flight per server process: their bodies, unpacked XML / JSON (up to 32 MB, ~2× that as text) and
+ * parsed trees are what can exhaust memory, so at most MAX_LARGE_UPLOADS are read at once; one more is refused with
+ * 429 instead of queueing. With several app processes (PM2 cluster) the limit applies per process.
+ */
+export const LARGE_UPLOAD_BYTES = 1024 * 1024
+export const MAX_LARGE_UPLOADS = 2
+let largeUploads = 0
+
+export function takeLargeUploadSlot() {
+  if (largeUploads >= MAX_LARGE_UPLOADS) throw new ApiError('Another large file is being read on the server right now — try again in a minute', 429)
+  largeUploads++
+  let released = false
+  return () => { if (!released) { released = true; largeUploads-- } }
+}
+
+/** Tests only. */
+export const largeUploadsInFlight = () => largeUploads

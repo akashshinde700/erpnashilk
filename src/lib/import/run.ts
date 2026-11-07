@@ -1,3 +1,4 @@
+import { ApiError } from '@/lib/erp-helpers'
 import { applyMapping, type MappingOptions } from '@/lib/import/apply-mapping'
 import type { ImportDataType } from '@/lib/import/fields'
 import type { TableRow } from '@/lib/import/parse-file'
@@ -86,7 +87,7 @@ export async function runImport(input: {
       break
     }
     default:
-      throw new Error(`no import for ${input.dataType.key}`)
+      throw new ApiError(`${input.dataType.label} cannot be previewed or imported here`, 400)
   }
   const byRow = new Map(summary.results.map((r) => [r.row, r]))
 

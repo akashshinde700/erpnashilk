@@ -1284,3 +1284,269 @@ model UserCompanyAccess {
   @@unique([userId, companyId])
   @@index([companyId])
 }
+
+// ---------------- Tally connector (read-only, Tally → ManuFlow) ----------------
+// Only the connector's own state lives here; no ManuFlow business data. Cleanup (src/lib/tally/connector.ts) deletes
+// expired rows of these five tables only.
+
+// Admin-created pairing code: only its SHA-256 is kept. Single use: claimed with UPDATE … WHERE usedAt IS NULL.
+model TallyPairingCode {
+  id        String    @id @default(cuid())
+  companyId String
+  codeHash  String    @unique
+  createdBy String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([companyId, expiresAt])
+}
+
+// A paired connector program. Token = mftc_<id>_<secret>; only SHA-256 hashes of secrets are kept.
+model TallyConnector {
+  id                 String    @id // 24 hex characters, part of the token
+  companyId          String
+  activeFor          String?   @unique // = companyId while active, NULL once revoked → at most one active per company
+  secretHash         String
+  prevSecretHash     String? // rotation: the previous secret, accepted until prevValidUntil
+  prevValidUntil     DateTime?
+  rotatedAt          DateTime?
+  pairedAt           DateTime
+  pairedBy           String
+  revokedAt          DateTime?
+  lastSeenAt         DateTime?
+  lastTallyStatus    String? // connected | unreachable | timeout | invalid_response | invalid_config
+  lastTallyCheckAt   DateTime?
+  lastTallySuccessAt DateTime?
+  lastLatencyMs      Int?
+  tallyEndpoint      String?
+  version            String?
+  platform           String?
+  deviceId           String?   @db.VarChar(32) // the connector's own random identity; the token works only with it
+  deviceName         String?   @db.VarChar(60) // the computer's name, for the admins to recognise it
+  authFailure        String?   @db.VarChar(40) // token_expired | device_mismatch: the last refused request that proved the token
+  authFailedAt       DateTime?
+  fastPollUntil      DateTime? // someone has the Tally screen open: check in every 5 s until then
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([companyId, revokedAt])
+}
+
+// A named read-only job (list-companies | export-customers | export-suppliers | export-items).
+model TallyJob {
+  id           String    @id // 24 hex characters
+  companyId    String
+  connectorId  String
+  type         String
+  tallyCompany String?   @db.VarChar(255) // from Tally's own company list; null for list-companies
+  status       String // queued | running | done | failed | cancelled
+  attempt      Int       @default(0)
+  leaseUntil   DateTime? // a running job past its lease is re-queued once, then failed
+  createdBy    String
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  error        String? // machine code; the UI message is written by the server
+  recordCount  Int?
+  periodFrom   DateTime? @db.Date // vouchers: first and last date this read covers (one slice); null for masters
+  periodTo     DateTime? @db.Date
+  readId       String? // vouchers: the TallyVoucherRead this slice belongs to
+  stagedAt     DateTime? // vouchers: when every voucher of the reply was written to Layer 1 (null = not, or not yet)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([connectorId, status, createdAt])
+  @@index([companyId, status])
+  @@index([companyId, createdAt])
+  @@index([readId])
+}
+
+// The records a job read from Tally, ≤ 500 per chunk. Kept 24 hours.
+model TallyJobChunk {
+  id        String   @id @default(cuid())
+  jobId     String
+  companyId String
+  seq       Int
+  records   Json
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, seq])
+  @@index([companyId, createdAt])
+}
+
+// Shared fixed-window counters (wrong pairing codes per IP hash, codes issued per company).
+model TallyRateLimit {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+  updatedAt   DateTime @updatedAt
+}
+
+// Layer 1: masters as read from Tally (groups, ledgers, stock groups, stock items, units, godowns), one row per Tally
+// GUID per Tally company. Re-reading updates the row (idempotent). Never written to ManuFlow's business tables.
+// Never deleted automatically: a master missing from a later full read gets missingSince (cleared if it comes back),
+// so older vouchers can still be interpreted. Permanent deletion only by an explicit, previewed action.
+model TallySourceMaster {
+  id           String   @id @default(cuid())
+  companyId    String
+  tallyCompany String   @db.VarChar(255)
+  kind         String   @db.VarChar(20) // group | ledger | stockgroup | stockitem | unit | godown
+  guid         String   @db.VarChar(100)
+  name         String   @db.VarChar(255)
+  parent       String?  @db.VarChar(255)
+  alterId      Int?
+  data         Json // the known fields read for this kind
+  issues       Json? // problems found in this record (e.g. no GUID, value not understood); null = none
+  jobId        String // the read that last saw it
+  firstSeenAt  DateTime
+  lastSeenAt   DateTime
+  missingSince DateTime? // set when a full read of this kind no longer contains it; null while Tally still has it
+
+  @@unique([companyId, tallyCompany, kind, guid])
+  @@index([companyId, tallyCompany, kind, name])
+}
+
+// Which ManuFlow record a Tally master was imported into (Tally GUID preservation without changing business tables).
+// manuflowId has no foreign key on purpose; a link whose record no longer exists is ignored. Links are history: never
+// deleted automatically.
+model TallyMasterLink {
+  id           String   @id @default(cuid())
+  companyId    String
+  tallyCompany String   @db.VarChar(255)
+  kind         String   @db.VarChar(20) // customer | supplier | item
+  guid         String   @db.VarChar(100)
+  manuflowId   String
+  createdAt    DateTime
+
+  @@unique([companyId, tallyCompany, kind, guid])
+  @@index([companyId, kind, manuflowId])
+}
+
+// ---------------- Tally vouchers, Layer 1 (source copy; never ManuFlow invoices, stock, cash or balances) ----------------
+// One row per Tally voucher GUID per Tally company. A re-read with changed content adds a new revision of its lines and
+// marks the earlier lines superseded; nothing is deleted. Amounts are paise with Tally's own sign; debit / credit
+// meaning is not interpreted here. Never deleted automatically: a voucher missing from a complete read of its period gets
+// missingSince (cleared if it comes back).
+model TallySourceVoucher {
+  id                String    @id @default(cuid())
+  companyId         String
+  tallyCompany      String    @db.VarChar(255)
+  identity          String    @db.VarChar(100) // g:<GUID> | m:<MASTERID> | n:<natural key> | c:<content key> (src/lib/tally/vouchers.ts)
+  identitySource    String    @db.VarChar(10) // guid | masterid | natural | content (weakest: flagged in issues)
+  naturalKey        String    @db.Char(64) // SHA-256 of type + number + date: lets a later read with a GUID adopt this row
+  guid              String?   @db.VarChar(100)
+  masterId          Int?
+  alterId           Int?
+  voucherType       String    @db.VarChar(100) // VOUCHERTYPENAME (can be a user-defined type, e.g. "Sales GST")
+  voucherNumber     String?   @db.VarChar(100) // not unique in Tally (numbering restarts, manual numbers)
+  date              DateTime? @db.Date // null only when Tally's date could not be read (then in issues)
+  effectiveDate     DateTime? @db.Date
+  reference         String?   @db.VarChar(255)
+  referenceDate     DateTime? @db.Date
+  partyLedger       String?   @db.VarChar(255)
+  narration         String?   @db.Text
+  isCancelled       Boolean   @default(false)
+  isOptional        Boolean   @default(false)
+  isInvoice         Boolean   @default(false)
+  sumPositivePaise  BigInt    @default(0) // sum of the positive accounting amounts (as Tally signs them)
+  sumNegativePaise  BigInt    @default(0) // sum of the negative ones; the two cancel out when the voucher balances
+  revision          Int       @default(1) // +1 whenever a re-read brings different content
+  contentHash       String    @db.Char(64) // SHA-256 of the normalised voucher, to tell a real change from a re-read
+  data              Json // other header fields (place of supply, party GSTIN, GST registration, …)
+  issues            Json? // problems found (no GUID, unreadable amount, does not balance, …); null = none
+  jobId             String // the read that last saw it
+  firstSeenAt       DateTime
+  lastSeenAt        DateTime
+  missingSince      DateTime?
+
+  @@unique([companyId, tallyCompany, identity])
+  @@index([companyId, tallyCompany, masterId])
+  @@index([companyId, tallyCompany, naturalKey])
+  @@index([companyId, tallyCompany, date])
+  @@index([companyId, tallyCompany, voucherType, date])
+  @@index([companyId, tallyCompany, voucherNumber])
+}
+
+// Accounting lines of a voucher revision: LEDGERENTRIES.LIST, and the ACCOUNTINGALLOCATIONS.LIST under inventory lines
+// (in invoice vouchers the sales / purchase ledger amounts are there).
+model TallySourceVoucherLine {
+  id               String    @id @default(cuid())
+  companyId        String
+  voucherId        String
+  revision         Int
+  seq              Int
+  source           String    @db.VarChar(20) // ledger | inventory (an allocation under inventory line inventorySeq)
+  inventorySeq     Int?
+  ledgerName       String    @db.VarChar(255)
+  amountPaise      BigInt // Tally's sign, as sent
+  isDeemedPositive Boolean? // as sent; not derived from the sign (they disagree in some vouchers)
+  isPartyLedger    Boolean?
+  data             Json // other line fields (GST rate details, …)
+  supersededAt     DateTime? // set when a newer revision of the voucher replaced these lines
+
+  @@unique([voucherId, revision, seq])
+  @@index([companyId, ledgerName])
+}
+
+// Inventory lines of a voucher revision (ALLINVENTORYENTRIES.LIST / INVENTORYENTRIES.LIST).
+model TallySourceInventoryLine {
+  id               String    @id @default(cuid())
+  companyId        String
+  voucherId        String
+  revision         Int
+  seq              Int
+  stockItemName    String    @db.VarChar(255)
+  actualQty        Decimal?  @db.Decimal(20, 4) // parsed from text such as "5 Nos"; the text is kept in data
+  billedQty        Decimal?  @db.Decimal(20, 4)
+  unit             String?   @db.VarChar(50)
+  ratePaise        BigInt? // per rateUnit, parsed from text such as "100.00/Nos"
+  rateUnit         String?   @db.VarChar(50)
+  amountPaise      BigInt?
+  isDeemedPositive Boolean?
+  godownName       String?   @db.VarChar(255) // of the first batch allocation; all allocations are in data
+  data             Json // batch / godown allocations, discount, HSN and GST rate details, raw quantity and rate text
+  supersededAt     DateTime?
+
+  @@unique([voucherId, revision, seq])
+  @@index([companyId, stockItemName])
+}
+
+// Bill-wise allocations (BILLALLOCATIONS.LIST) of a voucher's accounting line: the basis for outstanding bills.
+model TallySourceBillAllocation {
+  id           String    @id @default(cuid())
+  companyId    String
+  tallyCompany String    @db.VarChar(255)
+  voucherId    String
+  revision     Int
+  lineSeq      Int // TallySourceVoucherLine.seq it belongs to
+  seq          Int
+  ledgerName   String    @db.VarChar(255)
+  billName     String    @db.VarChar(255)
+  billType     String?   @db.VarChar(40) // New Ref | Agst Ref | Advance | On Account (as sent)
+  amountPaise  BigInt?
+  data         Json // due date / credit period and other fields
+  supersededAt DateTime?
+
+  @@unique([voucherId, revision, lineSeq, seq])
+  @@index([companyId, ledgerName, billName])
+}
+
+// One read of a period of vouchers, split into slices (months; days when a month is too large). Only when every slice
+// was read AND staged is the read complete, and only then are vouchers of the period it did not see marked missing.
+model TallyVoucherRead {
+  id            String    @id @default(cuid())
+  companyId     String
+  tallyCompany  String    @db.VarChar(255)
+  activeFor     String?   @unique // = companyId while running → one voucher read at a time per company
+  periodFrom    DateTime  @db.Date
+  periodTo      DateTime  @db.Date
+  status        String    @db.VarChar(20) // running | complete | incomplete | cancelled
+  slices        Json // [{ from, to, status, jobId, attempts }]
+  createdBy     String
+  startedAt     DateTime
+  finishedAt    DateTime?
+  markedMissing Int? // vouchers marked missing when it completed
+  error         String? @db.VarChar(100)
+
+  @@index([companyId, tallyCompany, startedAt])
+}

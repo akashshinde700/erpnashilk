@@ -21,7 +21,7 @@ describe('wizard helpers', () => {
   })
 
   test('each sample template maps every field of its data type by itself', () => {
-    for (const d of IMPORT_DATA_TYPES.filter((x) => x.available)) {
+    for (const d of IMPORT_DATA_TYPES.filter((x) => x.available && x.fields.length)) { // Tally vouchers: check only, no template
       const csv = templateCsv(d.key) as string
       const p = parseImportFile(Buffer.from(csv), `${d.key}.csv`)
       const s = suggestMapping(d, p.rows[0].cells)

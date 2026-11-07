@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   try {
     requireWrite(req, 'import-center')
     const companyId = await companyRequired(req)
-    markWatching(companyId) // someone is on the Tally screen: the connector checks in every 5 s for a while
+    await markWatching(companyId) // someone is on the Tally screen: the connector checks in every 5 s for a while
     return ok(await connectorStatus(companyId))
   } catch (e) {
     return handleError(e)

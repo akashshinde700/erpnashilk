@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readVyaparBackup } from '@/lib/vyapar/backup'
 import { VYAPAR_UNITS, vyaparPhone } from '@/lib/vyapar/shared'
@@ -10,17 +10,32 @@ import { isZip, readZipEntries, zipEntryNames } from '@/lib/vyapar/zip'
 /**
  * Vyapar backup import — the file reader only (no database).
  *
- * The sample is a real backup the customer sent (data/…VypBackup.vyb): a ZIP holding one .vyp
- * SQLite database of the company "SAI NIRMAN INDUSTRIES". The tests check that the reader finds the
- * same numbers Vyapar's own database has — parties, items, stock value, vouchers — and that the
- * import tables are built from them. Nothing is written.
+ * The sample is a real customer backup — client data, so it is never in Git. Put it in the gitignored data/ folder
+ * (the .vyb unpacked, or the .vyp itself) or point VYAPAR_SAMPLE at a .vyp; without one the sample-based tests do
+ * nothing. They check that the reader finds the same numbers Vyapar's own database has — parties, items, stock
+ * value, vouchers — and that the import tables are built from them, without writing the customer's values into this
+ * file. Nothing is written.
  */
 
 const DATA = join(import.meta.dir, '..', 'data')
-// The customer's backup, as committed: the .vyb (a ZIP) unpacked into a folder with the .vyp inside.
-const backupDir = join(DATA, '02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb')
-const VYP = join(backupDir, 'VaibhavGadge__t_2025_10_25_12_17_58_q741.vyp')
-const hasSample = existsSync(VYP)
+
+/** A real backup's .vyp: VYAPAR_SAMPLE, else the first .vyp anywhere under data/ (gitignored). */
+function findSample(): string {
+  const env = process.env.VYAPAR_SAMPLE
+  if (env) return existsSync(env) ? env : ''
+  const stack = existsSync(DATA) ? [DATA] : []
+  while (stack.length) {
+    const dir = stack.pop()!
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name)
+      if (e.isDirectory()) stack.push(p)
+      else if (e.name.toLowerCase().endsWith('.vyp')) return p
+    }
+  }
+  return ''
+}
+const VYP = findSample()
+const hasSample = VYP !== ''
 const vypBytes = hasSample ? readFileSync(VYP) : Buffer.alloc(0)
 
 /** A real ZIP (stored entries, no compression) so the .vyb path is exercised without a second sample. */
@@ -72,8 +87,8 @@ describe('read-only SQLite reader', () => {
       expect(names).toContain(t)
     }
     expect(db.table('kb_firms').rows.length).toBe(1)
-    expect(db.table('kb_item_units').rows.length).toBe(31)
-    expect(db.table('kb_tax_code').rows.length).toBe(33)
+    expect(db.table('kb_item_units').rows.length).toBeGreaterThan(0)
+    expect(db.table('kb_tax_code').rows.length).toBeGreaterThan(0)
   })
 
   test('INTEGER PRIMARY KEY values come from the rowid, not from the record', () => {
@@ -95,9 +110,9 @@ describe('read-only SQLite reader', () => {
 describe('ZIP reader (.vyb)', () => {
   test('lists and extracts the .vyp inside a backup', () => {
     if (!hasSample) return
-    const buf = makeZip([{ name: 'backup/SAI_NIRMAN_INDUSTRIES_VypBackup.vyp', data: vypBytes }])
+    const buf = makeZip([{ name: 'backup/DEMO_TRADERS_VypBackup.vyp', data: vypBytes }])
     expect(isZip(buf)).toBe(true)
-    expect(zipEntryNames(buf)).toEqual(['backup/SAI_NIRMAN_INDUSTRIES_VypBackup.vyp'])
+    expect(zipEntryNames(buf)).toEqual(['backup/DEMO_TRADERS_VypBackup.vyp'])
     const entries = readZipEntries(buf, (n) => n.toLowerCase().endsWith('.vyp'))
     expect(entries.length).toBe(1)
     expect(entries[0].data.toString('latin1', 0, 16)).toBe('SQLite format 3\u0000')
@@ -113,11 +128,12 @@ describe('ZIP reader (.vyb)', () => {
 
   test('a .vyb holding the company file reads like the .vyp itself', () => {
     if (!hasSample) return
-    const buf = makeZip([{ name: 'SAI_NIRMAN_INDUSTRIES_VypBackup.vyp', data: vypBytes }])
-    const { snapshot } = readVyaparBackup(buf, 'SAI_NIRMAN_INDUSTRIES_VypBackup.vyb')
-    expect(snapshot.firm.name).toBe('SAI NIRMAN INDUSTRIES')
-    expect(snapshot.items.length).toBeGreaterThan(0)
-    expect(snapshot.source.parts).toContain('SAI_NIRMAN_INDUSTRIES_VypBackup.vyp')
+    const buf = makeZip([{ name: 'DEMO_TRADERS_VypBackup.vyp', data: vypBytes }])
+    const { snapshot } = readVyaparBackup(buf, 'DEMO_TRADERS_VypBackup.vyb')
+    const direct = readVyaparBackup(vypBytes, 'company.vyp').snapshot
+    expect(snapshot.firm.name).toBe(direct.firm.name) // the same company as reading the .vyp itself
+    expect(snapshot.items.length).toBe(direct.items.length)
+    expect(snapshot.source.parts).toContain('DEMO_TRADERS_VypBackup.vyp')
   })
 
   test('a ZIP without a .vyp is refused with the reason', () => {
@@ -130,10 +146,10 @@ describe('backup snapshot', () => {
   test('reads the company, its parties, items and stock', () => {
     if (!hasSample) return
     const buf = readFileSync(VYP)
-    const { snapshot } = readVyaparBackup(buf, 'SAI_NIRMAN_INDUSTRIES.vyb')
-    expect(snapshot.firm.name).toBe('SAI NIRMAN INDUSTRIES')
-    expect(snapshot.firm.gstin).toBe('27BEKPG6599D1Z4')
-    expect(snapshot.firm.state).toBe('Maharashtra')
+    const { snapshot } = readVyaparBackup(buf, 'company.vyb')
+    expect(snapshot.firm.name.trim().length).toBeGreaterThan(0)
+    if (snapshot.firm.gstin) expect(snapshot.firm.gstin).toMatch(/^\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/)
+    expect(snapshot.firm.state?.trim().length).toBeGreaterThan(0)
 
     const db = openSqlite(buf)
     const names = db.records('kb_names')
@@ -252,7 +268,7 @@ describe('records → Import Center tables', () => {
     expect(vyaparPhone('091-9822-012345')).toBe('9822012345')
     expect(vyaparPhone('09822012345')).toBe('9822012345')
     expect(vyaparPhone('')).toBeNull()
-    expect(vyaparPhone('98230695594')).toBeNull() // 11 digits, no leading 0 — left out, not guessed
+    expect(vyaparPhone('98220123456')).toBeNull() // 11 digits, no leading 0 — left out, not guessed
   })
 
   test('every party row has a valid phone or none at all', () => {

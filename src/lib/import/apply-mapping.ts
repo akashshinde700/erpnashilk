@@ -141,6 +141,13 @@ function balanceText(v: string): { amount: number; side: 'DR' | 'CR' | null; neg
   return { amount: Math.abs(n), side, negative: negative || n < 0 }
 }
 
+/**
+ * A column with this heading carries a problem the file reader found in a row (e.g. Tally XML with conflicting GST
+ * registrations): a non-empty cell makes that row an error here, on the server, so it can only block a row — never
+ * let one through.
+ */
+export const IMPORT_CHECK_HEADER = 'Import check'
+
 export function applyMapping(
   dataType: ImportDataType, table: TableRow[], headerIndex: number, rawMapping: unknown, options: MappingOptions = {},
 ): MappingResult {
@@ -151,6 +158,7 @@ export function applyMapping(
   if (!dataRows.length) bad('There are no data rows below the header row')
   if (dataRows.length > IMPORT_LIMITS.maxDataRows) bad(`The file has ${dataRows.length} data rows — the limit is ${IMPORT_LIMITS.maxDataRows} per import. Split the file and import it in parts.`)
   const mapping = checkMapping(dataType, rawMapping, headers.length)
+  const checkCol = headers.findIndex((h) => normalizeHeader(h) === normalizeHeader(IMPORT_CHECK_HEADER))
   const isItems = dataType.key === 'items'
   const kind = dataType.key
 
@@ -190,6 +198,8 @@ export function applyMapping(
       if (FORMULA.test(v)) errors.push(`${dataType.fields.find((f) => f.key === field)!.label} looks like a spreadsheet formula — enter the value itself`)
       values[field] = v
     }
+    const check = checkCol >= 0 ? (r.cells[checkCol] ?? '').trim() : ''
+    if (check) errors.push(check.slice(0, 300))
 
     if (kind === 'opening-stock') {
       const q = quantity(values.qty ?? '')

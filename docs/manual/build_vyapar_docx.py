@@ -370,7 +370,7 @@ table(doc, ["Chapter", "Kya milega"], [
     ["4 · Kya import karna hai", "Customers / suppliers / items / opening stock + GST, unit, item type"],
     ["5 · Preview + Import", "Data check karna, problems dekhna, Import dabana"],
     ["6 · Import ke baad", "6 checks — sab sahi gaya ya nahi"],
-    ["7 · Is customer ka result", "SAI NIRMAN INDUSTRIES ke expected numbers"],
+    ["7 · Udaharan", "DEMO TRADERS (example) ke numbers"],
     ["8–9 · Excel/CSV · Tally", "Backup na mile to doosre raaste"],
     ["10–12", "Messages, checklist, dobara import, shabd-kosh"],
 ], widths=[5.0, 11.5])
@@ -507,7 +507,7 @@ steps(doc, [
     "Customers → phir Suppliers → phir Items → phir Opening stock.",
     "Opening stock items ke turant baad preview hota hai aur post kiya jaata hai, kyunki stock ke liye "
     "items ka master pehle chahiye.",
-    "Har data type 500 records ke batch mein jaata hai — 2,512 items 6 batches banenge. Beech mein "
+    "Har data type 500 records ke batch mein jaata hai — 1,512 items 4 batches banenge. Beech mein "
     "internet chala jaaye to jo batch gayi wo gayi, baaki dobara try karein (duplicates skip ho jaate hain).",
 ])
 
@@ -550,10 +550,10 @@ para(doc, "Import \"finished\" dikhna kaafi nahi — 6 cheezein check karein. Sa
           "handover kar dein.")
 table(doc, ["#", "Kya check karein", "Kahan", "Sahi kya hai"], [
     ["1", "Import History", "Utilities → Import Center → History", "Har data type ka entry, imported + failed count"],
-    ["2", "Customers ki ginti", "Masters → Customers", "Vyapar wale count se match (187)"],
-    ["3", "Suppliers ki ginti", "Masters → Suppliers", "18"],
-    ["4", "Items ki ginti aur GST", "Masters → Items", "2,512 items; GST % khaali nahi hona chahiye"],
-    ["5", "Stock value", "Inventory → Stock Balance (go-live date par)", "₹3,95,81,845.82 ke aas-paas"],
+    ["2", "Customers ki ginti", "Masters → Customers", "Vyapar wale count se match (120)"],
+    ["3", "Suppliers ki ginti", "Masters → Suppliers", "15"],
+    ["4", "Items ki ginti aur GST", "Masters → Items", "1,512 items; GST % khaali nahi hona chahiye"],
+    ["5", "Stock value", "Inventory → Stock Balance (go-live date par)", "₹1,25,40,000.00 ke aas-paas"],
     ["6", "Ek sample item aur party", "Masters → Items → koi item kholein", "Rate, unit, HSN sahi; party ka "
      "phone/address sahi"],
 ], widths=[0.9, 4.2, 5.4, 6.0])
@@ -563,21 +563,21 @@ note_box(doc, "Kuch records kam lag rahe hain to", "Pehle History kholiye — wa
          "rows; unki list download karke theek karein aur sirf wahi file dobara import karein.", tone="tip")
 
 # ------------------------------------------------------------------ 7 · sample result
-h1(doc, "7 · Is customer (SAI NIRMAN INDUSTRIES) ka expected result")
-para(doc, "Aapke diye gaye backup 02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb se ye numbers "
-          "aane chahiye. Import ke baad inhi se milaayein.")
+h1(doc, "7 · Udaharan: DEMO TRADERS (banaya hua example)")
+para(doc, "Ye numbers ek banaye hue (synthetic) example backup 02-11-2026_16.27.10_DEMO_TRADERS_VypBackup.vyb ke hain — "
+          "aapke apne backup ke numbers Step 2 ke summary mein dikhenge. Import ke baad unhi se milaayein.")
 table(doc, ["Cheez", "Vyapar backup mein", "ManuFlow mein import ke baad"], [
-    ["Customers", "187", "187 parties (customer type)"],
-    ["Suppliers", "18", "18 parties (supplier type)"],
-    ["Receivable (customer balance)", "₹4,15,006.83", "Abhi import nahi hota — go-live par set hoga"],
-    ["Items", "2,512 (204 service, 2 code wale)", "2,512 items"],
-    ["Items with stock", "2,084", "2,084 opening stock rows"],
-    ["Stock quantity", "1,22,768.45 units", "1,22,768.45 units"],
-    ["Stock value", "₹3,95,81,845.82", "₹3,95,81,845.82 (rate = value ÷ qty)"],
-    ["Items without GST rate", "230", "Default rate lagega (Step 3 mein chuna hua)"],
-    ["Items without HSN", "358", "Import ho jaate hain, par GST invoice se pehle HSN bharein"],
-    ["Vouchers (sale/purchase/payment)", "1,319 (1 Apr 2026 – 31 Oct 2026)", "Import nahi hote — sirf summary"],
-    ["Company", "GSTIN 27BEKPG6599D1Z4, Maharashtra", "Firm ka GSTIN/state milaayein"],
+    ["Customers", "120", "120 parties (customer type)"],
+    ["Suppliers", "15", "18 parties (supplier type)"],
+    ["Receivable (customer balance)", "₹2,40,000.00", "Abhi import nahi hota — go-live par set hoga"],
+    ["Items", "1,512 (150 service, 2 code wale)", "1,512 items"],
+    ["Items with stock", "1,180", "1,180 opening stock rows"],
+    ["Stock quantity", "45,600.00 units", "45,600.00 units"],
+    ["Stock value", "₹1,25,40,000.00", "₹1,25,40,000.00 (rate = value ÷ qty)"],
+    ["Items without GST rate", "140", "Default rate lagega (Step 3 mein chuna hua)"],
+    ["Items without HSN", "210", "Import ho jaate hain, par GST invoice se pehle HSN bharein"],
+    ["Vouchers (sale/purchase/payment)", "640 (1 Apr 2026 – 31 Oct 2026)", "Import nahi hote — sirf summary"],
+    ["Company", "GSTIN 27ABCDE1234F1Z5, Maharashtra", "Firm ka GSTIN/state milaayein"],
 ], widths=[4.4, 5.6, 6.5])
 para(doc, "Itna hi farq dikhe to import sahi hai: customers/suppliers/items ke count aur stock value. "
           "Baaki cheezein (bills, payments, party balance) is version mein jaan-boojh kar nahi aate.",
@@ -630,7 +630,7 @@ table(doc, ["Message (jaisa dikhta hai)", "Matlab", "Solution"], [
      "\"Unit for units ManuFlow does not have\" chunein"],
     ["GST rate is blank — enter the rate", "Item par GST rate nahi", "Step 3 mein default rate chunein ya "
      "item master mein bharein"],
-    ["Phone must be a 10-digit number (98230695594)", "Party ka phone galat hai", "Ab automatic clean ho "
+    ["Phone must be a 10-digit number (98220123456)", "Party ka phone galat hai", "Ab automatic clean ho "
      "jaata hai; fir bhi aaye to party Ka phone theek karein"],
     ["Nothing could be posted — see the problems", "Opening stock ka koi row post nahi hua", "Warehouse / "
      "go-live / items check karein, dobara preview"],

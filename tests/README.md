@@ -58,6 +58,11 @@ Re-run `test:db:prepare` after changing `prisma/schema.prisma`. It runs `prisma 
 | `import-parse.test.ts` | file parsing: encodings, .xlsx, refused formats, zip bombs, size / cell limits |
 | `import-center.test.ts` | Import Center API end to end: upload → preview (no writes) → confirm → commit → history; tampering, limits, permissions, company isolation, failures |
 | `tally.test.ts` | Tally connectivity check against a mock HTTP server (connected / unreachable / timeout / malformed / oversize) and the status route |
+| `tally-connector.test.ts`, `tally-import.test.ts`, `tally-read-only.test.ts` | connector pairing / heartbeat / jobs / import through the Import Center, and the read-only guarantee towards Tally |
+| `tally-period.test.ts` | import periods: financial years (April and other starts, leap years, books beginning mid-year), all data across years, custom-range checks, the period route (tenants, permissions, switch) |
+| `tally-capture.test.ts` | the read-only capture command and the fixture anonymiser (mock Tally, made-up data) |
+| `tally-layer1.test.ts` | readers on the anonymised real TallyPrime replies (`fixtures/tally/real-20261103`), CMPINFO and `&#4;` names, the Layer 1 source copy (idempotent, missing marks, issues, tenants, no business writes), Tally GUID links on import |
+| `tally-persistence.test.ts` | connector state in the database: single-use codes under concurrency, token rotation (incl. a lost reply), revocation, restart and reconnect, token kept on errors, job claiming / leases / chunks, tenant isolation, cleanup limited to the Tally tables, other tables unchanged |
 | `navigation.test.ts` | Utilities group and Import Center registration / role access |
 | `supplier-import.test.ts` | supplier import: aliases, party validation, "Both" / duplicate rules, authorization, company isolation, partial failure |
 | `opening-figures.test.ts` | go-live date (set / validate / lock), opening stock (ledger, balances, batches, P&L effect, reconciliation, duplicates, ordering, isolation, failure), opening balances (check-only: Dr / Cr, matching, totals, commit refused) |

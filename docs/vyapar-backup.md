@@ -34,17 +34,15 @@ backup from another Vyapar version still works as long as `kb_firms`, `kb_names`
 
 ## The sample this was built on
 
-`data/02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb/` — a real customer backup
-(SAI NIRMAN INDUSTRIES, GSTIN 27BEKPG6599D1Z4, Maharashtra, FY 2026-27):
+A real customer backup (a `.vyb` holding one `.vyp`, financial year 2026-27). It is client data and is **not in
+Git**: keep a copy outside the repository (or in the gitignored `data/` folder) and the backup tests use it — see
+`tests/vyapar-backup.test.ts`. The reader was checked against it field by field: the company (name, GSTIN, state,
+address), customers and suppliers with and without a GSTIN, a few thousand items (services included; some without a
+GST rate, a unit or an HSN), stock on hand with Vyapar's own value, vouchers of every type, and cash / bank opening
+balances. The customer's own figures are deliberately not recorded here.
 
-| | |
-|---|---|
-| Parties | 205 — 187 customers, 18 suppliers; 143 customers with a GSTIN |
-| Items | 2 512 — 204 services, 2 512 active, 230 without a GST rate, 231 without a unit, 70 with a description |
-| Units used | NUMBERS 1 656, KILOGRAMS 312, none 231, METERS 114, PIECES 62, EA 38, PACKS 35, SET 16, PAIRS 11, ROLLS 8, LITRE 7, FOOT 7, BOX 7, UNIT 3, SQUARE METERS 2, SQUARE FEET 2, BAGS 1 |
-| Stock on hand | 2 084 items, 1 22 768.45 units, ₹3,95,81,845.82 (Vyapar's own value) |
-| Vouchers | 1 319 (2025-12-23 → 2026-10-31): 529 purchases, 227 payments out, 219 expenses, 103 sales, 84 receipts, 144 party opening balances, 13 others |
-| Cash / bank | Cash ₹0, IDBI BANK ₹11,24,661.30 opening |
+Units seen in it: NUMBERS, KILOGRAMS, METERS, PIECES, EA, PACKS, SET, PAIRS, ROLLS, LITRE, FOOT, BOX, UNIT,
+SQUARE METERS, SQUARE FEET, BAGS — and items with no unit at all.
 
 ## What is imported
 
@@ -61,7 +59,7 @@ Import History as a file import:
 Two gaps in Vyapar data have to be filled by the user before an item import (the flow asks, and the
 choice is written to the Import History):
 
-- **Items with no GST rate** in Vyapar (230 in the sample) → choose the rate to use (0 / 5 / 12 / 18 / 28 %).
+- **Items with no GST rate** in Vyapar → choose the rate to use (0 / 5 / 12 / 18 / 28 %).
 - **Units ManuFlow does not have** → choose the unit to use (PACKS, PAIRS, FOOT, BAGS and "no unit" in
   the sample). ManuFlow's units are NOS, PCS, KG, GM, LTR, MTR, MTR2, BOX, SET, ROLL, HRS; Vyapar has
   31. Units that do match (NUMBERS → NOS, KILOGRAMS → KG, METERS → MTR, SQUARE METERS → MTR2 …) are

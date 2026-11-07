@@ -16,7 +16,16 @@ import { Prisma } from '@prisma/client'
 export const BACKUP_VERSION = 2
 
 /** Tenant tables that are never part of a backup. */
-export const NOT_BACKED_UP = new Set(['IdempotencyKey'])
+export const NOT_BACKED_UP = new Set([
+  'IdempotencyKey',
+  // Tally connector state: secret hashes, pairing codes, job records. Never in a backup; a restore must not
+  // bring back a revoked connector or drop the current one.
+  'TallyPairingCode', 'TallyConnector', 'TallyJob', 'TallyJobChunk', 'TallyRateLimit',
+  // Layer 1 copies of Tally masters and their links to ManuFlow records: re-read from Tally, never restored
+  'TallySourceMaster', 'TallyMasterLink',
+  // Layer 1 copies of Tally vouchers: re-read from Tally, never restored
+  'TallySourceVoucher', 'TallySourceVoucherLine', 'TallySourceInventoryLine', 'TallySourceBillAllocation', 'TallyVoucherRead',
+])
 /** Backed up for the record but never restored: sign-ins and who may open which firm stay as they are. */
 export const NOT_RESTORED = new Set(['User', 'UserCompanyAccess'])
 /** Models outside any tenant. */

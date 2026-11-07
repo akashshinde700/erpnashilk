@@ -41,7 +41,16 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 
 // ---- backup plan: the same algorithm as src/lib/backup-plan.ts (tests/backup-plan.test.ts keeps them equal) ----
 export const BACKUP_VERSION = 2
-const NOT_BACKED_UP = new Set(['IdempotencyKey'])
+const NOT_BACKED_UP = new Set([
+  'IdempotencyKey',
+  // Tally connector state: secret hashes, pairing codes, job records. Never in a backup; a restore must not
+  // bring back a revoked connector or drop the current one.
+  'TallyPairingCode', 'TallyConnector', 'TallyJob', 'TallyJobChunk', 'TallyRateLimit',
+  // Layer 1 copies of Tally masters and their links to ManuFlow records: re-read from Tally, never restored
+  'TallySourceMaster', 'TallyMasterLink',
+  // Layer 1 copies of Tally vouchers: re-read from Tally, never restored
+  'TallySourceVoucher', 'TallySourceVoucherLine', 'TallySourceInventoryLine', 'TallySourceBillAllocation', 'TallyVoucherRead',
+])
 const NOT_RESTORED = new Set(['User', 'UserCompanyAccess'])
 const PLATFORM_MODELS = new Set(['Company', 'Plan'])
 const KEY_OVERRIDES = { DeliveryChallan: 'deliveries', StockLedger: 'stockLedger' }
