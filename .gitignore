@@ -68,3 +68,13 @@ db/custom.db.backup
 
 # Anonymised real TallyPrime captures: local only until approved for Git (docs/tally-real-validation-plan.md)
 tests/fixtures/tally/real-*/
+
+# Client data: real exports, backups and raw captures never go into Git. Synthetic test data lives in e2e/fixtures/
+# and tests/ (made-up values only); a real sample for local checks goes in data/, which is ignored.
+/data/
+*.vyb
+*.vyp
+*VypBackup*
+/captures/
+*.sql.gz
+*.dump

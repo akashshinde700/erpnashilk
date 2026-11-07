@@ -733,7 +733,7 @@ commit first (separate approval; see the `.env` note in the final report).
 
 ## Import Center — Vyapar backup import (2026-11-02, local only)
 
-A customer's real Vyapar backup (`data/02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb/`) was analysed
+A customer's real Vyapar backup (client data — kept outside Git, not committed) was analysed
 and the Import Center now reads `.vyb` / `.vyp` files directly: Import Center → **Vyapar** → *Upload a Vyapar
 backup*. Details: `docs/vyapar-backup.md`; test: `tests/vyapar-backup.test.ts`.
 
@@ -745,8 +745,8 @@ backup*. Details: `docs/vyapar-backup.md`; test: `tests/vyapar-backup.test.ts`.
 | No schema change | No new tables, no migration; the backup snapshot lives in server memory for 30 minutes |
 | Not imported yet (unchanged decisions) | Invoice / payment import, party opening balances, cash / bank opening balances (`docs/opening-balances.md`) |
 
-Checked against the real backup: 205 parties (187 customers, 18 suppliers), 2 512 items, 2 084 stock rows worth
-₹3,95,81,845.82 — 0 errors from the column mapping, party validation (`partyData`) and item validation
+Checked against the real backup (its figures are the customer's and are not recorded here): every party, item and
+stock row — 0 errors from the column mapping, party validation (`partyData`) and item validation
 (`prepareItem`) with the GST / unit fallbacks the flow asks for. 17 new tests pass; TypeScript and ESLint are
 clean for every touched file. **Not run:** the full `bun test` suite and a browser check (this sandbox has no
 MySQL test database and cannot download the Prisma engines), so the database-backed import path is untested here.

@@ -126,34 +126,34 @@ step_heading(d, X2, 132, 1, "Choose the backup file")
 rect(d, (X2, 158, X2 + 210, 200), fill=CARD, outline=BORDER, radius=9)
 text(d, (X2 + 14, 179), "Choose the .vyb / .vyp file", size=12, bold=True, anchor="lm")
 rect(d, (X2 + 226, 158, X2 + 640, 200), fill="#f8faf9", outline=BORDER, radius=9)
-text(d, (X2 + 240, 179), "02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb · 4.4 MB", size=11, anchor="lm")
+text(d, (X2 + 240, 179), "02-11-2026_16.27.10_DEMO_TRADERS_VypBackup.vyb · 4.4 MB", size=11, anchor="lm")
 button(d, X2 + 656, 158, "Read backup", primary=True, h=42)
 text(d, (X2, 216), "Vyapar: Settings → Backup & Restore → Take a backup. Backup ke andar wali .vyp file bhi chalegi.",
      size=10.5, color=MUTED)
 
 step_heading(d, X2, 256, 2, "What this backup holds")
 rect(d, (X2, 282, X2 + W2, 344), fill="#f8faf9", outline=BORDER, radius=10)
-text(d, (X2 + 16, 302), "SAI NIRMAN INDUSTRIES", size=14, bold=True)
-name_w = text_w("SAI NIRMAN INDUSTRIES", 14, True)
-pill(d, X2 + 26 + name_w, 290, "GSTIN 27BEKPG6599D1Z4", "#334155", "#eef2f1", size=10.5, h=24)
+text(d, (X2 + 16, 302), "DEMO TRADERS", size=14, bold=True)
+name_w = text_w("DEMO TRADERS", 14, True)
+pill(d, X2 + 26 + name_w, 290, "GSTIN 27ABCDE1234F1Z5", "#334155", "#eef2f1", size=10.5, h=24)
 pill(d, X2 + 26 + name_w + 196, 290, "Maharashtra", "#334155", "#eef2f1", size=10.5, h=24)
-text(d, (X2 + W2 - 16, 302), "SAI_NIRMAN_INDUSTRIES_VypBackup.vyp", size=10, color=MUTED, anchor="ra")
-text(d, (X2 + 16, 326), "Plot No. B 174, Malegaon MIDC, Tal. Sinnar, Dist. Nashik · 9604598350 · sainirmaanindustries@gmail.com",
+text(d, (X2 + W2 - 16, 302), "DEMO_TRADERS_VypBackup.vyp", size=10, color=MUTED, anchor="ra")
+text(d, (X2 + 16, 326), "Plot No. 12, Demo Industrial Area, Pune · 9000000001 · accounts@demo-traders.example",
      size=9.5, color=MUTED)
 
 sw = (W2 - 3 * 14) / 4
-stat_card(d, X2, 362, sw, 104, "Customers", "187", "143 parties with a GSTIN")
-stat_card(d, X2 + (sw + 14), 362, sw, 104, "Suppliers", "18")
-stat_card(d, X2 + 2 * (sw + 14), 362, sw, 104, "Items", "2,512", "204 services · 2 with a code")
-stat_card(d, X2 + 3 * (sw + 14), 362, sw, 104, "Stock on hand", "₹3,95,81,845", "2,084 items · 1,22,768 units")
+stat_card(d, X2, 362, sw, 104, "Customers", "120", "90 parties with a GSTIN")
+stat_card(d, X2 + (sw + 14), 362, sw, 104, "Suppliers", "15")
+stat_card(d, X2 + 2 * (sw + 14), 362, sw, 104, "Items", "1,512", "150 services · 2 with a code")
+stat_card(d, X2 + 3 * (sw + 14), 362, sw, 104, "Stock on hand", "₹1,25,40,000", "1,180 items · 45,600 units")
 
 rect(d, (X2, 482, X2 + W2, 522), fill="#f8faf9", outline=BORDER, radius=10)
-text(d, (X2 + 16, 502), "▸  Vouchers read (not imported yet) — 1,319 entries", size=11.5, bold=True, anchor="lm")
+text(d, (X2 + 16, 502), "▸  Vouchers read (not imported yet) — 640 entries", size=11.5, bold=True, anchor="lm")
 
 alert_box(d, X2, 538, W2, 140, "Before you import", [
-    "230 items have no GST rate in Vyapar — choose a rate for them before importing.",
-    "285 items use a unit ManuFlow does not have: PACKS (35), PAIRS (11), FOOT (7), BAGS (1)…",
-    "1 party has a phone number that is not a 10-digit Indian number — imported without a phone.",
+    "140 items have no GST rate in Vyapar — choose a rate for them before importing.",
+    "180 items use a unit ManuFlow does not have: PACKS (20), PAIRS (6), FOOT (4), BAGS (1)…",
+    "2 parties have a phone number that is not a 10-digit Indian number — imported without a phone.",
     "Vouchers (sales, purchases, payments, expenses) are read for the summary only — not imported yet.",
 ])
 text(d, (X2, 700), "Company ka naam aur GSTIN mila kar hi aage badhein — galti se doosri company ka backup na chala jaaye.",
@@ -175,10 +175,10 @@ X2 = dx + 44
 W2 = dw - 88
 
 step_heading(d, X2, 132, 3, "What should be imported")
-opts = [("Customers", "187", "Name, GSTIN, phone, address", "Vyapar parties (customers)", True),
-        ("Suppliers", "18", "Name, GSTIN, phone, address", "Vyapar parties (suppliers)", True),
-        ("Items", "2,512", "Name, code, HSN, GST rate, unit, prices", "Vyapar items", True),
-        ("Opening stock", "2,084", "Quantity and value on hand, posted at the go-live date", "Vyapar current stock", False)]
+opts = [("Customers", "120", "Name, GSTIN, phone, address", "Vyapar parties (customers)", True),
+        ("Suppliers", "15", "Name, GSTIN, phone, address", "Vyapar parties (suppliers)", True),
+        ("Items", "1,512", "Name, code, HSN, GST rate, unit, prices", "Vyapar items", True),
+        ("Opening stock", "1,180", "Quantity and value on hand, posted at the go-live date", "Vyapar current stock", False)]
 ow, oh = (W2 - 14) / 2, 92
 for i, (label, count, hint, src, checked) in enumerate(opts):
     ox = X2 + (i % 2) * (ow + 14)
@@ -195,18 +195,18 @@ text(d, (X2, 388), "Items ke liye gaps bharein (Vyapar mein ye fields khaali hai
 rect(d, (X2, 406, X2 + W2, 536), fill="#ffffff", outline=BORDER, radius=10)
 fw = (W2 - 64) / 3
 field(d, X2 + 16, 424, fw, "Item type for products", "Raw Material")
-field(d, X2 + 24 + fw, 424, fw, "GST rate for 230 items without one", "18%")
+field(d, X2 + 24 + fw, 424, fw, "GST rate for 140 items without one", "18%")
 field(d, X2 + 32 + 2 * fw, 424, fw, "Unit for units ManuFlow does not have", "NOS")
-text(d, (X2 + 16, 500), "Units without an equivalent: PACKS (35), PAIRS (11), FOOT (7), BAGS (1), (no unit) (231)",
+text(d, (X2 + 16, 500), "Units without an equivalent: PACKS (20), PAIRS (6), FOOT (4), BAGS (1), (no unit) (149)",
      size=9.5, color=MUTED)
-text(d, (X2 + 16, 518), "358 items have no HSN in Vyapar — GST invoice banane se pehle HSN bhar dein.",
+text(d, (X2 + 16, 518), "210 items have no HSN in Vyapar — GST invoice banane se pehle HSN bhar dein.",
      size=9.5, color=MUTED)
 
 # opening stock panel
 rect(d, (X2, 554, X2 + W2, 776), fill="#ffffff", outline=BORDER, radius=10)
 text(d, (X2 + 16, 578), "Opening stock (tick kiya to):", size=11.5, bold=True)
 field(d, X2 + 16, 604, 300, "Warehouse for the opening stock", "MAIN — Main Store")
-text(d, (X2 + 16, 678), "Vyapar stock value ₹3,95,81,845.82 hi opening", size=9.5, color=MUTED)
+text(d, (X2 + 16, 678), "Vyapar stock value ₹1,25,40,000.00 hi opening", size=9.5, color=MUTED)
 text(d, (X2 + 16, 696), "value banti hai (rate = value ÷ quantity).", size=9.5, color=MUTED)
 
 rect(d, (X2 + 344, 578, X2 + W2 - 16, 754), fill="#f1f7f4", outline=BORDER, radius=10)
@@ -235,8 +235,8 @@ X2 = dx + 44
 W2 = dw - 88
 
 step_heading(d, X2, 132, 4, "Review and import")
-rows = [["Customers", "187", "187", "0", "0"], ["Suppliers", "18", "18", "0", "0"],
-        ["Items", "2,512", "2,512", "0", "0"], ["Opening stock", "2,084", "2,084", "0", "0"]]
+rows = [["Customers", "120", "120", "0", "0"], ["Suppliers", "15", "15", "0", "0"],
+        ["Items", "1,512", "1,512", "0", "0"], ["Opening stock", "1,180", "1,180", "0", "0"]]
 tbottom = table(d, X2, 158, W2, [("Data", .34, "left"), ("Records", .16, "right"), ("Ready", .16, "right"),
                                 ("Duplicates", .17, "right"), ("Problems", .17, "right")], rows, row_h=40, head_h=38)
 text(d, (X2, tbottom + 14), "Sabhi rows Ready hain · koi problem nahi · preview ne kuch save nahi kiya",
@@ -245,9 +245,9 @@ text(d, (X2, tbottom + 14), "Sabhi rows Ready hain · koi problem nahi · previe
 p_top = tbottom + 44
 rect(d, (X2, p_top, X2 + W2, p_top + 250), fill="#fdf6dd", outline=BORDER, radius=10)
 text(d, (X2 + 16, p_top + 26), "Agar problems dikhein (example):", size=11.5, bold=True, color=WARN)
-probs = [("Record 41", "ALUMINIUM PULLEY KEYWAY 6X3", "Unit \"PACKS\" is not one of NOS, PCS, KG…"),
-         ("Record 77", "MAKE- CG POWER INDUSTRIAL SOLUTION", "GST rate is blank — enter the rate"),
-         ("Record 118", "TUNGSTEN CARBIDE ALLOYS", "Duplicate name — skipped (ManuFlow mein pehle se hai)")]
+probs = [("Record 41", "MS BOLT M8 (EXAMPLE)", "Unit \"PACKS\" is not one of NOS, PCS, KG…"),
+         ("Record 77", "HEX NUT M10 (EXAMPLE)", "GST rate is blank — enter the rate"),
+         ("Record 118", "BEARING 6205 (EXAMPLE)", "Duplicate name — skipped (ManuFlow mein pehle se hai)")]
 py = p_top + 56
 for rec, name, msg in probs:
     text(d, (X2 + 16, py), rec, size=10.5, bold=True)
@@ -257,7 +257,7 @@ for rec, name, msg in probs:
 button(d, X2 + 16, p_top + 206, "Download the problem rows", primary=False, h=34, size=12)
 
 btn_y = p_top + 288
-button(d, X2, btn_y, "Import 4,801 records", primary=True, h=46, icon="✓")
+button(d, X2, btn_y, "Import 2,827 records", primary=True, h=46, icon="✓")
 button(d, X2 + 250, btn_y, "Change the selection", primary=False, h=46)
 text(d, (X2 + 500, btn_y + 16), "Duplicates skip honge, problem rows import nahi honge — History mein sab likha jaayega.",
      size=9.5, color=MUTED)
@@ -282,16 +282,16 @@ text(d, (dx2 + dw2 - 26, 50), "×", size=22, bold=True, color=MUTED, anchor="ra"
 X3 = dx2 + 44
 rect(d, (X3, 100, X3 + dw2 - 88, 220), fill=SUCCESS_SOFT, outline=BORDER, radius=10)
 text(d, (X3 + 18, 126), "✓  Import finished", size=13, bold=True, color=SUCCESS)
-text(d, (X3 + 18, 154), "4,801 records imported · 0 skipped (already exist) · 0 not imported.", size=11.5)
+text(d, (X3 + 18, 154), "2,827 records imported · 0 skipped (already exist) · 0 not imported.", size=11.5)
 text(d, (X3 + 18, 178), "Every batch is recorded in the Import History.", size=11.5)
 text(d, (X3 + 18, 200), "Not imported: Vyapar vouchers, party balances, cash / bank opening balances.", size=9.5, color=MUTED)
 button(d, X3, 244, "Close", primary=True, h=40)
 
 text(d, (X, 380), "Import Center → History tab", size=14, bold=True)
 table(d, X, 406, W, [("Date", .16, "left"), ("Type", .18, "left"), ("Details", .66, "left")], [
-    ["02-11 16:40", "Items", "From Vyapar backup of \"SAI NIRMAN INDUSTRIES\", batch 6 of 6: 12 imported, 0 skipped, 0 failed"],
-    ["02-11 16:38", "Opening stock", "Reference OSI-20261102163812-A1B2C3 · go-live 2026-04-01 · source qty 1,22,768.45, value 3,95,81,845.82"],
-    ["02-11 16:36", "Customers", "From Vyapar backup of \"SAI NIRMAN INDUSTRIES\", batch 1 of 1: 187 imported, 0 skipped, 0 failed"],
+    ["02-11 16:40", "Items", "From Vyapar backup of \"DEMO TRADERS\", batch 4 of 4: 12 imported, 0 skipped, 0 failed"],
+    ["02-11 16:38", "Opening stock", "Reference OSI-20261102163812-A1B2C3 · go-live 2026-04-01 · source qty 45,600.00, value 1,25,40,000.00"],
+    ["02-11 16:36", "Customers", "From Vyapar backup of \"DEMO TRADERS\", batch 1 of 1: 120 imported, 0 skipped, 0 failed"],
 ], row_h=52)
 text(d, (X, 406 + 38 + 52 * 3 + 26), "Har batch ka apna entry — kis file se, kitne imported / skipped / failed aur problem rows.",
      size=11, color=MUTED)
@@ -334,11 +334,11 @@ for i, s in enumerate(sub, 1):
     sy += 36
 
 rect(d, (bx, 410, 1180, 578), fill="#ffffff", outline=BORDER, radius=12)
-text(d, (bx + 20, 436), "Aapke customer ki file (jo aapne di)", size=12.5, bold=True, color=PRIMARY_DARK)
-text(d, (bx + 20, 464), "02-11-2026_16.27.10_SAI_NIRMAN_INDUSTRIES_VypBackup.vyb", size=12)
-text(d, (bx + 20, 490), "→  SAI NIRMAN INDUSTRIES · GSTIN 27BEKPG6599D1Z4 · Maharashtra", size=11, color=MUTED)
-text(d, (bx + 20, 514), "→  187 customers · 18 suppliers · 2,512 items · stock ₹3,95,81,845.82", size=11, color=MUTED)
-text(d, (bx + 20, 538), "→  1,319 vouchers (1 Apr 2026 – 31 Oct 2026) — abhi import nahi hote", size=11, color=MUTED)
+text(d, (bx + 20, 436), "Udaharan backup (banaya hua example)", size=12.5, bold=True, color=PRIMARY_DARK)
+text(d, (bx + 20, 464), "02-11-2026_16.27.10_DEMO_TRADERS_VypBackup.vyb", size=12)
+text(d, (bx + 20, 490), "→  DEMO TRADERS · GSTIN 27ABCDE1234F1Z5 · Maharashtra", size=11, color=MUTED)
+text(d, (bx + 20, 514), "→  120 customers · 15 suppliers · 1,512 items · stock ₹1,25,40,000.00", size=11, color=MUTED)
+text(d, (bx + 20, 538), "→  640 vouchers (1 Apr 2026 – 31 Oct 2026) — abhi import nahi hote", size=11, color=MUTED)
 
 rect(d, (bx, 600, 1180, 730), fill=INFO_SOFT, outline=BORDER, radius=12)
 text(d, (bx + 20, 626), "Backup na mile to?", size=12, bold=True, color=INFO)
