@@ -43,6 +43,7 @@ test.describe('Import from Tally (connector)', () => {
   test('not paired: stays on Connect, offers Connect Tally, cannot continue', async ({ page, store }) => {
     tallyScenario(store, 'not_paired')
     const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByTestId('tally-pairing-intro')).toContainText('Authorize the Tally connector (one time)')
     await expect(dialog.getByTestId('tally-connector')).toContainText('Not connected')
     await expect(dialog.getByRole('button', { name: 'Connect Tally' })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Next' })).toBeDisabled()
@@ -51,8 +52,12 @@ test.describe('Import from Tally (connector)', () => {
   test('automatic connection: a connector that connects while step 1 is open moves on and lists the companies by itself', async ({ page, store }) => {
     tallyScenario(store, 'connecting')
     const dialog = await openTallyImport(page, store)
-    await expect(dialog.getByTestId('tally-flow')).toHaveAttribute('data-state', 'connecting')
-    await expect(dialog.getByTestId('tally-connector')).toContainText('Connecting')
+    // no "Connect Tally" screen for a paired connector: the connection screen, with only confirmed steps done
+    await expect(dialog.getByTestId('tally-auto-connect')).toBeVisible()
+    await expect(dialog.getByTestId('connect-step-search')).toHaveAttribute('data-state', 'done')
+    await expect(dialog.getByTestId('connect-step-availability')).toHaveAttribute('data-state', 'active')
+    await expect(dialog.getByTestId('connect-step-tally')).toHaveAttribute('data-state', 'pending')
+    await expect(dialog.getByRole('button', { name: 'Connect Tally' })).toHaveCount(0)
     store.collections['tally-connector'][0].state = 'connected'
     await expect(dialog.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
     await expect(dialog.getByTestId('tally-flow')).toHaveAttribute('data-state', 'companies_available')
@@ -64,7 +69,8 @@ test.describe('Import from Tally (connector)', () => {
   test('first time: device authorization required, then the one-time code with the install step', async ({ page, store }) => {
     tallyScenario(store, 'not_paired')
     const dialog = await openTallyImport(page, store)
-    await expect(dialog.getByTestId('tally-flow')).toContainText('Device authorization required')
+    await expect(dialog.getByTestId('tally-pairing-intro')).toContainText('one-time code')
+    await expect(dialog.getByTestId('tally-auto-connect')).toHaveCount(0) // never shown as connecting while unauthorised
     await dialog.getByRole('button', { name: 'Connect Tally' }).click()
     await expect(dialog.getByTestId('pairing-code')).toHaveText('ABCDE-FGHJK')
     await expect(dialog).toContainText('install-connector.ps1')
@@ -74,16 +80,23 @@ test.describe('Import from Tally (connector)', () => {
   test('authentication failed: says so, offers Pair again, cannot continue', async ({ page, store }) => {
     tallyScenario(store, 'auth_failed')
     const dialog = await openTallyImport(page, store)
-    await expect(dialog.getByTestId('tally-flow')).toContainText('Authentication failed')
+    await expect(dialog.getByTestId('tally-pairing-intro')).toContainText('This computer must be authorized again')
     await expect(dialog.getByTestId('tally-connector')).toContainText('offline too long')
     await expect(dialog.getByRole('button', { name: 'Pair again' })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Next' })).toBeDisabled()
   })
 
-  test('a connected connector offers no re-pairing as the normal action; the computer is shown', async ({ page, store }) => {
+  test('TallyPrime not reachable: keeps trying, then explains; connector details offer no re-pairing as the normal action', async ({ page, store }) => {
+    await page.clock.install()
     tallyScenario(store, 'tally_error')
     const dialog = await openTallyImport(page, store)
-    await expect(dialog.getByTestId('tally-flow')).toContainText('Tally not reachable')
+    await expect(dialog.getByTestId('connect-step-auth')).toHaveAttribute('data-state', 'done')
+    await expect(dialog.getByTestId('connect-step-tally')).toHaveAttribute('data-state', 'active')
+    await page.clock.fastForward(80_000)
+    const error = dialog.getByTestId('tally-connect-error')
+    await expect(error).toContainText('TallyPrime is not reachable', { timeout: 20_000 })
+    await expect(error.getByRole('button', { name: 'Retry' })).toBeVisible()
+    await error.getByText('Connector details').click()
     await expect(dialog.getByTestId('tally-connector')).toContainText('ACCOUNTS-PC')
     await expect(dialog.getByRole('button', { name: 'Reconnect' })).toHaveCount(0)
     await expect(dialog.getByRole('button', { name: 'Pair another computer' })).toBeVisible()
@@ -188,5 +201,93 @@ test.describe('Import from Tally (connector)', () => {
     await expect(dialog.getByRole('button', { name: 'Import data' })).toBeVisible()
     const previews = (store.collections['tally-import-calls'] ?? []).filter((c) => c.mode === 'preview')
     expect(previews.map((c) => c.tallyCompany)).toEqual(['Ganesh Traders'])
+  })
+})
+
+test.describe('Import from Tally — automatic connection', () => {
+  const tc = (store: Store) => store.collections['tally-connector'][0]
+
+  test('a dropped connection to ManuFlow is retried by itself', async ({ page, store }) => {
+    tallyScenario(store, 'connected')
+    tc(store).statusFailures = 2
+    const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
+    expect(tc(store).statusChecks).toBeGreaterThanOrEqual(3)
+  })
+
+  test('connector offline: stops waiting with a clear reason; Retry connects once it is back', async ({ page, store }) => {
+    await page.clock.install()
+    tallyScenario(store, 'offline')
+    const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByTestId('connect-step-availability')).toHaveAttribute('data-state', 'active')
+    await page.clock.fastForward(80_000)
+    const error = dialog.getByTestId('tally-connect-error')
+    await expect(error).toContainText('The Tally connector is not responding', { timeout: 20_000 })
+    await expect(error).toContainText('What you can do')
+    await expect(dialog.getByTestId('tally-auto-connect')).toHaveCount(0) // no endless spinner
+    tc(store).state = 'connected'
+    await error.getByRole('button', { name: 'Retry' }).click()
+    await expect(dialog.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
+  })
+
+  test('company list read fails once: tried again by itself', async ({ page, store }) => {
+    tallyScenario(store, 'connected')
+    tc(store).listFailures = 1
+    const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
+    await expect(dialog.getByRole('radio')).toHaveCount(3)
+  })
+
+  test('company list keeps failing: explained with Retry, which reads it again', async ({ page, store }) => {
+    tallyScenario(store, 'connected')
+    tc(store).listFailures = 3
+    const dialog = await openTallyImport(page, store)
+    const error = dialog.getByTestId('tally-connect-error')
+    await expect(error).toContainText('The company list could not be read from TallyPrime', { timeout: 30_000 })
+    await expect(error).toContainText('took too long')
+    tc(store).listFailures = 0
+    await error.getByRole('button', { name: 'Retry' }).click()
+    await expect(dialog.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
+  })
+
+  test('no company open in TallyPrime: said so on the company step', async ({ page, store }) => {
+    tallyScenario(store, 'connected', [])
+    const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByText('No company is open in TallyPrime')).toBeVisible({ timeout: 20_000 })
+  })
+
+  test('connector too old / feature switched off: explained, no endless spinner', async ({ page, store }) => {
+    tallyScenario(store, 'outdated')
+    const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByTestId('tally-connect-error')).toContainText('needs an update')
+    await expect(dialog.getByTestId('tally-connect-error').getByRole('button', { name: 'Retry' })).toBeVisible()
+  })
+
+  test('closing the dialog stops the checks', async ({ page, store }) => {
+    tallyScenario(store, 'offline')
+    const dialog = await openTallyImport(page, store)
+    await expect.poll(() => tc(store).statusChecks ?? 0).toBeGreaterThanOrEqual(2)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    const after = tc(store).statusChecks
+    await page.waitForTimeout(5000)
+    expect(tc(store).statusChecks).toBe(after)
+  })
+
+  test('one status check at a time, even when the server is slow', async ({ page, store }) => {
+    tallyScenario(store, 'connecting')
+    let inFlight = 0
+    let most = 0
+    await page.route('**/api/import-center/tally/connector**', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      inFlight++; most = Math.max(most, inFlight)
+      await new Promise((r) => setTimeout(r, 2500))
+      inFlight--
+      await route.fallback()
+    })
+    const dialog = await openTallyImport(page, store)
+    await expect(dialog.getByTestId('tally-auto-connect')).toBeVisible()
+    await page.waitForTimeout(9000)
+    expect(most).toBe(1)
   })
 })

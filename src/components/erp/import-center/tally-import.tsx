@@ -13,15 +13,18 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConnectErrorCard, ConnectingCard, PairingIntro } from '@/components/erp/import-center/tally-auto-connect'
 import TallyConnectorPanel, { CONNECTOR_BADGE } from '@/components/erp/import-center/tally-connector-panel'
 import { ITEM_TYPES, ITEM_TYPE_LABEL, fmtDate } from '@/lib/erp-constants'
 import type { RunResult, RunRow } from '@/lib/import/run'
 import { STATUS_LABEL, downloadText, friendlyError, problemRowsCsv } from '@/lib/import/wizard-helpers'
 import type { ConnectorStatus } from '@/lib/tally/connector'
-import { tallyFlow, type TallyFlow } from '@/lib/tally/flow'
+import {
+  CONNECT_DEADLINE_MS, LIST_AUTO_RETRIES, autoConnectProgress, connectFailure, pollDelay, tallyFlow, type TallyFlow,
+} from '@/lib/tally/flow'
 import type { JobView } from '@/lib/tally/jobs'
 import type { TallyPeriod } from '@/lib/tally/period'
-import { apiDelete, apiGet, apiPost } from '@/lib/use-api'
+import { api, apiDelete, apiGet, apiPost } from '@/lib/use-api'
 import { cn } from '@/lib/utils'
 
 /**
@@ -125,15 +128,21 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const connected = conn?.state === 'connected'
   const busy = phase === 'reading' || phase === 'checking' || phase === 'importing'
   const q = `companyId=${companyId}`
-  // Connected → straight on to the company list, also when the connection is made while step 1 is open. Not when the
-  // user went back to step 1 on purpose.
-  const stayOnConnect = React.useRef(false)
-  const stepRef = React.useRef(step)
-  React.useEffect(() => { stepRef.current = step }, [step])
-  const onStatus = React.useCallback((s: ConnectorStatus) => {
-    setConn(s)
-    if (s.state === 'connected' && stepRef.current === 1 && !stayOnConnect.current) setStep(2)
-  }, [])
+  // The user went back to step 1 on purpose: the connector panel is shown as it is, no automatic connection
+  const [manualConnect, setManualConnect] = React.useState(false)
+  // The connector panel (first-time pairing, connector details) reports what it sees; the automatic flow takes it from there
+  const onStatus = React.useCallback((s: ConnectorStatus) => { setConn(s) }, [])
+
+  // ---------- step 1: automatic connection (src/lib/tally/flow.ts → autoConnectProgress) ----------
+  // One status check at a time, with growing waits; every check also tells the connector to check in every 5 s for a
+  // while (markWatching on the server), which is how a reconnect is sped up. Stops after CONNECT_DEADLINE_MS, on close,
+  // or when it is not needed (connected and companies read, pairing needed, or nothing to wait for).
+  const [attempt, setAttempt] = React.useState(0)
+  const [startedAt, setStartedAt] = React.useState(() => Date.now())
+  const [timedOut, setTimedOut] = React.useState(false)
+  const [networkError, setNetworkError] = React.useState('')
+  const listRetries = React.useRef(0)
+  const listingRef = React.useRef(false)
 
   // Steps 2–4: keep watching the connection (step 1 has the connector panel, which polls itself)
   React.useEffect(() => {
@@ -161,6 +170,48 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     return () => clearInterval(t)
   }, [phase])
 
+  const auto = autoConnectProgress(conn, { listing, companies, error: listError })
+  const autoMode = step === 1 && !manualConnect
+  const listGaveUp = !!listError && listRetries.current >= LIST_AUTO_RETRIES
+  const checking = autoMode && auto.outcome.kind === 'working' && !timedOut && !listGaveUp
+
+  React.useEffect(() => {
+    if (!checking) return
+    let alive = true
+    const ctrl = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const s = await api<ConnectorStatus>(`/api/import-center/tally/connector?${q}`, { signal: ctrl.signal })
+        if (!alive) return
+        setConn(s)
+        setNetworkError('')
+      } catch (e) {
+        if (!alive || ctrl.signal.aborted) return
+        setNetworkError(friendlyError(e)) // temporary: checked again with the next attempt
+      }
+      if (!alive) return
+      // Reading the company list has its own limits (the job's lease); the overall wait only covers the connection
+      if (Date.now() - startedAt > CONNECT_DEADLINE_MS && !listingRef.current) setTimedOut(true)
+      else setAttempt((a) => a + 1)
+    }, attempt === 0 ? 0 : pollDelay(attempt))
+    return () => { alive = false; clearTimeout(timer); ctrl.abort() }
+  }, [checking, attempt])
+
+  // The connection came back while the error was shown (e.g. through the connector panel): carry on by itself
+  React.useEffect(() => {
+    if (autoMode && timedOut && conn?.state === 'connected' && !listError) { setTimedOut(false); setStartedAt(Date.now()); setAttempt(0) }
+  }, [autoMode, timedOut, conn?.state])
+
+  function retryConnect() {
+    listRetries.current = 0
+    setConn(null)
+    setListError('')
+    setNetworkError('')
+    setTimedOut(false)
+    setStartedAt(Date.now())
+    setAttempt(0)
+  }
+
   // ---------- Tally jobs ----------
   async function waitForJob(type: string, tallyCompany?: string, reuse = false): Promise<JobView> {
     let job = await apiPost<JobView>(`/api/import-center/tally/jobs?${q}`, { type, tallyCompany, ...(reuse ? { reuse } : {}) })
@@ -183,7 +234,8 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
 
   /** reuse: asked for by the screen itself, so a list read a few seconds ago will do (Refresh always reads again). */
   async function loadCompanies(reuse = false) {
-    if (listing) return
+    if (listingRef.current) return // one read at a time (double clicks, effects running twice)
+    listingRef.current = true
     setListing(true); setListError(''); stopRef.current = false
     try {
       const job = await waitForJob('list-companies', undefined, reuse)
@@ -197,9 +249,24 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     } catch (e) {
       if (!(e instanceof Stopped)) setListError(friendlyError(e))
     } finally {
+      listingRef.current = false
       setListing(false)
     }
   }
+
+  // Step 1: once connected, read the company list by itself (a failed read is tried again a few times), then go on
+  React.useEffect(() => {
+    if (!autoMode || conn?.state !== 'connected' || listing) return
+    if (companies === null && !listError) { void loadCompanies(true); return }
+    if (listError && listRetries.current < LIST_AUTO_RETRIES) {
+      const t = setTimeout(() => { listRetries.current += 1; void loadCompanies(true) }, 2000 * (listRetries.current + 1))
+      return () => clearTimeout(t)
+    }
+  }, [autoMode, conn?.state, listing, listError, companies])
+
+  React.useEffect(() => {
+    if (autoMode && auto.outcome.kind === 'ready') setStep(2)
+  }, [autoMode, auto.outcome.kind])
 
   // Company discovery: by itself once connected, and again when the connection comes back after a failed read
   React.useEffect(() => {
@@ -324,7 +391,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
       : step === 3 ? (kinds.size === 0 ? 'Choose what to import' : kinds.has('items') && !itemType ? 'Choose the item type for stock items' : '') : ''
 
   function back() {
-    if (step === 2) stayOnConnect.current = true
+    if (step === 2) setManualConnect(true)
     if (step === 4 && busy && phase !== 'importing') { stopRef.current = true; cancelOpenJobs() }
     setStep((s) => Math.max(1, s - 1))
   }
@@ -371,11 +438,36 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           {step === 1 && (
             <section className="space-y-4" aria-labelledby="t-step1">
               <h3 id="t-step1" className="sr-only">Connect Tally</h3>
-              <FlowBar flow={flow} />
-              <TallyConnectorPanel companyId={companyId} onStatus={onStatus} />
-              <button type="button" onClick={onUseFile} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-                <FileSpreadsheet className="h-4 w-4" aria-hidden /> No connector? Import an Excel / CSV file exported from Tally instead
-              </button>
+              {manualConnect ? (
+                <>
+                  <FlowBar flow={flow} />
+                  <TallyConnectorPanel companyId={companyId} onStatus={onStatus} />
+                </>
+              ) : auto.outcome.kind === 'needs-pairing' ? (
+                <>
+                  <PairingIntro reason={auto.outcome.reason} />
+                  <TallyConnectorPanel companyId={companyId} onStatus={onStatus} />
+                </>
+              ) : auto.outcome.kind === 'blocked' || timedOut || listGaveUp ? (
+                <ConnectErrorCard
+                  failure={connectFailure(conn, { error: listError }, networkError)}
+                  onRetry={auto.outcome.kind === 'blocked' && auto.outcome.reason === 'unavailable' ? undefined : retryConnect}
+                  onUseFile={onUseFile}>
+                  {conn?.connector && (
+                    <details className="text-sm">
+                      <summary className="cursor-pointer text-muted-foreground">Connector details</summary>
+                      <div className="mt-2"><TallyConnectorPanel companyId={companyId} onStatus={onStatus} /></div>
+                    </details>
+                  )}
+                </ConnectErrorCard>
+              ) : (
+                <ConnectingCard steps={auto.steps} note={networkError ? 'ManuFlow did not answer — trying again…' : conn?.state === 'tally_error' ? 'The connector is online; waiting for TallyPrime to answer…' : undefined} />
+              )}
+              {(manualConnect || auto.outcome.kind === 'needs-pairing') && (
+                <button type="button" onClick={onUseFile} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                  <FileSpreadsheet className="h-4 w-4" aria-hidden /> No connector? Import an Excel / CSV file exported from Tally instead
+                </button>
+              )}
             </section>
           )}
 
