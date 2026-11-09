@@ -582,6 +582,10 @@ export function makeApi(store: Store) {
             tc.state = 'not_paired'
             return ok({ revoked })
           }
+          // A scenario may make the next status checks fail like a dropped connection, or step through states
+          tc.statusChecks = (tc.statusChecks ?? 0) + 1
+          if (tc.statusFailures > 0) { tc.statusFailures--; return fail('Service temporarily unavailable', 'UNAVAILABLE', 503) }
+          if (Array.isArray(tc.states) && tc.states.length) tc.state = tc.states.shift()
           return ok(tallyStatus(tc))
         }
         if (third === 'jobs') {
@@ -598,7 +602,11 @@ export function makeApi(store: Store) {
           // The fake connector answers as soon as the UI asks for the status
           if (job.status === 'queued') {
             job.status = 'done'
-            if (job.type === 'list-companies') {
+            if (job.type === 'list-companies' && tc.listFailures > 0) {
+              tc.listFailures--
+              job.status = 'failed'
+              job.message = 'TallyPrime took too long to answer. Close any open dialog in Tally, or try again with a smaller company.'
+            } else if (job.type === 'list-companies') {
               job.companies = tallyCompanies(tc)
               job.count = job.companies.length
             } else {
