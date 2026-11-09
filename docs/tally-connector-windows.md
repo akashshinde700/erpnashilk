@@ -31,27 +31,58 @@ PC. "Detecting the connector" means ManuFlow looking at the last check-in of the
 ## Install (first time on a computer)
 
 1. ManuFlow → **Import Center → Import from Tally → Connect Tally** (administrator). Note the code (10 minutes, once).
-2. Copy the `connector\tally` folder (it contains `manuflow-tally-connector.mjs` and `windows\`) to the PC.
+2. Copy the customer package `manuflow-tally-connector-<version>-windows.zip` to the PC and unzip it (build it with
+   `node scripts/build-connector-package.mjs` → `dist/connector/`; it contains the program, `windows\`, `INSTALL.md`
+   (the customer guide), `VERSION` and `SHA256SUMS`).
 3. On the PC, **PowerShell as administrator**, in that `windows` folder:
 
    ```powershell
    Set-ExecutionPolicy -Scope Process Bypass        # this window only
-   .\install-connector.ps1 -Server https://<your ManuFlow address> -Code ABCDE-FGHJK
+   .\install-connector.ps1                          # asks for the code at a hidden prompt
+   # ManuFlow at another address:        -Server https://<your ManuFlow address>   (https only)
    # Tally on another PC in the office:  -Tally http://192.168.1.20:9000
    ```
+
+   The code is handed to the program on its standard input (`pair --code-stdin`), never on a command line.
 
 4. ManuFlow shows **Connecting…**, then **Connected to Tally** within a minute. Done.
 
 What the script does:
 
-* copies the program to `C:\ProgramData\ManuFlowTallyConnector\`;
-* restricts that folder to Administrators, SYSTEM and LOCAL SERVICE (well-known SIDs, so any Windows language);
-* pairs once (`connector.json` there holds the token, the Tally address and the computer's random device id);
-* registers the task **ManuFlow Tally Connector**: runs as `NT AUTHORITY\LOCAL SERVICE`, at Windows startup and
-  re-started every 5 minutes if it is not running; no time limit; no window; log in `logs\connector.log`.
+* checks Node.js with `node -v` (18 or newer). If `node.exe` or a folder above it is, or links into, a user profile
+  (nvm-windows), it warns. Then it runs `node <program> version` once as LOCAL SERVICE in a temporary task
+  ("… - account check", removed afterwards) and stops if that fails. This happens **before** a code is used.
+* `-InstallDir` must be a folder of its own. The script refuses:
+  - a drive root, a Windows/Program Files/ProgramData/profile folder, or anything inside `%SystemRoot%`;
+  - a network path or a link (junction/symlink);
+  - a folder that holds anything but the connector's own files.
+* An existing folder must be owned by Administrators, SYSTEM or the installing administrator.
+* The folder gets owner Administrators and a protected access list: Administrators + SYSTEM full control, LOCAL
+  SERVICE modify, nothing inherited from ProgramData.
+  - A new folder is created with that list already in place.
+  - The items inside are then reset to inherit only from it.
+  - The script never runs a recursive permission change on a folder it has not checked.
+* It pairs once (`connector.json` holds the token, the Tally address and the computer's random device id). An
+  existing `connector.json` is used only if:
+  - its folder already had that protection, so no other user could have written it;
+  - it is a valid settings file (token and device-id format, an https address);
+  - its ManuFlow address is the `-Server` one.
+  Otherwise the script stops and says what to do. With `-Repair`, an untrusted or damaged file is moved to `%TEMP%`
+  and the computer pairs from scratch with a new device id.
+* It registers the task **ManuFlow Tally Connector**: runs as `NT AUTHORITY\LOCAL SERVICE`, at Windows startup plus
+  a watchdog trigger every 5 minutes; no time limit; no window; log in `logs\connector.log`.
+* It checks the task: registered as LOCAL SERVICE with both triggers, then started. After 10 s its state must be
+  Running with LastTaskResult 267009. Otherwise the script prints the log tail and stops with "The installation is NOT
+  complete".
 
-Running the script again without `-Code` keeps the pairing and only re-installs the program and the task (use this to
-update the connector to a new version).
+Running the script again keeps the pairing, replaces the program and re-registers the task. It stops the running copy
+first, and removes the lock file it leaves behind unless a connector process (started by hand) still holds it. This is
+how the connector is upgraded.
+* An existing pairing is **never** replaced unless `-Repair` is given.
+* A `-Code` given without `-Repair` on a paired computer is ignored with a warning.
+* `-Tally` on an upgrade changes the Tally address of the existing pairing (`set-tally`); the token and device id
+  stay.
+* A `-Server` that differs from the paired address stops the script; nothing is changed.
 
 ### Why a scheduled task as LOCAL SERVICE, and not a Windows service
 
@@ -61,8 +92,16 @@ update the connector to a new version).
 | Task at user sign-in (the earlier note in `tally-connector-startup.md`) | Only runs while that user is signed in, shows or hides a console window depending on the setup, and the token sits in that user's profile. Not chosen. |
 | **Task at startup as LOCAL SERVICE** | Built into Windows, starts before anyone signs in, no window, no password stored, an account with minimal rights. Reaching TallyPrime on `127.0.0.1:9000` works from it, because that is a local TCP connection. **Chosen.** |
 
-The "every 5 minutes" trigger is the recovery: if the connector ever stops, the next trigger starts it, and the
-connector's lock file (`connector.json.lock`) makes a start while it is already running exit at once.
+The "every 5 minutes" trigger is the recovery. Task Scheduler's own "restart on failure" setting (`RestartCount`) only
+applies when the task **cannot be started**; it does nothing when the program starts and later exits, crashes or is
+ended. In that case the next 5-minute trigger starts the connector again. The connector's lock file
+(`connector.json.lock`) makes a start while it is already running exit at once (exit code 3).
+
+A stopped task or a shutdown leaves the lock file behind, and Windows soon reuses process numbers. So the connector
+takes a lock over when:
+- its process no longer exists;
+- it was not touched for 10 minutes; or
+- it was last touched before the current Windows start (from 0.3.2).
 
 ## Change the Tally address later (no new code)
 
@@ -77,7 +116,7 @@ uses it from its next check.
 
 ```powershell
 Get-ScheduledTask -TaskName 'ManuFlow Tally Connector' | Get-ScheduledTaskInfo      # LastTaskResult 267009 = running
-Get-Content C:\ProgramData\ManuFlowTallyConnector\logs\connector.log -Tail 20
+Get-Content C:\ProgramData\ManuFlowTallyConnector\logs\connector.log -Tail 20 -Encoding UTF8
 & "C:\Program Files\nodejs\node.exe" C:\ProgramData\ManuFlowTallyConnector\manuflow-tally-connector.mjs check --config C:\ProgramData\ManuFlowTallyConnector\connector.json
 ```
 
@@ -95,8 +134,8 @@ the token or the code. It is cut at 1 MB, with one older file (`connector.log.1`
 | Connecting… | Paired, first check-in not seen yet. | Wait a minute. Then check the task and the log. |
 | Connector offline / Reconnecting… | No check-in for 90 s / 6 min. | Is the PC on and online? `Get-ScheduledTaskInfo`; the log; `check`. A proxy that needs a login is not supported (Node.js does not use the Windows proxy settings). |
 | Tally not reachable | The connector runs but TallyPrime does not answer. | Open TallyPrime with a company loaded; "acts as Server/Both"; port; `set-tally` if Tally is on another PC. |
-| Connector update required | The program on the PC is older than this ManuFlow accepts. | Copy the new `connector\tally` folder and run the install script again without `-Code`. |
-| Authentication failed: offline too long | The token expired: a renewal did not reach the connector, and it then stayed offline for over 30 days. | New code; install script with `-Code`. |
+| Connector update required | The program on the PC is older than this ManuFlow accepts. | Unzip the new package and run the install script again (no code needed). |
+| Authentication failed: offline too long | The token expired: a renewal did not reach the connector, and it then stayed offline for over 30 days. | New code; `install-connector.ps1 -Repair`. |
 | Authentication failed: different computer | The token arrived with another computer's device id (settings copied). | If you know why: pair that computer with its own code. If not: **Disconnect**, then pair the right PC. |
 | No company open in Tally | TallyPrime answered with an empty list. | Load the company in TallyPrime; Refresh. |
 | Same name as another open company | Two open companies share a name; Tally exports select by name. | Close one in TallyPrime; Refresh. |
@@ -107,9 +146,12 @@ is already running with the same settings (harmless).
 ## Remove
 
 ```powershell
-.\uninstall-connector.ps1                     # removes the task; keeps the folder
-.\uninstall-connector.ps1 -RemoveSettings     # also deletes the folder with the token (asks first)
+.\uninstall-connector.ps1                     # removes the task and the program; keeps connector.json and the log
+.\uninstall-connector.ps1 -RemoveSettings     # also deletes connector.json (token) and the log (asks first; -Force: no question)
+.\uninstall-connector.ps1 -RemoveSettings -WhatIf    # shows what would be removed; removes nothing
 ```
+
+The lock file is removed only if no connector process still holds it. Files are removed by name, never recursively.
 
 Then **Disconnect** in ManuFlow, which ends the token at once even if a copy of it exists somewhere.
 
@@ -121,11 +163,22 @@ Then **Disconnect** in ManuFlow, which ends the token at once even if a copy of 
 * **No inbound port:** do not open port 9000 to the internet or forward it; the firewall can keep it local.
 * **Token:** stored in `connector.json` in a folder only Administrators, SYSTEM and LOCAL SERVICE can open; only a
   SHA-256 hash is kept in ManuFlow; renewed every 7 days; works only together with this computer's device id; ended at
-  once by Disconnect. It is **not** encrypted with Windows DPAPI: the program uses only Node.js built-ins, which cannot
+  once by Disconnect.
+  - The device id is random and is kept **in the same file**, so copying the whole `connector.json` copies the
+    identity as well. Device binding stops a token used on its own; it does not stop a full copy of the file.
+  - A full copy is caught at the next weekly renewal: the token rotation lets only one copy continue (which one is not
+    predictable), and the other gets "ManuFlow did not accept the token".
+  - Treat the file like a password. Disconnect ends both copies at once.
+  - LOCAL SERVICE is shared by other Windows services, which can therefore also read the folder. It is **not** encrypted with Windows DPAPI: the program uses only Node.js built-ins, which cannot
   call DPAPI. A Windows administrator can therefore read it, as they could read anything on that PC.
-* **The pairing code** passed to the script is single-use and expires after 10 minutes; it may remain in the PowerShell
-  history, where it is useless.
+* **The pairing code** is single-use and expires after 10 minutes. It is typed at a hidden prompt (unless `-Code` is
+  used, in which case it may remain in the PowerShell history, where it is useless) and never saved.
+* **TLS:** the program refuses to send anything to an https ManuFlow when certificate checks are switched off
+  (`NODE_TLS_REJECT_UNAUTHORIZED=0`); redirects are refused; plain http is accepted only for `127.0.0.1` / `localhost`.
 * **No secrets in logs:** the log has states and counts only.
+* **Output encoding:** the scripts switch the console to UTF-8 while they run, restoring it afterwards, so the
+  connector's messages show correctly in Windows PowerShell 5.1. Read the log with `-Encoding UTF8`.
+* **Node.js:** after installing Node.js, open a **new** PowerShell window; one that was already open does not see it.
 
 ## First Windows PC: checklist (record the results)
 

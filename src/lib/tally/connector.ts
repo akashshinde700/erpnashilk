@@ -72,7 +72,7 @@ const TOKEN_RE = /^mftc_([a-f0-9]{24})_([A-Za-z0-9_-]{43})$/
 
 /** Connectors older than this get no jobs (they must be updated); older than the latest are told an update exists. */
 export const CONNECTOR_MIN_VERSION = '0.2.0'
-export const CONNECTOR_LATEST_VERSION = '0.3.0'
+export const CONNECTOR_LATEST_VERSION = '0.3.3'
 const DEVICE_ID_RE = /^[a-f0-9]{32}$/
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/
 
