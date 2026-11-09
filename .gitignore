@@ -78,3 +78,6 @@ tests/fixtures/tally/real-*/
 /captures/
 *.sql.gz
 *.dump
+
+# Built connector packages (scripts/build-connector-package.mjs) — published separately, not committed
+/dist/

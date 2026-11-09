@@ -8,6 +8,8 @@
  *
  *   node manuflow-tally-connector.mjs check  [--tally http://127.0.0.1:9000] [--server https://your-manuflow]
  *   node manuflow-tally-connector.mjs pair   --server https://your-manuflow --code ABCDE-FGHJK [--tally http://127.0.0.1:9000]
+ *            (or --code-stdin: the code is read from standard input, so it is not in the command line)
+ *   node manuflow-tally-connector.mjs version
  *   node manuflow-tally-connector.mjs run    [--log-file <file>]
  *   node manuflow-tally-connector.mjs set-tally --tally http://192.168.1.20:9000
  *   node manuflow-tally-connector.mjs status
@@ -40,11 +42,11 @@
  * odd replies never delete it — the connector retries with increasing waits and reconnects by itself.
  */
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
-import { homedir, hostname, platform as osPlatform } from 'node:os'
+import { homedir, hostname, platform as osPlatform, uptime } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const VERSION = '0.3.0'
+export const VERSION = '0.3.3'
 export const TALLY_DEFAULT_URL = 'http://127.0.0.1:9000'
 const TALLY_TIMEOUT_MS = 4000
 const TALLY_MAX_BYTES = 256 * 1024
@@ -681,9 +683,15 @@ export function olderThan(a, b) {
 /**
  * `run` holds <settings>.lock while it runs, so a scheduled task and a copy started by hand cannot both use one token.
  * The lock is touched at every heartbeat; a lock whose process is gone, or that was not touched for LOCK_STALE_MS (the
- * longest wait between heartbeats is 5 minutes), was left behind by a crash or a restart and is taken over.
+ * longest wait between heartbeats is 5 minutes), was left behind by a crash or a restart and is taken over. So is a lock
+ * last touched before Windows started (a stopped task or a shutdown never removes it, and Windows soon reuses process
+ * numbers, so after a restart its number may belong to an unrelated process). BOOT_SLACK_MS allows for the clock being
+ * corrected after startup.
  */
 const LOCK_STALE_MS = 10 * 60 * 1000
+const BOOT_SLACK_MS = 2 * 60 * 1000
+/** When this computer started (ms since 1970), from its uptime */
+export const bootTime = (now = Date.now()) => now - uptime() * 1000
 const lockFile = (path) => `${path}.lock`
 
 function processAlive(pid) {
@@ -696,7 +704,7 @@ function processAlive(pid) {
   }
 }
 
-export function acquireLock(path, now = Date.now()) {
+export function acquireLock(path, now = Date.now(), bootAt = bootTime(now)) {
   const f = lockFile(path)
   mkdirSync(dirname(f), { recursive: true, mode: 0o700 })
   for (let i = 0; i < 2; i++) {
@@ -707,12 +715,13 @@ export function acquireLock(path, now = Date.now()) {
       if (e?.code !== 'EEXIST') throw e
     }
     let pid = 0
-    let age = Infinity
+    let touched = -Infinity
     try {
       pid = Number(readFileSync(f, 'utf8').trim())
-      age = now - statSync(f).mtimeMs
+      touched = statSync(f).mtimeMs
     } catch { /* removed meanwhile */ }
-    if (pid !== process.pid && processAlive(pid) && age < LOCK_STALE_MS) return false
+    const sinceThisStart = touched >= bootAt - BOOT_SLACK_MS
+    if (pid !== process.pid && processAlive(pid) && now - touched < LOCK_STALE_MS && sinceThisStart) return false
     rmSync(f, { force: true })
   }
   return false
@@ -749,7 +758,20 @@ export function fileLogger(file, echo = console.log) {
 
 // ---------------------------------------------------------------- ManuFlow calls
 
+/**
+ * ManuFlow is reached over https with the certificate checked (Node's default). If certificate checks were switched
+ * off for this process (NODE_TLS_REJECT_UNAUTHORIZED=0), nothing is sent: the token and pairing code would go to
+ * whoever answers.
+ */
+export function tlsProblem(url, env = process.env) {
+  return /^https:/i.test(url) && env.NODE_TLS_REJECT_UNAUTHORIZED === '0'
+    ? 'TLS certificate checks are switched off for this program (NODE_TLS_REJECT_UNAUTHORIZED=0) — remove that setting; nothing was sent to ManuFlow'
+    : ''
+}
+
 async function postJson(url, body, token) {
+  const tls = tlsProblem(url)
+  if (tls) throw Object.assign(new Error(tls), { code: 'TLS_CHECKS_OFF' })
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), SERVER_TIMEOUT_MS)
   try {
@@ -890,7 +912,8 @@ export async function runLoop({ path = configPath(), log = console.log, sleep = 
         backoff = Math.min(300, backoff * 2)
       }
     } catch (e) {
-      say(`Cannot reach ManuFlow (${e?.name === 'AbortError' ? 'timeout' : 'network error'}) — retrying in ${backoff} s`)
+      say(e?.code === 'TLS_CHECKS_OFF' ? `${e.message} — retrying in ${backoff} s`
+        : `Cannot reach ManuFlow (${e?.name === 'AbortError' ? 'timeout' : 'network error'}) — retrying in ${backoff} s`)
       wait = backoff
       backoff = Math.min(300, backoff * 2)
     }
@@ -906,11 +929,12 @@ function arg(argv, name) {
   return i >= 0 ? argv[i + 1] : undefined
 }
 
-const USAGE = 'Commands: check [--tally <url>] [--server <url>] | pair --server <url> --code <code> [--tally http://127.0.0.1:9000] | ' +
-  'run [--log-file <file>] | set-tally --tally <url> | status | forget | capture --tally <url> --out <folder> [--company <name>] ' +
+const USAGE = 'Commands: check [--tally <url>] [--server <url>] | pair --server <url> (--code <code> | --code-stdin) [--tally http://127.0.0.1:9000] | ' +
+  'run [--log-file <file>] | set-tally --tally <url> | status | version | forget | capture --tally <url> --out <folder> [--company <name>] ' +
   '(all but capture: [--config <settings file>])'
 
-export async function main(argv = process.argv.slice(2), log = console.log) {
+/** io.stdin: how --code-stdin reads the code (standard input; replaced in tests). */
+export async function main(argv = process.argv.slice(2), log = console.log, io = { stdin: () => readFileSync(0, 'utf8') }) {
   const cmd = argv[0]
   const path = arg(argv, 'config') ? resolve(arg(argv, 'config')) : configPath()
   if (cmd === 'check') {
@@ -926,9 +950,15 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
     }
     return r.status === 'connected' && serverOk ? 0 : 1
   }
+  if (cmd === 'version') {
+    log(`ManuFlow Tally Connector ${VERSION} (Node.js ${process.versions.node}) — reads TallyPrime with Export requests only`)
+    return 0
+  }
   if (cmd === 'pair') {
     try {
-      await pair({ server: arg(argv, 'server'), code: arg(argv, 'code'), tally: arg(argv, 'tally') || TALLY_DEFAULT_URL, path })
+      // --code-stdin keeps the one-time code out of the command line (and the Windows process list / history)
+      const code = argv.includes('--code-stdin') ? String(io.stdin()).trim().split(/\r?\n/)[0] : arg(argv, 'code')
+      await pair({ server: arg(argv, 'server'), code, tally: arg(argv, 'tally') || TALLY_DEFAULT_URL, path })
       log(`Paired. Settings saved in ${path}. Start it with: run`)
       return 0
     } catch (e) {
@@ -964,7 +994,10 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
   }
   if (cmd === 'status') {
     const c = loadConfig(path)
-    log(c ? `Paired with ${c.server} on ${c.pairedAt}; Tally address ${c.tally}; settings ${path}` : `Not paired (settings ${path})`)
+    // never the token: the server, the Tally address, when it was paired, and a short form of the device id
+    log(c
+      ? `Connector ${VERSION} · paired with ${c.server} on ${c.pairedAt} · device ${String(c.deviceId ?? 'not set yet').slice(0, 8)}… · Tally address ${c.tally} · settings ${path}`
+      : `Connector ${VERSION} · not paired (settings ${path})`)
     return 0
   }
   if (cmd === 'forget') {
@@ -986,6 +1019,25 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
   return 1
 }
 
+const EXIT_GRACE_MS = 10_000
+
+/**
+ * Ends the program with `code` without calling process.exit() at once. On Windows, Node.js 23 and newer can abort
+ * with "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c" when process.exit() runs just
+ * after a network request (nodejs/node#56645): `check` then crashes after printing its result, and `pair` reports failure
+ * although the pairing was saved. Node ends by itself once nothing is left to do (idle fetch connections do not keep
+ * it running); the timer is only a safety net, is unref'd, and so never keeps the program alive.
+ */
+export function finish(code, proc = process, graceMs = EXIT_GRACE_MS) {
+  proc.exitCode = code
+  const t = setTimeout(() => proc.exit(code), graceMs)
+  t.unref()
+  return t
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main().then((code) => process.exit(code))
+  main().then(finish, (e) => {
+    console.error(`Stopped: ${e?.message ?? e}`)
+    finish(1)
+  })
 }
