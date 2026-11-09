@@ -136,7 +136,8 @@ test.describe('Import from Tally (connector)', () => {
     await expect(dialog.getByTestId('tally-period-all')).toContainText(/1 Apr 2024|01[-/ ]04[-/ ]2024/)
     await expect(dialog.getByTestId('tally-period-all')).toContainText('financial years')
     await expect(dialog.getByTestId('tally-period-current-fy')).not.toHaveText('…')
-    await dialog.getByRole('button', { name: /more kinds of data/ }).click()
+    await expect(dialog.getByRole('button', { name: /29 additional data types/ })).toHaveAttribute('aria-expanded', 'false') // collapsed at first
+    await dialog.getByRole('button', { name: /additional data types/ }).click()
     for (const name of ['Sales (not available yet)', 'Journal (not available yet)', 'Ledgers (bank, expenses, …) (not available yet)', 'Trial balance (not available yet)', 'Opening stock (not available yet)']) {
       await expect(dialog.getByTestId('tally-unavailable').getByRole('checkbox', { name })).toBeDisabled()
     }

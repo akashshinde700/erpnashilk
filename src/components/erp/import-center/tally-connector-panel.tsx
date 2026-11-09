@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import { ArrowUpCircle, Clock, KeyRound, Loader2, PlugZap, RefreshCw, ShieldAlert, Unplug, XCircle } from 'lucide-react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { fmtDateTime } from '@/lib/erp-constants'
@@ -95,28 +94,29 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
 
   if (!status) {
     return error
-      ? <p className="text-sm text-destructive" role="alert">{error}</p>
-      : <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Checking the Tally connector…</p>
+      ? <p className="rounded-xl border border-danger-border bg-danger-soft px-4 py-3 text-sm text-destructive" role="alert">{error}</p>
+      : <p className="flex items-center gap-2 rounded-xl border px-4 py-3 text-sm text-muted-foreground" role="status"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Checking the Tally connector…</p>
   }
 
   const b = CONNECTOR_BADGE[status.state]
   const c = status.connector
   const paired = !!c
   const needsPairing = NEEDS_PAIRING.includes(status.state)
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
   return (
-    <div className="space-y-3 rounded-lg border p-4" data-testid="tally-connector">
+    <div className="space-y-4 rounded-xl border bg-card p-4 shadow-xs sm:p-5" data-testid="tally-connector">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className={cn('gap-1.5 py-1 text-sm', b.tone)}>
+        <Badge variant="outline" className={cn('gap-1.5 rounded-full px-3 py-1 text-sm', b.tone)}>
           <b.icon className={cn('h-4 w-4', status.state === 'connecting' && 'animate-spin')} aria-hidden /> {b.label}
         </Badge>
         <span className="flex-1" />
         {status.state === 'not_paired' && isAdmin && (
-          <Button onClick={() => void connect()} disabled={busy} className="bg-primary text-primary-foreground hover:bg-primary/90">
+          <Button onClick={() => void connect()} disabled={busy} className="rounded-lg bg-primary px-5 text-primary-foreground hover:bg-primary/90">
             {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <KeyRound className="h-4 w-4 mr-2" />} Connect Tally
           </Button>
         )}
         {(status.state === 'pairing' || status.state === 'auth_failed') && isAdmin && !confirmOff && (
-          <Button size="sm" variant={status.state === 'auth_failed' ? 'default' : 'outline'} onClick={() => void connect()} disabled={busy}>
+          <Button size="sm" variant={status.state === 'auth_failed' ? 'default' : 'outline'} onClick={() => void connect()} disabled={busy} className="rounded-lg">
             <KeyRound className="h-4 w-4 mr-1.5" /> {status.state === 'pairing' ? 'New code' : 'Pair again'}
           </Button>
         )}
@@ -128,7 +128,7 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
         {(paired || status.state === 'pairing') && isAdmin && (
           confirmOff
             ? <>
-                <Button size="sm" variant="destructive" onClick={() => void disconnect()} disabled={busy}>Yes, disconnect</Button>
+                <Button size="sm" variant="destructive" onClick={() => void disconnect()} disabled={busy} className="rounded-lg">Yes, disconnect</Button>
                 <Button size="sm" variant="ghost" onClick={() => setConfirmOff(false)}>Keep</Button>
               </>
             : <Button size="sm" variant="ghost" onClick={() => setConfirmOff(true)} disabled={busy}>
@@ -149,12 +149,12 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
       )}
 
       {c && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-          <dt className="text-muted-foreground">Last check-in</dt><dd>{c.lastSeenAt ? fmtDateTime(c.lastSeenAt) : 'Never'}</dd>
-          <dt className="text-muted-foreground">Last successful Tally contact</dt><dd>{c.lastSuccessAt ? fmtDateTime(c.lastSuccessAt) : 'Never'}</dd>
-          {c.tallyEndpoint && <><dt className="text-muted-foreground">Tally address (in your office)</dt><dd>{c.tallyEndpoint}{c.latencyMs != null ? ` · ${c.latencyMs} ms` : ''}</dd></>}
-          <dt className="text-muted-foreground">Computer</dt><dd>{c.deviceName || 'Name not reported'}{c.platform ? ` · ${c.platform}` : ''}{c.version ? ` · connector v${c.version}` : ''}</dd>
-          <dt className="text-muted-foreground">Paired</dt><dd>{fmtDateTime(c.pairedAt)}</dd>
+        <dl className="grid gap-x-6 gap-y-3 rounded-lg bg-muted/30 p-4 text-sm sm:grid-cols-2">
+          <ConnectorFact label="Last check-in">{c.lastSeenAt ? fmtDateTime(c.lastSeenAt) : 'Never'}</ConnectorFact>
+          <ConnectorFact label="Last successful Tally contact">{c.lastSuccessAt ? fmtDateTime(c.lastSuccessAt) : 'Never'}</ConnectorFact>
+          {c.tallyEndpoint && <ConnectorFact label="Tally address (in your office)">{c.tallyEndpoint}{c.latencyMs != null ? ` · ${c.latencyMs} ms` : ''}</ConnectorFact>}
+          <ConnectorFact label="Computer">{c.deviceName || 'Name not reported'}{c.platform ? ` · ${c.platform}` : ''}{c.version ? ` · connector v${c.version}` : ''}</ConnectorFact>
+          <ConnectorFact label="Paired">{fmtDateTime(c.pairedAt)}</ConnectorFact>
         </dl>
       )}
       {c?.updateAvailable && status.state !== 'outdated' && (
@@ -162,23 +162,64 @@ export default function TallyConnectorPanel({ companyId, onStatus }: { companyId
       )}
 
       {code && (
-        <Alert>
-          <KeyRound className="h-4 w-4" />
-          <AlertTitle>Pairing code: <span className="font-mono text-lg tracking-wider" data-testid="pairing-code">{code.code}</span></AlertTitle>
-          <AlertDescription>
-            <p>Valid until {fmtDateTime(code.expiresAt)}, for one use only. It is shown only now — create a new one if you lose it. Do not send it to anyone else.</p>
-            <ol className="mt-2 list-decimal space-y-1 pl-5">
-              <li>On the computer with TallyPrime: open TallyPrime, load the company, and set Exchange → Data Synchronization → “TallyPrime act as” to Server (port 9000).</li>
-              <li>On that computer (or another one in the same office network) install Node.js 18 or newer and get the ManuFlow Tally Connector from your ManuFlow administrator. A ready-to-install download is not published yet.</li>
-              <li>Run: <code className="break-all rounded bg-muted px-1">node manuflow-tally-connector.mjs pair --server {typeof window !== 'undefined' ? window.location.origin : ''} --code {code.code}</code></li>
-              <li>Windows: run <code className="rounded bg-muted px-1">install-connector.ps1</code> once (as administrator), so the connector starts with the computer. Otherwise run <code className="rounded bg-muted px-1">node manuflow-tally-connector.mjs run</code> and keep it running.</li>
-            </ol>
-            <p className="mt-2">This is needed once per computer. Afterwards the connector reconnects by itself, also after a restart; this page updates by itself.</p>
-            <p className="mt-2">Keep Tally’s port 9000 closed to the internet: the connector only connects out to ManuFlow.</p>
-          </AlertDescription>
-        </Alert>
+        <div className="overflow-hidden rounded-xl border border-success-border" role="region" aria-label="Pairing code and instructions">
+          <div className="flex flex-col gap-3 bg-success-soft px-4 py-4 sm:flex-row sm:items-center sm:px-5">
+            <KeyRound className="hidden h-5 w-5 shrink-0 text-success sm:block" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-muted-foreground">Pairing code</p>
+              <p className="mt-0.5"><span className="select-all font-mono text-2xl font-semibold tracking-[0.2em]" data-testid="pairing-code">{code.code}</span></p>
+            </div>
+            <p className="text-xs text-muted-foreground sm:max-w-[15rem] sm:text-right">
+              Valid until {fmtDateTime(code.expiresAt)}, for one use only. It is shown only now — create a new one if you lose it. Do not send it to anyone else.
+            </p>
+          </div>
+          <ol className="space-y-4 px-4 py-5 text-sm sm:px-5">
+            <PairStep n={1} title="Prepare TallyPrime">
+              On the computer with TallyPrime: open TallyPrime, load the company, and set it to act as Server on port 9000
+              (Exchange → Data Synchronization → “TallyPrime act as”, or F1 → Settings → Connectivity in newer releases).
+            </PairStep>
+            <PairStep n={2} title="Get the connector">
+              On that computer (or another one in the same office network) install Node.js 18 or newer and get the ManuFlow Tally Connector from your
+              ManuFlow administrator. A ready-to-install download is not published yet.
+            </PairStep>
+            <PairStep n={3} title="Pair the computer">
+              <span className="block">
+                Windows: run <code className="rounded bg-muted px-1.5 py-0.5 text-xs">install-connector.ps1</code> once (as administrator) and type this code when it asks; the connector then starts with the computer.
+              </span>
+              <span className="mt-1.5 block">
+                Otherwise run <code className="break-all rounded bg-muted px-1.5 py-0.5 text-xs">node manuflow-tally-connector.mjs pair --server {origin} --code {code.code}</code>,
+                then <code className="rounded bg-muted px-1.5 py-0.5 text-xs">node manuflow-tally-connector.mjs run</code> and keep it running.
+              </span>
+            </PairStep>
+          </ol>
+          <div className="space-y-1.5 border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground sm:px-5">
+            <p>This is needed once per computer. Afterwards the connector reconnects by itself, also after a restart; this page updates by itself.</p>
+            <p>Keep Tally’s port 9000 closed to the internet: the connector only connects out to ManuFlow.</p>
+          </div>
+        </div>
       )}
 
     </div>
+  )
+}
+
+function ConnectorFact({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 break-words">{children}</dd>
+    </div>
+  )
+}
+
+function PairStep({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground" aria-hidden>{n}</span>
+      <div className="min-w-0">
+        <p className="font-medium"><span className="sr-only">Step {n}: </span>{title}</p>
+        <p className="mt-1 text-muted-foreground">{children}</p>
+      </div>
+    </li>
   )
 }
