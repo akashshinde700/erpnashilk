@@ -19,7 +19,8 @@ async function openTallyImport(page: Page, store: Store) {
   await loginFast(page, store)
   await openModule(page, 'Import Center')
   await page.getByRole('button', { name: 'Import from Tally' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Import from Tally' })
+  // a full workspace page beside the sidebar (no longer a dialog); the variable keeps its old name
+  const dialog = page.getByRole('region', { name: 'Import from Tally' })
   await expect(dialog).toBeVisible()
   return dialog
 }
@@ -202,6 +203,51 @@ test.describe('Import from Tally (connector)', () => {
     await expect(dialog.getByRole('button', { name: 'Import data' })).toBeVisible()
     const previews = (store.collections['tally-import-calls'] ?? []).filter((c) => c.mode === 'preview')
     expect(previews.map((c) => c.tallyCompany)).toEqual(['Ganesh Traders'])
+  })
+})
+
+test.describe('Import from Tally — full workspace page', () => {
+  test('opens as a page beside the sidebar (no dialog); Back to Import Center and Escape return; the sidebar stays usable', async ({ page, store }) => {
+    tallyScenario(store, 'connected')
+    const workspace = await openTallyImport(page, store)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(workspace.getByRole('heading', { name: 'Import from Tally', level: 2 })).toBeFocused()
+    await expect(workspace.getByRole('list', { name: 'Import steps' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'New Import' })).toHaveCount(0) // the workspace takes the Import Center content's place (the top bar still names the module)
+    await expect(workspace.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
+    await expect(workspace.getByTestId('tally-actions').getByRole('button', { name: 'Next' })).toBeVisible()
+    await workspace.getByRole('button', { name: 'Back to Import Center' }).click()
+    await expect(workspace).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Import from Tally' })).toBeVisible()
+    // Escape leaves the workspace too, as it closed the dialog
+    await page.getByRole('button', { name: 'Import from Tally' }).click()
+    await expect(page.getByRole('region', { name: 'Import from Tally' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('region', { name: 'Import from Tally' })).toHaveCount(0)
+    // Escape that closes the command palette does not also leave the workspace
+    await page.getByRole('button', { name: 'Import from Tally' }).click()
+    await page.keyboard.press('Control+k')
+    await expect(page.getByRole('dialog')).toHaveCount(1)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Import from Tally' })).toBeVisible()
+    // the sidebar is never covered: another module opens from it
+    await page.getByRole('navigation', { name: 'ERP modules' }).getByRole('button', { name: 'Dashboard', exact: true }).click()
+    await expect(page).toHaveTitle(/Dashboard · ManuFlow ERP/)
+    await expect(page.getByRole('region', { name: 'Import from Tally' })).toHaveCount(0)
+  })
+
+  test('no page scrolls sideways at phone width', async ({ page, store }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    tallyScenario(store, 'connected')
+    const workspace = await openTallyImport(page, store)
+    await workspace.getByRole('radio', { name: /Shree & Sons/ }).click()
+    const sideways = () => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
+    expect(await sideways()).toBe(false)
+    await workspace.getByRole('button', { name: 'Next' }).click()
+    await workspace.getByRole('button', { name: 'Select all' }).click()
+    await workspace.getByRole('button', { name: /additional data types/ }).click()
+    expect(await sideways()).toBe(false)
   })
 })
 

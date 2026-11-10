@@ -9,7 +9,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -414,26 +413,54 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const flow = tallyFlow(conn, { listing, companies, error: listError })
   const allProblems = cats.flatMap((c) => c.problems.map((p) => ({ ...p, values: { ...p.values, name: `${KINDS.find((k) => k.kind === c.kind)!.label}: ${p.values.name ?? ''}` } })))
 
+  // Full-workspace page beside the sidebar (replaces the former dialog). Closing works as the dialog did: the back
+  // button or Escape, never while an import is running.
+  const canClose = phase !== 'importing'
+  const close = () => { if (canClose) onOpenChange(false) }
+  const badge = conn ? CONNECTOR_BADGE[conn.state] : null
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (phase !== 'importing') onOpenChange(o) }}>
-      <DialogContent showCloseButton={phase !== 'importing'} onInteractOutside={(e) => e.preventDefault()}
-        className="flex max-h-[calc(100dvh-1.5rem)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[92vh] sm:max-w-4xl sm:p-0 lg:max-w-5xl">
-        <DialogHeader className="gap-1 border-b px-5 pb-5 pt-6 text-left sm:px-8 sm:pt-7">
-          <div className="flex items-center gap-3 pr-8">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-success-soft text-success" aria-hidden>
-              <Download className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <DialogTitle className="text-lg font-semibold tracking-tight sm:text-xl">Import from Tally</DialogTitle>
-              <DialogDescription className="mt-0.5">
-                Bring customers, suppliers and stock items from TallyPrime into <span className="font-medium text-foreground">{companyName || 'this company'}</span>.
-              </DialogDescription>
-            </div>
+    <section role="region" aria-labelledby="tally-import-title" data-testid="tally-import" data-open={open ? 'true' : 'false'} className="flex flex-col gap-5 sm:gap-6">
+      <EscapeToClose enabled={canClose} onClose={close} />
+      <OpenAsPage titleId="tally-import-title" />
+      {/* page header */}
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
+          <span className="hidden h-12 w-12 shrink-0 place-items-center rounded-2xl bg-success-soft text-success sm:grid" aria-hidden>
+            <Download className="h-6 w-6" />
+          </span>
+          <div className="min-w-0">
+            <nav aria-label="Breadcrumb" className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <button type="button" onClick={close} disabled={!canClose} className="rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none">Import Center</button>
+              <ChevronRight className="h-3 w-3" aria-hidden />
+              <span aria-current="page" className="text-foreground">Import from Tally</span>
+            </nav>
+            <h2 id="tally-import-title" tabIndex={-1} className="text-xl font-semibold tracking-tight focus:outline-none sm:text-2xl">Import from Tally</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Bring customers, suppliers and stock items from TallyPrime into <span className="font-medium text-foreground">{companyName || 'this company'}</span>.
+            </p>
           </div>
-          <Stepper step={step} />
-        </DialogHeader>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {badge && conn && (
+            <span className={cn('inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs font-medium', badge.tone)} data-testid="tally-header-status">
+              <badge.icon className={cn('h-3.5 w-3.5', (conn.state === 'connecting' || conn.state === 'reconnecting') && 'animate-spin')} aria-hidden /> {badge.label}
+            </span>
+          )}
+          {canClose && (
+            <Button variant="outline" size="sm" onClick={close} className="rounded-lg">
+              <ArrowLeft className="mr-2 h-4 w-4" aria-hidden /> Back to Import Center
+            </Button>
+          )}
+        </div>
+      </header>
 
-        <div className="min-h-[18rem] flex-1 overflow-y-auto overscroll-contain px-5 py-6 sm:px-8 sm:py-7">
+      {/* progress */}
+      <div className="rounded-2xl border bg-card px-4 py-4 shadow-xs sm:px-6 sm:py-5">
+        <Stepper step={step} />
+      </div>
+
+      {/* step content */}
+      <div className="min-h-[24rem] rounded-2xl border bg-card px-4 py-6 shadow-xs sm:px-8 sm:py-8">
           {lostConnection && (
             <Alert className="mb-6 rounded-xl border-warning-border bg-warning-soft" data-testid="tally-connection-warning">
               {conn.state === 'reconnecting' ? <RefreshCw className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4 text-destructive" />}
@@ -443,7 +470,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           )}
           {/* ---------------- 1 Connect ---------------- */}
           {step === 1 && (
-            <section className="mx-auto max-w-2xl space-y-5" aria-labelledby="t-step1">
+            <section className="mx-auto max-w-3xl space-y-5" aria-labelledby="t-step1">
               <h3 id="t-step1" className="sr-only">Connect Tally</h3>
               {manualConnect ? (
                 <>
@@ -509,8 +536,8 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </div>
               )}
               {listing && companies === null && (
-                <div className="grid gap-3 sm:grid-cols-2" aria-busy="true" aria-label="Loading companies from Tally">
-                  {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[4.5rem] rounded-xl" />)}
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading companies from Tally">
+                  {[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-[4.5rem] rounded-xl" />)}
                 </div>
               )}
               {companies && companies.length === 0 && !listing && (
@@ -521,7 +548,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </Alert>
               )}
               {companies && companies.length > 0 && (
-                <div role="radiogroup" aria-label="Tally company" className="grid gap-3 sm:grid-cols-2">
+                <div role="radiogroup" aria-label="Tally company" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {filtered.slice(0, shown).map((c) => {
                     const on = c.name === company && !c.ambiguous
                     return (
@@ -564,7 +591,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
 
           {/* ---------------- 3 Data ---------------- */}
           {step === 3 && (
-            <section className="space-y-8" aria-labelledby="t-step3">
+            <section className="space-y-10" aria-labelledby="t-step3">
               <CompanyLine company={company} onChange={() => setStep(2)} />
 
               {/* B. what to import */}
@@ -577,7 +604,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                   <Button variant="ghost" size="sm" onClick={() => setKinds(new Set(KINDS.map((k) => k.kind)))} disabled={kinds.size === KINDS.length}>Select all</Button>
                   <Button variant="ghost" size="sm" onClick={() => setKinds(new Set())} disabled={kinds.size === 0}>Clear</Button>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
+                <div className="grid gap-3 sm:grid-cols-3 sm:gap-5">
                   {KINDS.map((k) => {
                     const on = kinds.has(k.kind)
                     const Icon = KIND_ICON[k.kind]
@@ -623,18 +650,26 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               )}
 
               {/* D. period — shown with the dates Tally reports; it cannot be chosen yet */}
-              <fieldset disabled aria-describedby="t-period-note" className="min-w-0 space-y-4" data-testid="tally-period">
-                <legend className="mb-4 flex w-full flex-wrap items-center gap-2">
-                  <CalendarRange className="h-5 w-5 text-muted-foreground" aria-hidden />
-                  <span className="text-base font-semibold tracking-tight">Period</span>
-                  <span className="rounded-full border bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">not available yet</span>
-                </legend>
-                <ul className="grid gap-3 sm:grid-cols-2">
+              <fieldset disabled aria-describedby="t-period-note" className="min-w-0 space-y-4 rounded-2xl border bg-muted/20 p-4 sm:p-6" data-testid="tally-period">
+                <legend className="sr-only">Voucher period (not available yet)</legend>
+                <div className="flex flex-wrap items-start gap-3" aria-hidden>
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground shadow-xs">
+                    <CalendarRange className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="flex flex-wrap items-center gap-2">
+                      <span className="text-base font-semibold tracking-tight sm:text-lg">Voucher period</span>
+                      <span className="rounded-full border bg-background px-2.5 py-0.5 text-xs font-medium text-muted-foreground">not available yet</span>
+                    </p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">Which vouchers would be read from Tally. Shown with the dates Tally reports for this company.</p>
+                  </div>
+                </div>
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   {PERIODS.map((p) => {
                     const o = p.kind === 'custom' || periodInfo?.company !== company ? undefined : periodInfo.options[p.kind]
                     return (
                       <li key={p.kind}>
-                        <label className="flex h-full cursor-not-allowed items-start gap-3 rounded-xl border border-dashed bg-muted/30 p-4 text-muted-foreground">
+                        <label className="flex h-full cursor-not-allowed items-start gap-3 rounded-xl border border-dashed bg-background/60 p-4 text-muted-foreground">
                           <input type="radio" name="t-period" disabled className="mt-0.5 h-4 w-4 shrink-0 accent-current" aria-label={`${p.label} (not available yet)`} />
                           <span className="min-w-0">
                             <span className="block text-sm font-medium text-foreground/70">{p.label}</span>
@@ -721,7 +756,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </SummaryItem>
                 <SummaryItem icon={ArrowRight} label="Into ManuFlow company">{companyName || 'this company'}</SummaryItem>
                 <SummaryItem icon={Database} label="Data">{selected.map((k) => k.label).join(', ')}</SummaryItem>
-                <SummaryItem icon={CalendarRange} label="Period">
+                <SummaryItem icon={CalendarRange} label="Voucher period">
                   <span className="font-normal text-muted-foreground">Not applied — customers, suppliers and stock items are read as they are in Tally today</span>
                 </SummaryItem>
                 {kinds.has('items') && (
@@ -828,7 +863,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                       <Download className="mr-2 h-4 w-4" aria-hidden /> Download list
                     </Button>
                   </div>
-                  <ul className="max-h-56 divide-y overflow-y-auto rounded-xl border text-sm">
+                  <ul className="divide-y rounded-xl border text-sm">
                     {allProblems.slice(0, 100).map((p, i) => (
                       <li key={i} className="px-4 py-2.5">
                         <span className="font-medium">{p.values.name || '—'}</span>
@@ -840,10 +875,11 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               )}
             </section>
           )}
-        </div>
+      </div>
 
-        {/* ---------------- actions: stays at the bottom of the dialog, outside the scrolling area ---------------- */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t bg-background/95 px-5 py-4 supports-[backdrop-filter]:backdrop-blur sm:px-8">
+      {/* ---------------- actions: sticks to the bottom of the window while the page scrolls (no inner scroll area) ---------------- */}
+      <div className="sticky bottom-0 z-30 -mx-3 border-t bg-background/95 px-3 pt-3 pb-safe-4 supports-[backdrop-filter]:backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6" data-testid="tally-actions">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {step > 1 && phase !== 'importing' && (
             <Button variant="outline" onClick={back} className="rounded-lg"><ArrowLeft className="mr-2 h-4 w-4" aria-hidden /> Back</Button>
           )}
@@ -879,9 +915,33 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             )}
           </span>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </section>
   )
+}
+
+/** Opening the workspace starts at the top of the page with the title focused, as a new page would. */
+function OpenAsPage({ titleId }: { titleId: string }) {
+  React.useEffect(() => {
+    window.scrollTo({ top: 0 })
+    document.getElementById(titleId)?.focus({ preventScroll: true })
+  }, [titleId])
+  return null
+}
+
+/** Escape leaves the workspace, as it closed the former dialog (not while an import runs, not while another layer is open). */
+function EscapeToClose({ enabled, onClose }: { enabled: boolean; onClose: () => void }) {
+  const ref = React.useRef(onClose)
+  React.useEffect(() => { ref.current = onClose })
+  React.useEffect(() => {
+    if (!enabled) return
+    // An open dialog, menu or popover (e.g. the command palette) takes Escape for itself
+    const layerOpen = () => !!document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [data-radix-popper-content-wrapper]')
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !layerOpen()) ref.current() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [enabled])
+  return null
 }
 
 const FLOW_STAGES = ['Connector', 'TallyPrime', 'Companies']

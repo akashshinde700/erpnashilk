@@ -42,6 +42,21 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
   const companies = useList<{ companies: { id: string; name: string }[] }>('/api/companies')
   const companyName = companies.data?.companies.find((c) => c.id === companyId)?.name ?? ''
 
+  // Import from Tally is a full workspace page: while it is open it takes the place of the Import Center content
+  // (same key, same props; leaving it unmounts it, which stops its checks exactly as closing the dialog did)
+  if (tally !== null) {
+    return (
+      <TallyImport
+        key={tally}
+        open
+        onOpenChange={(o) => { if (!o) setTally(null) }}
+        companyId={companyId}
+        companyName={companyName}
+        onUseFile={() => { setTally(null); setWizard({ entry: 'tally', key: Date.now() }) }}
+      />
+    )
+  }
+
   return (
     <div>
       <PageHeader title="Import Center" description="Import data from Tally, Vyapar, or Excel in a few simple steps." />
@@ -78,16 +93,6 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
         </TabsContent>
       </Tabs>
 
-      {tally !== null && (
-        <TallyImport
-          key={tally}
-          open
-          onOpenChange={(o) => { if (!o) setTally(null) }}
-          companyId={companyId}
-          companyName={companyName}
-          onUseFile={() => { setTally(null); setWizard({ entry: 'tally', key: Date.now() }) }}
-        />
-      )}
       {vyapar !== null && (
         <VyaparBackup
           key={vyapar}
