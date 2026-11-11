@@ -39,6 +39,8 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
   const [tally, setTally] = React.useState<number | null>(null)
   // Vyapar opens the backup flow (.vyb); its "use a file instead" link opens the file wizard
   const [vyapar, setVyapar] = React.useState<number | null>(null)
+  // New Import / History; the Tally Import Center's result can open History
+  const [tab, setTab] = React.useState('import')
   const companies = useList<{ companies: { id: string; name: string }[] }>('/api/companies')
   const companyName = companies.data?.companies.find((c) => c.id === companyId)?.name ?? ''
 
@@ -53,6 +55,7 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
         companyId={companyId}
         companyName={companyName}
         onUseFile={() => { setTally(null); setWizard({ entry: 'tally', key: Date.now() }) }}
+        onShowHistory={() => { setTally(null); setTab('history') }}
       />
     )
   }
@@ -60,7 +63,7 @@ export default function ImportCenterModule({ companyId }: { companyId: string })
   return (
     <div>
       <PageHeader title="Import Center" description="Import data from Tally, Vyapar, or Excel in a few simple steps." />
-      <Tabs defaultValue="import">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="import">New Import</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>

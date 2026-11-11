@@ -555,6 +555,36 @@ describe('GSTIN missing in Tally: imported only after a yes for that record', ()
     expect(await db.customer.count({ where: { companyId: l.companyId, name: 'No GST Debtor A' } })).toBe(1)
   })
 
+  test('review table data: a preview lists every record (ready ones too, with their code); a commit reply lists none of the ready / imported ones', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    const p = await importBatch(l.user, { jobId: j.id, dataType: 'customers', mode: 'preview', batch: 0 })
+    const statuses = (p.json.data.result.rows as Row[]).map((r) => [r.line, r.status])
+    expect(statuses).toEqual([[2, 'confirm'], [3, 'confirm'], [4, 'ready'], [5, 'error'], [6, 'ready']])
+    const ready = (p.json.data.result.rows as (Row & { code?: string; values: Record<string, string> })[]).find((r) => r.line === 4)!
+    expect(ready.code).toMatch(/^C-\d{4}$/)
+    expect(ready.values).toMatchObject({ name: 'With GST Debtor', gstin: '27AAPFU0939F1Z1' })
+    expect(await db.customer.count({ where: { companyId: l.companyId } })).toBe(0) // still a preview
+    const c = await commit(l, j.id, 'customers', { 2: 'import', 3: 'skip' })
+    expect((c.json.data.result.rows as Row[]).map((r) => r.status).sort()).toEqual(['declined', 'error'])
+  })
+
+  test('counts add up: every record in exactly one bucket; imported = ready + GSTIN-missing records answered yes', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    const p = (await importBatch(l.user, { jobId: j.id, dataType: 'customers', mode: 'preview', batch: 0 })).json.data.result.counts
+    // 5 records: 2 ready, 2 GSTIN missing, 1 invalid, 0 existing — no record in two buckets, none left out
+    expect(p).toMatchObject({ total: 5, ready: 2, confirm: 2, errors: 1, duplicates: 0, failed: 0 })
+    expect(p.ready + p.confirm + p.errors + p.failed + p.duplicates).toBe(p.total)
+    // The final confirmation says "Import ready + yes" (tally-import.tsx: previewReady + gstinYes) — here 2 + 1 = 3
+    const yes = 1
+    const c = (await commit(l, j.id, 'customers', { 2: 'import', 3: 'skip' })).json.data.result.counts
+    expect(c.imported).toBe(p.ready + yes)
+    expect(c).toMatchObject({ declined: 1, confirm: 0, errors: 1, duplicates: 0 })
+    expect(c.imported + c.declined + c.confirm + c.errors + c.failed + c.duplicates).toBe(c.total)
+    expect(await db.customer.count({ where: { companyId: l.companyId } })).toBe(p.ready + yes)
+  })
+
   test('answers are checked: anything but line → import | skip is refused, and nothing is imported', async () => {
     customDebtors = DEBTORS
     const { l, j } = await exportedParties('export-customers')

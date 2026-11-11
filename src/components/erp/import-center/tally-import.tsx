@@ -7,9 +7,6 @@ import {
   FileSpreadsheet, Info, Loader2, Lock, Package, RefreshCw, Search, Square, Tags, Truck, Upload, Users, XCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -17,9 +14,12 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConnectErrorCard, ConnectingCard, PairingIntro } from '@/components/erp/import-center/tally-auto-connect'
 import TallyConnectorPanel, { CONNECTOR_BADGE } from '@/components/erp/import-center/tally-connector-panel'
+import {
+  GstinDialog, ImportResult, ImportSidePanel, ImportStages, ReviewTable, SummaryCards, type ReviewCounts, type ReviewRow, type StatusFilter,
+} from '@/components/erp/import-center/tally-review'
 import { ITEM_TYPES, ITEM_TYPE_LABEL, fmtDate } from '@/lib/erp-constants'
 import type { RunResult, RunRow } from '@/lib/import/run'
-import { STATUS_LABEL, downloadText, friendlyError, problemRowsCsv } from '@/lib/import/wizard-helpers'
+import { downloadText, friendlyError, problemRowsCsv } from '@/lib/import/wizard-helpers'
 import type { ConnectorStatus } from '@/lib/tally/connector'
 import {
   CONNECT_DEADLINE_MS, LIST_AUTO_RETRIES, autoConnectProgress, connectFailure, pollDelay, tallyFlow, type TallyFlow,
@@ -44,7 +44,6 @@ import { cn } from '@/lib/utils'
 type Kind = 'customers' | 'suppliers' | 'items'
 type Company = NonNullable<JobView['companies']>[number]
 
-const STEPS = ['Connect Tally', 'Choose company', 'Select data', 'Review & import']
 const KINDS: { kind: Kind; label: string; hint: string; job: string }[] = [
   { kind: 'customers', label: 'Customers', hint: 'Sundry Debtors ledgers', job: 'export-customers' },
   { kind: 'suppliers', label: 'Suppliers', hint: 'Sundry Creditors ledgers', job: 'export-suppliers' },
@@ -76,13 +75,15 @@ interface CatState {
   gstinMissing: RunRow[]
   /** Parties the user chose not to import without a GSTIN (from the import's own answer) */
   declinedRows: RunRow[]
+  /** Every record the preview listed (ready, GSTIN missing, existing, invalid), for the review table */
+  rows: RunRow[]
 }
 // confirm = waiting for a GSTIN yes / no; declined = the user said no
 type Counts = { ready: number; duplicates: number; problems: number; imported: number; confirm: number; declined: number }
 const ZERO: Counts = { ready: 0, duplicates: 0, problems: 0, imported: 0, confirm: 0, declined: 0 }
 type GstinAnswer = 'import' | 'skip'
 /** One record awaiting its GSTIN answer: kind + its line in the Tally export (the server's key) + name to show */
-interface GstinAsk { kind: Kind; line: number; name: string }
+interface GstinAsk { kind: Kind; line: number; name: string; gstType?: string }
 const gstinKey = (kind: Kind, line: number) => `${kind}:${line}`
 type Phase = 'idle' | 'reading' | 'checking' | 'ready' | 'importing' | 'done' | 'stopped' | 'failed'
 interface BatchReply { batch: number; batches: number; totalRecords: number; result: RunResult }
@@ -103,8 +104,10 @@ function elapsed(ms: number) {
 
 class Stopped extends Error {}
 
-export default function TallyImport({ open, onOpenChange, companyId, companyName, onUseFile }: {
+export default function TallyImport({ open, onOpenChange, companyId, companyName, onUseFile, onShowHistory }: {
   open: boolean; onOpenChange: (o: boolean) => void; companyId: string; companyName: string; onUseFile: () => void
+  /** Leaves the workspace and opens Import History (Import Center's History tab) */
+  onShowHistory?: () => void
 }) {
   const [step, setStep] = React.useState(1)
   const [conn, setConn] = React.useState<ConnectorStatus | null>(null)
@@ -130,7 +133,11 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const [confirming, setConfirming] = React.useState(false)
   // GSTIN missing: the user's answer per record (kind:line), and the records still being asked about (one dialog each)
   const [gstinAnswers, setGstinAnswers] = React.useState<Record<string, GstinAnswer>>({})
-  const [gstinAsk, setGstinAsk] = React.useState<{ items: GstinAsk[]; index: number } | null>(null)
+  // mode 'import': asked while starting the import (Cancel import drops every answer); 'review': answered from the table
+  const [gstinAsk, setGstinAsk] = React.useState<{ items: GstinAsk[]; index: number; mode: 'import' | 'review' } | null>(null)
+  // Review table: GSTIN-missing records selected for a bulk answer (kind:line), and the status filter shared with the cards
+  const [selectedKeys, setSelectedKeys] = React.useState<Set<string>>(new Set())
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>('all')
   const [importStarted, setImportStarted] = React.useState(false)
   const [timing, setTiming] = React.useState<{ start: number; end: number | null } | null>(null)
   const [, setTick] = React.useState(0)
@@ -308,7 +315,9 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     setTiming(null)
     setGstinAnswers({})
     setGstinAsk(null)
-    const list: CatState[] = selected.map((k) => ({ kind: k.kind, read: 'waiting', batches: 0, preview: { ...ZERO }, done: { ...ZERO }, problems: [], gstinMissing: [], declinedRows: [] }))
+    setSelectedKeys(new Set())
+    setStatusFilter('all')
+    const list: CatState[] = selected.map((k) => ({ kind: k.kind, read: 'waiting', batches: 0, preview: { ...ZERO }, done: { ...ZERO }, problems: [], gstinMissing: [], declinedRows: [], rows: [] }))
     setCats(list)
     try {
       setPhase('reading')
@@ -330,6 +339,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
         const counts = { ...ZERO }
         const problems: RunRow[] = []
         const gstinMissing: RunRow[] = []
+        const rows: RunRow[] = []
         let batches = 1
         for (let b = 0; b < batches; b++) {
           if (stopRef.current) throw new Stopped()
@@ -342,8 +352,9 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           counts.confirm += r.result.counts.confirm ?? 0
           problems.push(...r.result.rows.filter((x) => x.status === 'error' || x.status === 'failed'))
           gstinMissing.push(...r.result.rows.filter((x) => x.status === 'confirm'))
+          rows.push(...r.result.rows)
         }
-        patch(c.kind, { preview: counts, batches, problems, gstinMissing })
+        patch(c.kind, { preview: counts, batches, problems, gstinMissing, rows })
       }
       setPhase('ready')
       setStage('')
@@ -443,7 +454,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     declined: sum((c) => c.done.declined), unanswered: sum((c) => c.done.confirm),
   }
   // GSTIN missing: records waiting for an answer, and what the user answered so far
-  const gstinMissingAll: GstinAsk[] = cats.flatMap((c) => c.gstinMissing.map((r) => ({ kind: c.kind, line: r.line, name: String(r.values.name ?? '') })))
+  const gstinMissingAll: GstinAsk[] = cats.flatMap((c) => c.gstinMissing.map((r) => ({ kind: c.kind, line: r.line, name: String(r.values.name ?? ''), gstType: r.values.gstType || undefined })))
   const gstinYes = gstinMissingAll.filter((g) => gstinAnswers[gstinKey(g.kind, g.line)] === 'import').length
   const gstinNo = gstinMissingAll.filter((g) => gstinAnswers[gstinKey(g.kind, g.line)] === 'skip').length
   const previewReady = sum((c) => c.preview.ready)
@@ -452,16 +463,17 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   /** "Import data": every record without a GSTIN is asked about first (one dialog each), then the import is confirmed. */
   function startImport() {
     const unanswered = gstinMissingAll.filter((g) => !gstinAnswers[gstinKey(g.kind, g.line)])
-    if (unanswered.length) setGstinAsk({ items: unanswered, index: 0 })
+    if (unanswered.length) setGstinAsk({ items: unanswered, index: 0, mode: 'import' })
     else setConfirming(true)
   }
   function answerGstin(answer: GstinAnswer) {
     if (!gstinAsk) return
     const item = gstinAsk.items[gstinAsk.index]
     if (!item) return
+    // The answer is stored under this very record's key only (kind + its line in the Tally export)
     setGstinAnswers((a) => ({ ...a, [gstinKey(item.kind, item.line)]: answer }))
     if (gstinAsk.index + 1 < gstinAsk.items.length) setGstinAsk({ ...gstinAsk, index: gstinAsk.index + 1 })
-    else { setGstinAsk(null); setConfirming(true) }
+    else { setGstinAsk(null); if (gstinAsk.mode === 'import') setConfirming(true) }
   }
   /** Cancel the whole import: nothing is imported, and every GSTIN answer is asked again next time. */
   function cancelImport() {
@@ -469,10 +481,83 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     setGstinAnswers({})
     setConfirming(false)
   }
+  /** The dialog's third action: Cancel import (while starting the import) or Close (answering from the table). */
+  function closeGstinDialog() {
+    if (gstinAsk?.mode === 'review') setGstinAsk(null)
+    else cancelImport()
+  }
+  // Review table: one dialog per chosen record (the same yes / no as the import), or an explicit "skip" per record
+  const asAsk = (r: ReviewRow): GstinAsk => ({ kind: r.kind, line: r.line, name: r.name, gstType: r.gstType })
+  function reviewRecords(rs: ReviewRow[]) {
+    const items = rs.filter((r) => r.status === 'confirm').map(asAsk)
+    if (items.length) setGstinAsk({ items, index: 0, mode: 'review' })
+  }
+  function skipRecords(rs: ReviewRow[]) {
+    const keys = rs.filter((r) => r.status === 'confirm').map((r) => r.key)
+    setGstinAnswers((a) => ({ ...a, ...Object.fromEntries(keys.map((k) => [k, 'skip' as const])) }))
+    setSelectedKeys((s) => { const n = new Set(s); keys.forEach((k) => n.delete(k)); return n })
+  }
+  function selectRecords(keys: string[], on: boolean) {
+    setSelectedKeys((s) => { const n = new Set(s); keys.forEach((k) => (on ? n.add(k) : n.delete(k))); return n })
+  }
+  // The preview's records for the review table, and its totals (all from the server's replies)
+  const reviewRows: ReviewRow[] = cats.flatMap((c) => c.rows.map((r) => ({
+    key: gstinKey(c.kind, r.line), kind: c.kind, line: r.line, name: String(r.values.name ?? ''), code: r.code,
+    gstin: r.values.gstin || undefined, gstType: r.values.gstType || undefined, status: r.status, messages: r.messages,
+  })))
+  const reviewCounts: ReviewCounts = {
+    total: sum((c) => c.records ?? 0), ready: previewReady, gstinMissing: sum((c) => c.preview.confirm), existing: sum((c) => c.preview.duplicates),
+    invalid: sum((c) => c.preview.problems), willSkip: gstinNo, pending: gstinMissingAll.length - gstinYes - gstinNo,
+  }
+  const listedComplete = reviewRows.length >= sum((c) => c.preview.ready + c.preview.confirm + c.preview.duplicates + c.preview.problems)
+  // Where the import really is: 1 connect / company / data / reading from Tally, 2 review, 3 importing, 4 the server's result
+  const importStage: 1 | 2 | 3 | 4 = step < 4 || phase === 'idle' || phase === 'reading' || phase === 'checking' ? 1
+    : phase === 'importing' ? 3
+      : phase === 'done' || ((phase === 'stopped' || phase === 'failed') && importStarted) ? 4 : 2
+  const setupLabels = ['Connect Tally', 'Choose company', 'Select data', 'Read from Tally']
   const percent = phase === 'done' ? 100 : progress.total ? Math.min(99, Math.floor((progress.done / progress.total) * 100)) : 0
   const lostConnection = step > 1 && conn && conn.state !== 'connected'
   const flow = tallyFlow(conn, { listing, companies, error: listError })
   const allProblems = cats.flatMap((c) => c.problems.map((p) => ({ ...p, values: { ...p.values, name: `${KINDS.find((k) => k.kind === c.kind)!.label}: ${p.values.name ?? ''}` } })))
+
+  // Counts per data type (the server's figures): under the cards while reviewing, above the progress otherwise
+  const byTypeTable = (
+                <div className="overflow-x-auto rounded-xl border">
+                  <table className="w-full text-sm" aria-label="By data type">
+                    <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
+                      <tr>
+                        <th scope="col" className="px-3 py-2.5 font-medium sm:px-4">Data</th>
+                        <th scope="col" className="px-3 py-2.5 text-right font-medium sm:px-4">In Tally</th>
+                        <th scope="col" className="px-3 py-2.5 text-right font-medium sm:px-4">{afterImport ? 'Imported' : 'New'}</th>
+                        <th scope="col" className="px-3 py-2.5 text-right font-medium sm:px-4"><span className="sm:hidden">Existing</span><span className="hidden sm:inline">Already in ManuFlow</span></th>
+                        <th scope="col" className="px-3 py-2.5 text-right font-medium sm:px-4"><span className="sm:hidden">Issues</span><span className="hidden sm:inline">Need attention</span></th>
+                        <th scope="col" className="px-3 py-2.5 text-right font-medium sm:px-4">{afterImport ? 'Skipped by you' : <><span className="sm:hidden">No GSTIN</span><span className="hidden sm:inline">GSTIN missing</span></>}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cats.map((c) => {
+                        const k = KINDS.find((x) => x.kind === c.kind)!
+                        const n = afterImport ? c.done : c.preview
+                        const show = c.read === 'done' && counted
+                        const Icon = KIND_ICON[c.kind]
+                        return (
+                          <tr key={c.kind} className="border-t">
+                            <th scope="row" className="px-3 py-3 text-left font-medium sm:px-4">
+                              <span className="flex items-center gap-2"><Icon className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" aria-hidden />{k.label}</span>
+                              {c.read === 'failed' && <span className="mt-0.5 block text-xs font-normal text-destructive">{c.error}</span>}
+                            </th>
+                            <td className="px-3 py-3 text-right tabular-nums sm:px-4">{c.read === 'done' ? c.records : c.read === 'failed' ? <XCircle className="ml-auto h-4 w-4 text-destructive" aria-label="Failed" /> : '—'}</td>
+                            <td className="px-3 py-3 text-right font-medium tabular-nums text-success sm:px-4">{show ? (afterImport ? n.imported : n.ready) : '—'}</td>
+                            <td className="px-3 py-3 text-right tabular-nums sm:px-4">{show ? n.duplicates : '—'}</td>
+                            <td className={cn('px-3 py-3 text-right tabular-nums sm:px-4', n.problems > 0 && 'font-medium text-warning')}>{show ? n.problems : '—'}</td>
+                            <td className={cn('px-3 py-3 text-right tabular-nums sm:px-4', !afterImport && n.confirm > 0 && 'font-medium text-warning')}>{show ? (afterImport ? n.declined : n.confirm) : '—'}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+  )
 
   // Full-workspace page beside the sidebar (replaces the former dialog). Closing works as the dialog did: the back
   // button or Escape, never while an import is running.
@@ -493,11 +578,15 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             <nav aria-label="Breadcrumb" className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
               <button type="button" onClick={close} disabled={!canClose} className="rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none">Import Center</button>
               <ChevronRight className="h-3 w-3" aria-hidden />
-              <span aria-current="page" className="text-foreground">Import from Tally</span>
+              <span aria-current="page" className="text-foreground">Tally Import Center</span>
             </nav>
-            <h2 id="tally-import-title" tabIndex={-1} className="text-xl font-semibold tracking-tight focus:outline-none sm:text-2xl">Import from Tally</h2>
+            <h2 id="tally-import-title" tabIndex={-1} className="text-xl font-semibold tracking-tight focus:outline-none sm:text-2xl">Tally Import Center</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Bring customers, suppliers and stock items from TallyPrime into <span className="font-medium text-foreground">{companyName || 'this company'}</span>.
+              Import and manage Customers, Suppliers, Items and other supported data from Tally.
+            </p>
+            <p className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="tally-context">
+              <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1"><Building2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden /> Company: <span className="font-medium">{companyName || 'this company'}</span></span>
+              {company && <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1"><Database className="h-3.5 w-3.5 text-muted-foreground" aria-hidden /> Tally: <span className="font-medium">{company}</span></span>}
             </p>
           </div>
         </div>
@@ -517,7 +606,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
 
       {/* progress */}
       <div className="rounded-2xl border bg-card px-4 py-4 shadow-xs sm:px-6 sm:py-5">
-        <Stepper step={step} />
+        <ImportStages stage={importStage} sub={{ labels: setupLabels, current: step < 4 ? step - 1 : 3 }} />
       </div>
 
       {/* step content */}
@@ -798,40 +887,36 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             </section>
           )}
 
-          {/* ---------------- 4 Review & import ---------------- */}
+          {/* ---------------- 4 Review & confirm → Import → Result ---------------- */}
           {step === 4 && (
             <section className="space-y-6" aria-labelledby="t-step4">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h3 id="t-step4" className="text-base font-semibold tracking-tight sm:text-lg">Review & import</h3>
+                <h3 id="t-step4" className="text-base font-semibold tracking-tight sm:text-lg">
+                  {importStage === 4 ? 'Import result' : importStage === 3 ? 'Importing' : importStage === 2 ? 'Review & confirm' : 'Reading from Tally'}
+                </h3>
                 <span className="text-sm text-muted-foreground">{company} → {companyName || 'this company'}</span>
-              </div>
-
-              <dl className="grid gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-2" aria-label="Import summary">
-                <SummaryItem icon={Building2} label="From Tally company">
-                  <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="break-words">{company}</span>
-                    {!busy && phase !== 'done' && !importStarted && (
-                      <Button variant="link" size="sm" onClick={() => setStep(2)} className="h-auto p-0 text-xs">Change company</Button>
-                    )}
-                  </span>
-                </SummaryItem>
-                <SummaryItem icon={ArrowRight} label="Into ManuFlow company">{companyName || 'this company'}</SummaryItem>
-                <SummaryItem icon={Database} label="Data">{selected.map((k) => k.label).join(', ')}</SummaryItem>
-                <SummaryItem icon={CalendarRange} label="Voucher period">
-                  <span className="font-normal text-muted-foreground">Not applied — customers, suppliers and stock items are read as they are in Tally today</span>
-                </SummaryItem>
-                {kinds.has('items') && (
-                  <SummaryItem icon={Tags} label="New stock items are" wide>{itemType ? ITEM_TYPE_LABEL[itemType as keyof typeof ITEM_TYPE_LABEL] ?? itemType : '—'}</SummaryItem>
+                {!busy && phase !== 'done' && !importStarted && (
+                  <Button variant="link" size="sm" onClick={() => setStep(2)} className="h-auto p-0 text-xs">Change company</Button>
                 )}
-              </dl>
+              </div>
+              <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <span>Data: <span className="font-medium text-foreground">{selected.map((k) => k.label).join(', ')}</span></span>
+                {kinds.has('items') && <span>New stock items are: <span className="font-medium text-foreground">{itemType ? ITEM_TYPE_LABEL[itemType as keyof typeof ITEM_TYPE_LABEL] ?? itemType : '—'}</span></span>}
+                <span>Voucher period: not applied — records are read as they are in Tally today</span>
+              </p>
 
               {(phase === 'reading' || phase === 'checking' || phase === 'ready') && (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground"><Info className="h-4 w-4 shrink-0" aria-hidden />Preview — nothing is saved in ManuFlow until you confirm the import.</p>
               )}
-
               {(busy || stage) && (
                 <div className="rounded-xl border bg-muted/30 px-4 py-3" aria-live="polite">
                   <p className="flex items-center gap-2 text-sm font-medium"><Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden /> {stage}</p>
+                </div>
+              )}
+              {(phase === 'reading' || phase === 'checking') && (
+                <div className="space-y-3" aria-busy="true" aria-label="Reading and checking the records">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">{[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-[4.5rem] rounded-xl" />)}</div>
+                  <Skeleton className="h-48 rounded-xl" />
                 </div>
               )}
               {importStarted && (
@@ -852,125 +937,89 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </div>
               )}
 
-              <div className="overflow-x-auto rounded-xl border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
-                    <tr>
-                      <th scope="col" className="px-3 py-3 font-medium sm:px-4">Data</th>
-                      <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4">In Tally</th>
-                      <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4">{afterImport ? 'Imported' : 'New'}</th>
-                      <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4"><span className="sm:hidden">Existing</span><span className="hidden sm:inline">Already in ManuFlow</span></th>
-                      <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4"><span className="sm:hidden">Issues</span><span className="hidden sm:inline">Need attention</span></th>
-                      <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4">{afterImport ? 'Skipped by you' : <><span className="sm:hidden">No GSTIN</span><span className="hidden sm:inline">GSTIN missing</span></>}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cats.map((c) => {
-                      const k = KINDS.find((x) => x.kind === c.kind)!
-                      const n = afterImport ? c.done : c.preview
-                      const show = c.read === 'done' && counted
-                      const Icon = KIND_ICON[c.kind]
-                      return (
-                        <tr key={c.kind} className="border-t">
-                          <th scope="row" className="px-3 py-3.5 text-left font-medium sm:px-4">
-                            <span className="flex items-center gap-2"><Icon className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" aria-hidden />{k.label}</span>
-                            {c.read === 'failed' && <span className="mt-0.5 block text-xs font-normal text-destructive">{c.error}</span>}
-                          </th>
-                          <td className="px-3 py-3.5 text-right tabular-nums sm:px-4">{c.read === 'done' ? c.records : c.read === 'reading' ? <Loader2 className="ml-auto h-4 w-4 animate-spin" aria-label="Reading" /> : c.read === 'failed' ? <XCircle className="ml-auto h-4 w-4 text-destructive" aria-label="Failed" /> : '—'}</td>
-                          <td className="px-3 py-3.5 text-right font-medium tabular-nums text-success sm:px-4">{show ? (afterImport ? n.imported : n.ready) : '—'}</td>
-                          <td className="px-3 py-3.5 text-right tabular-nums sm:px-4">{show ? n.duplicates : '—'}</td>
-                          <td className={cn('px-3 py-3.5 text-right tabular-nums sm:px-4', n.problems > 0 && 'font-medium text-warning')}>{show ? n.problems : '—'}</td>
-                          <td className={cn('px-3 py-3.5 text-right tabular-nums sm:px-4', !afterImport && n.confirm > 0 && 'font-medium text-warning')}>{show ? (afterImport ? n.declined : n.confirm) : '—'}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {counted && importStage !== 2 && byTypeTable}
 
-              {phase === 'ready' && !canImport && (
-                <p className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">Nothing new to import{sum((c) => c.preview.duplicates) ? ' — everything is already in ManuFlow' : ''}.</p>
-              )}
-              {phase === 'ready' && canImport && (
-                <p className="text-sm text-muted-foreground">Existing ManuFlow records are never changed: matching names are skipped. Rows that need attention are not imported and are listed below.</p>
-              )}
-              {gstinMissingAll.length > 0 && (phase === 'ready' || phase === 'stopped' || phase === 'failed') && (
-                <div className="space-y-2 rounded-xl border border-warning-border bg-warning-soft px-4 py-3" data-testid="tally-gstin-missing">
-                  <p className="flex items-center gap-2 text-sm font-medium"><AlertTriangle className="h-4 w-4 text-warning" aria-hidden /> GSTIN missing — confirmation required ({gstinMissingAll.length})</p>
-                  <p className="text-xs text-muted-foreground">Tally has no GSTIN for these parties although their GST type needs one. When you import, you are asked for each one whether to import it without a GSTIN.</p>
-                  <ul className="divide-y rounded-lg border bg-background text-sm">
-                    {gstinMissingAll.slice(0, 100).map((g) => {
-                      const a = gstinAnswers[gstinKey(g.kind, g.line)]
-                      return (
-                        <li key={gstinKey(g.kind, g.line)} className="flex flex-wrap items-center gap-x-2 px-3 py-2">
-                          <span className="font-medium">{g.name || '—'}</span>
-                          <span className="text-muted-foreground">· {g.kind === 'suppliers' ? 'Supplier' : 'Customer'}</span>
-                          <span className="ml-auto text-xs text-muted-foreground">{a === 'import' ? 'Import without GSTIN' : a === 'skip' ? 'Skip' : 'Not answered yet'}</span>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </div>
-              )}
-              {phase === 'done' && (
-                <Alert className="rounded-xl border-success-border bg-success-soft">
-                  <CheckCircle2 className="h-4 w-4 text-success" />
-                  <AlertTitle>Import finished</AlertTitle>
-                  <AlertDescription>
-                    {totals.imported} imported · {totals.skipped} already in ManuFlow (skipped) · {totals.failed} not imported{totals.declined ? ` · ${totals.declined} skipped by you (no GSTIN)` : ''}{totals.unanswered ? ` · ${totals.unanswered} not imported (no GSTIN, not confirmed)` : ''}{timing?.end ? ` · ${elapsed(timing.end - timing.start)}` : ''}. Each part is recorded in Import History.
-                  </AlertDescription>
-                </Alert>
-              )}
-              {phase === 'stopped' && <Problem text="Stopped. Parts that finished before stopping are imported and recorded in Import History; continuing skips them." tone="info" />}
-              {confirming && phase === 'ready' && (
-                <Alert data-testid="tally-confirm" className="rounded-xl border-primary/40 bg-success-soft">
-                  <Upload className="h-4 w-4" />
-                  <AlertTitle>Import {previewReady + gstinYes} new records into {companyName || 'this company'}?</AlertTitle>
-                  <AlertDescription>
-                    <p>From Tally company “{company}”. Existing ManuFlow records are not changed; {sum((c) => c.preview.duplicates)} already there will be skipped and {sum((c) => c.preview.problems)} that need attention are not imported. Nothing is written to Tally.</p>
-                    {gstinMissingAll.length > 0 && (
-                      <p className="mt-2" data-testid="tally-confirm-gstin">Without GSTIN: {gstinYes} imported with the GSTIN left empty, {gstinNo} skipped by you.</p>
+              {/* Review & confirm: cards, records, final confirmation, summary panel */}
+              {importStage === 2 && phase === 'ready' && (
+                <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_17rem]">
+                  <div className="min-w-0 space-y-5">
+                    <SummaryCards counts={reviewCounts} active={statusFilter} onFilter={setStatusFilter} />
+                    {byTypeTable}
+                    {!canImport && (
+                      <p className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">Nothing new to import{sum((c) => c.preview.duplicates) ? ' — everything is already in ManuFlow' : ''}.</p>
                     )}
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => void importAll()} className="bg-primary text-primary-foreground hover:bg-primary/90">Yes, import</Button>
-                      <Button size="sm" variant="outline" onClick={cancelImport} className="bg-background">Cancel</Button>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              )}
-              {runError && <Problem text={runError} />}
-              {afterImport && sum((c) => c.declinedRows.length) > 0 && (
-                <div className="space-y-2" data-testid="tally-gstin-declined">
-                  <p className="text-sm font-medium">Skipped by you — no GSTIN ({sum((c) => c.declinedRows.length)})</p>
-                  <ul className="divide-y rounded-xl border text-sm">
-                    {cats.flatMap((c) => c.declinedRows.map((r) => (
-                      <li key={gstinKey(c.kind, r.line)} className="px-4 py-2.5">
-                        <span className="font-medium">{r.values.name || '—'}</span>
-                        <span className="text-muted-foreground"> · {c.kind === 'suppliers' ? 'Supplier' : 'Customer'}</span>
-                      </li>
-                    )))}
-                  </ul>
+                    {canImport && (
+                      <p className="text-sm text-muted-foreground">Existing ManuFlow records are never changed: matching names are skipped. Records that need attention are not imported.</p>
+                    )}
+                    {gstinMissingAll.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warning-border bg-warning-soft px-4 py-2.5 text-sm" data-testid="tally-gstin-missing">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+                        <span className="font-medium">GSTIN missing — confirmation required ({gstinMissingAll.length})</span>
+                        <span className="text-muted-foreground">{reviewCounts.pending ? `${reviewCounts.pending} not answered yet — use Review in the table, or answer each one when you import.` : 'Every record has an answer.'}</span>
+                      </div>
+                    )}
+                    {confirming && (
+                      <Alert data-testid="tally-confirm" className="rounded-xl border-primary/40 bg-success-soft">
+                        <Upload className="h-4 w-4" />
+                        <AlertTitle>Import {previewReady + gstinYes} new records into {companyName || 'this company'}?</AlertTitle>
+                        <AlertDescription>
+                          <p>From Tally company “{company}”. Existing ManuFlow records are not changed; {sum((c) => c.preview.duplicates)} already there will be skipped and {sum((c) => c.preview.problems)} that need attention are not imported. Nothing is written to Tally.</p>
+                          {gstinMissingAll.length > 0 && (
+                            <p className="mt-2" data-testid="tally-confirm-gstin">Without GSTIN: {gstinYes} imported with the GSTIN left empty, {gstinNo} skipped by you.</p>
+                          )}
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <Button size="sm" onClick={() => void importAll()} className="bg-primary text-primary-foreground hover:bg-primary/90">Yes, import</Button>
+                            <Button size="sm" variant="outline" onClick={cancelImport} className="bg-background">Cancel</Button>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    <ReviewTable
+                      rows={reviewRows}
+                      totals={cats.map((c) => ({ kind: c.kind, count: c.records ?? 0 }))}
+                      listedComplete={listedComplete}
+                      answers={gstinAnswers}
+                      selected={selectedKeys}
+                      onSelect={selectRecords}
+                      onReview={(r) => reviewRecords([r])}
+                      onReviewMany={reviewRecords}
+                      onSkipMany={skipRecords}
+                      filter={statusFilter}
+                      onFilter={setStatusFilter}
+                      locked={confirming}
+                    />
+                    {allProblems.length > 0 && (
+                      <Button variant="outline" size="sm" onClick={() => downloadText('tally-import-problems.csv', problemRowsCsv(allProblems))} className="rounded-lg">
+                        <Download className="mr-2 h-4 w-4" aria-hidden /> Download the records that need attention
+                      </Button>
+                    )}
+                  </div>
+                  <ImportSidePanel counts={reviewCounts} tallyCompany={company} companyName={companyName} data={selected.map((k) => k.label).join(', ')} />
                 </div>
               )}
 
-              {allProblems.length > 0 && (phase === 'ready' || phase === 'done' || phase === 'stopped') && (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="mr-auto flex items-center gap-2 text-sm font-medium"><AlertTriangle className="h-4 w-4 text-warning" aria-hidden /> Need attention ({allProblems.length}{allProblems.length >= 200 ? '+' : ''})</p>
-                    <Button variant="outline" size="sm" onClick={() => downloadText('tally-import-problems.csv', problemRowsCsv(allProblems))} className="rounded-lg">
-                      <Download className="mr-2 h-4 w-4" aria-hidden /> Download list
-                    </Button>
-                  </div>
-                  <ul className="divide-y rounded-xl border text-sm">
-                    {allProblems.slice(0, 100).map((p, i) => (
-                      <li key={i} className="px-4 py-2.5">
-                        <span className="font-medium">{p.values.name || '—'}</span>
-                        <span className="text-muted-foreground"> · {STATUS_LABEL[p.status]}: {p.messages.join('; ')}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+              {/* Result: only from the server's import replies */}
+              {importStage === 4 && (
+                <ImportResult
+                  totals={totals}
+                  failures={cats.flatMap((c) => c.problems.map((p) => ({ key: gstinKey(c.kind, p.line), name: String(p.values.name ?? ''), kind: c.kind, messages: p.messages })))}
+                  declined={cats.flatMap((c) => c.declinedRows.map((r) => ({ key: gstinKey(c.kind, r.line), name: String(r.values.name ?? ''), kind: c.kind })))}
+                  onHistory={onShowHistory && phase !== 'importing' ? onShowHistory : undefined}
+                >
+                  {phase === 'done' && (
+                    <Alert className="rounded-xl border-success-border bg-success-soft">
+                      <CheckCircle2 className="h-4 w-4 text-success" />
+                      <AlertTitle>Import finished</AlertTitle>
+                      <AlertDescription>
+                        {totals.imported} imported · {totals.skipped} already in ManuFlow (skipped) · {totals.failed} not imported{totals.declined ? ` · ${totals.declined} skipped by you (no GSTIN)` : ''}{totals.unanswered ? ` · ${totals.unanswered} not imported (no GSTIN, not confirmed)` : ''}{timing?.end ? ` · ${elapsed(timing.end - timing.start)}` : ''}. Each part is recorded in Import History.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {phase === 'stopped' && <Problem text="Stopped. Parts that finished before stopping are imported and recorded in Import History; continuing skips them." tone="info" />}
+                </ImportResult>
               )}
+              {phase === 'stopped' && !importStarted && <Problem text="Stopped before anything was imported. Check again to read the records from Tally." tone="info" />}
+              {runError && <Problem text={runError} />}
             </section>
           )}
       </div>
@@ -981,8 +1030,10 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           {step > 1 && phase !== 'importing' && (
             <Button variant="outline" onClick={back} className="rounded-lg"><ArrowLeft className="mr-2 h-4 w-4" aria-hidden /> Back</Button>
           )}
-          <span className="order-last w-full text-xs text-muted-foreground sm:order-none sm:mr-auto sm:w-auto" aria-live="polite">
-            {nextHint || (step === 3 && kinds.size > 0 ? `${kinds.size} of ${KINDS.length} data types selected` : '')}
+          <span className="order-last w-full text-xs text-muted-foreground sm:order-none sm:mr-auto sm:w-auto" aria-live="polite" data-testid="tally-action-status">
+            {step === 4 && phase === 'ready'
+              ? `${selectedKeys.size} selected · ${reviewCounts.pending} GSTIN confirmation${reviewCounts.pending === 1 ? '' : 's'} pending · ${previewReady + gstinYes} ready to import`
+              : nextHint || (step === 3 && kinds.size > 0 ? `${kinds.size} of ${KINDS.length} data types selected` : '')}
           </span>
           <span className="ml-auto flex flex-wrap items-center justify-end gap-2 sm:ml-0">
             {step < 4 && (
@@ -1006,7 +1057,11 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             {step === 4 && phase === 'ready' && !confirming && (
               <Button onClick={startImport} disabled={!canImport || !!gstinAsk} className="rounded-lg bg-primary px-5 text-primary-foreground hover:bg-primary/90">
                 <Upload className="mr-2 h-4 w-4" aria-hidden /> Import data
+                {reviewCounts.pending > 0 && <span className="ml-1.5 font-normal opacity-90">· answer {reviewCounts.pending} GSTIN first</span>}
               </Button>
+            )}
+            {step === 4 && phase === 'done' && onShowHistory && (
+              <Button variant="outline" onClick={onShowHistory} className="rounded-lg">Import History</Button>
             )}
             {step === 4 && phase === 'done' && (
               <Button onClick={() => onOpenChange(false)} className="rounded-lg bg-primary px-5 text-primary-foreground hover:bg-primary/90">Done</Button>
@@ -1016,34 +1071,29 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
       </div>
 
       {/* GSTIN missing: one yes / no per record before anything is imported (the server enforces the answer) */}
-      <AlertDialog open={!!gstinAsk} onOpenChange={(o) => { if (!o) cancelImport() }}>
-        <AlertDialogContent data-testid="tally-gstin-dialog">
-          {gstinAsk && gstinAsk.items[gstinAsk.index] && (() => {
-            const item = gstinAsk.items[gstinAsk.index]
-            const party = item.kind === 'suppliers' ? 'Supplier' : 'Customer'
-            return (
-              <>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>GSTIN Missing</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    The GSTIN for <span className="font-medium text-foreground">{item.name || 'this party'}</span> is not available in Tally. Are you sure you want to import this {party} without GSTIN?
-                  </AlertDialogDescription>
-                  {gstinAsk.items.length > 1 && <p className="text-xs text-muted-foreground">Record {gstinAsk.index + 1} of {gstinAsk.items.length}</p>}
-                </AlertDialogHeader>
-                <AlertDialogFooter className="gap-2 sm:justify-between">
-                  <Button variant="ghost" onClick={cancelImport}>Cancel import</Button>
-                  <div className="flex flex-col-reverse gap-2 sm:flex-row">
-                    <AlertDialogCancel onClick={(e) => { e.preventDefault(); answerGstin('skip') }}>No, skip this record</AlertDialogCancel>
-                    <AlertDialogAction onClick={(e) => { e.preventDefault(); answerGstin('import') }}>Yes, import without GSTIN</AlertDialogAction>
-                  </div>
-                </AlertDialogFooter>
-              </>
-            )
-          })()}
-        </AlertDialogContent>
-      </AlertDialog>
+      <GstinDialog
+        item={gstinAsk?.items[gstinAsk.index] ?? null}
+        index={gstinAsk?.index ?? 0}
+        total={gstinAsk?.items.length ?? 0}
+        mode={gstinAsk?.mode ?? 'import'}
+        onYes={() => answerGstin('import')}
+        onNo={() => answerGstin('skip')}
+        onCancel={closeGstinDialog}
+      />
+      <WarnBeforeLeave active={phase === 'importing'} />
     </section>
   )
+}
+
+/** While an import runs, closing or reloading the browser tab asks first (the import would stop after the current part). */
+function WarnBeforeLeave({ active }: { active: boolean }) {
+  React.useEffect(() => {
+    if (!active) return
+    const onBefore = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', onBefore)
+    return () => window.removeEventListener('beforeunload', onBefore)
+  }, [active])
+  return null
 }
 
 /** Opening the workspace starts at the top of the page with the title focused, as a new page would. */
@@ -1100,38 +1150,6 @@ function FlowBar({ flow }: { flow: TallyFlow }) {
   )
 }
 
-function Stepper({ step }: { step: number }) {
-  return (
-    <>
-      <div className="pt-4 sm:hidden">
-        <p className="text-sm font-medium">Step {step} of {STEPS.length} · {STEPS[step - 1]}</p>
-        <div className="mt-2 grid grid-cols-4 gap-1.5" aria-hidden>
-          {STEPS.map((s, i) => <span key={s} className={cn('h-1.5 rounded-full transition-colors', i < step ? 'bg-primary' : 'bg-muted')} />)}
-        </div>
-      </div>
-      <ol className="hidden items-center gap-3 pt-6 sm:flex" aria-label="Import steps">
-        {STEPS.map((s, i) => {
-          const n = i + 1
-          const done = n < step
-          const current = n === step
-          return (
-            <li key={s} aria-current={current ? 'step' : undefined} className="flex flex-1 items-center gap-3 last:flex-none">
-              <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 text-xs font-semibold transition-colors',
-                done ? 'border-primary bg-primary text-primary-foreground' : current ? 'border-primary bg-success-soft text-success ring-4 ring-success-soft' : 'border-border text-muted-foreground')}>
-                {done ? <Check className="h-4 w-4" aria-hidden /> : n}
-              </span>
-              <span className={cn('whitespace-nowrap text-sm', current ? 'font-semibold text-foreground' : done ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                {s}<span className="sr-only">{done ? ' (done)' : current ? ' (current step)' : ''}</span>
-              </span>
-              {n < STEPS.length && <span className={cn('h-0.5 min-w-4 flex-1 rounded-full transition-colors', done ? 'bg-primary' : 'bg-border')} aria-hidden />}
-            </li>
-          )
-        })}
-      </ol>
-    </>
-  )
-}
-
 function periodText(o: PeriodOption | undefined) {
   if (!o) return '…'
   if (!o.ok) return o.message
@@ -1147,18 +1165,6 @@ function CompanyLine({ company, onChange }: { company: string; onChange: () => v
       </span>
       <p className="mr-auto min-w-0 text-xs text-muted-foreground">Tally company: <span className="block truncate text-base font-semibold text-foreground" title={company}>{company}</span></p>
       <Button variant="outline" size="sm" onClick={onChange} className="rounded-lg bg-background">Change company</Button>
-    </div>
-  )
-}
-
-function SummaryItem({ icon: Icon, label, wide, children }: { icon: React.ElementType; label: string; wide?: boolean; children: React.ReactNode }) {
-  return (
-    <div className={cn('flex min-w-0 items-start gap-3 bg-card px-4 py-3.5', wide && 'sm:col-span-2')}>
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-      <div className="min-w-0">
-        <dt className="text-xs text-muted-foreground">{label}</dt>
-        <dd className="mt-0.5 text-sm font-medium">{children}</dd>
-      </div>
     </div>
   )
 }

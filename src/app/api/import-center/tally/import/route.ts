@@ -103,11 +103,13 @@ export async function POST(req: Request) {
     }
     return ok({
       batch, batches, totalRecords: records.length, batchSize: TALLY_BATCH_ROWS,
-      // Every record waiting for a GSTIN answer is sent back (the user must be able to answer each); others are capped
+      // Every record waiting for a GSTIN answer is sent back (the user must be able to answer each); on preview the
+      // records ready to import are listed too (≤ one part of TALLY_BATCH_ROWS), for the review table; the rest of the
+      // rows that need attention stay capped at MAX_ROWS_BACK, as before. A commit's reply is unchanged.
       result: {
         ...result,
         rows: [
-          ...result.rows.filter((r) => r.status === 'confirm'),
+          ...result.rows.filter((r) => r.status === 'confirm' || (mode === 'preview' && r.status === 'ready')),
           ...result.rows.filter((r) => r.status !== 'ready' && r.status !== 'imported' && r.status !== 'confirm').slice(0, MAX_ROWS_BACK),
         ].sort((a, b) => a.line - b.line),
       },

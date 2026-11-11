@@ -1,11 +1,12 @@
 import { test, expect, loginFast, openModule } from '../support/fixtures'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import type { Store } from '../support/store'
 
 // Import from Tally (tally-import.tsx) against the mock connector in e2e/support/mock-api.ts, which answers with the
 // same shapes as the real routes. Real pairing, jobs and imports are covered by tests/tally-*.test.ts (bun, MySQL).
 
-const DATA = {
+type Json = Record<string, unknown>
+const DATA: Record<string, Json> = {
   'export-customers': { total: 5, ready: 3, duplicates: 1, errors: 1 },
   'export-suppliers': { total: 2, ready: 2, duplicates: 0, errors: 0 },
   'export-items': { total: 4, ready: 1, duplicates: 3, errors: 0 },
@@ -20,7 +21,7 @@ async function openTallyImport(page: Page, store: Store) {
   await openModule(page, 'Import Center')
   await page.getByRole('button', { name: 'Import from Tally' }).click()
   // a full workspace page beside the sidebar (no longer a dialog); the variable keeps its old name
-  const dialog = page.getByRole('region', { name: 'Import from Tally' })
+  const dialog = page.getByRole('region', { name: 'Tally Import Center' })
   await expect(dialog).toBeVisible()
   return dialog
 }
@@ -211,7 +212,7 @@ test.describe('Import from Tally — full workspace page', () => {
     tallyScenario(store, 'connected')
     const workspace = await openTallyImport(page, store)
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(workspace.getByRole('heading', { name: 'Import from Tally', level: 2 })).toBeFocused()
+    await expect(workspace.getByRole('heading', { name: 'Tally Import Center', level: 2 })).toBeFocused()
     await expect(workspace.getByRole('list', { name: 'Import steps' })).toBeVisible()
     await expect(page.getByRole('tab', { name: 'New Import' })).toHaveCount(0) // the workspace takes the Import Center content's place (the top bar still names the module)
     await expect(workspace.getByRole('heading', { name: 'Which Tally company?' })).toBeVisible({ timeout: 20_000 })
@@ -221,20 +222,20 @@ test.describe('Import from Tally — full workspace page', () => {
     await expect(page.getByRole('button', { name: 'Import from Tally' })).toBeVisible()
     // Escape leaves the workspace too, as it closed the dialog
     await page.getByRole('button', { name: 'Import from Tally' }).click()
-    await expect(page.getByRole('region', { name: 'Import from Tally' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Tally Import Center' })).toBeVisible()
     await page.keyboard.press('Escape')
-    await expect(page.getByRole('region', { name: 'Import from Tally' })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Tally Import Center' })).toHaveCount(0)
     // Escape that closes the command palette does not also leave the workspace
     await page.getByRole('button', { name: 'Import from Tally' }).click()
     await page.keyboard.press('Control+k')
     await expect(page.getByRole('dialog')).toHaveCount(1)
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(page.getByRole('region', { name: 'Import from Tally' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Tally Import Center' })).toBeVisible()
     // the sidebar is never covered: another module opens from it
     await page.getByRole('navigation', { name: 'ERP modules' }).getByRole('button', { name: 'Dashboard', exact: true }).click()
     await expect(page).toHaveTitle(/Dashboard · ManuFlow ERP/)
-    await expect(page.getByRole('region', { name: 'Import from Tally' })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Tally Import Center' })).toHaveCount(0)
   })
 
   test('no page scrolls sideways at phone width', async ({ page, store }) => {
@@ -268,7 +269,9 @@ test.describe('Import from Tally — GSTIN missing (one confirmation per record)
   test('preview lists them apart; YES imports, NO skips that record only; the answers reach the server', async ({ page, store }) => {
     const ws = await toReview(page, store)
     await expect(ws.getByTestId('tally-gstin-missing')).toContainText('GSTIN missing — confirmation required (2)')
-    await expect(ws.getByTestId('tally-gstin-missing')).toContainText('No GST Party A')
+    const reviewRow = (name: string) => ws.getByTestId('tally-review-row').filter({ hasText: name })
+    await expect(reviewRow('No GST Party A')).toContainText('GSTIN Missing')
+    await expect(reviewRow('No GST Party A')).toContainText('Confirmation required')
     await ws.getByRole('button', { name: 'Import data' }).click()
 
     const dialog = page.getByRole('alertdialog', { name: 'GSTIN Missing' })
@@ -306,6 +309,113 @@ test.describe('Import from Tally — GSTIN missing (one confirmation per record)
     await expect(dialog).toHaveCount(0)
     await expect(ws).toBeVisible()
     expect(commits(store)).toEqual([])
+  })
+})
+
+test.describe('Tally Import Center — review dashboard', () => {
+  async function toReview(page: Page, store: Store, data: Json = DATA) {
+    store.collections['tally-connector'] = [{ state: 'connected', companies: ['Shree & Sons Pvt Ltd'], data }]
+    const ws = await openTallyImport(page, store)
+    await ws.getByRole('radio', { name: /Shree & Sons/ }).click()
+    await ws.getByRole('button', { name: 'Next' }).click()
+    await ws.getByRole('button', { name: 'Select all' }).click()
+    await ws.getByLabel('New stock items are').selectOption({ index: 1 })
+    await ws.getByRole('button', { name: 'Next' }).click()
+    await expect(ws.getByRole('button', { name: 'Import data' })).toBeEnabled()
+    return ws
+  }
+  const card = (ws: Locator, key: string) => ws.getByTestId(`tally-card-${key}`)
+  const rows = (ws: Locator) => ws.getByTestId('tally-review-row')
+
+  test('cards show the preview counts; the stage indicator, type / status / search filters and the empty state work', async ({ page, store }) => {
+    const ws = await toReview(page, store)
+    await expect(ws.getByRole('list', { name: 'Import steps' }).locator('[aria-current="step"]')).toContainText('Review & Confirm')
+    // counts come from the preview: 11 records; 6 new, 4 already there, 1 invalid, no GSTIN question
+    await expect(card(ws, 'all')).toContainText('11')
+    await expect(card(ws, 'ready')).toContainText('6')
+    await expect(card(ws, 'gstin')).toContainText('0')
+    await expect(card(ws, 'existing')).toContainText('4')
+    await expect(card(ws, 'invalid')).toContainText('1')
+    await expect(card(ws, 'skip')).toContainText('0')
+    await expect(rows(ws)).toHaveCount(11)
+    await expect(rows(ws).filter({ hasText: 'Bad record 1' })).toContainText('Invalid')
+    await expect(rows(ws).filter({ hasText: 'Bad record 1' })).toContainText('GSTIN is not valid')
+    await expect(rows(ws).filter({ hasText: 'Existing Item 1' })).toContainText('Already Exists')
+    await expect(rows(ws).filter({ hasText: 'Ready Customer 1' })).toContainText('Ready to Import')
+    // data type filter
+    await ws.getByRole('group', { name: 'Data type' }).getByRole('button', { name: /Customers/ }).click()
+    await expect(rows(ws)).toHaveCount(5)
+    // a card filters by status, and clicking it again shows everything
+    await ws.getByRole('group', { name: 'Data type' }).getByRole('button', { name: /All/ }).click()
+    await card(ws, 'existing').click()
+    await expect(rows(ws)).toHaveCount(4)
+    await card(ws, 'existing').click()
+    await expect(rows(ws)).toHaveCount(11)
+    // search by name; nothing found → empty state with Clear filters
+    await ws.getByRole('textbox', { name: 'Search records' }).fill('ready supplier')
+    await expect(rows(ws)).toHaveCount(2)
+    await ws.getByRole('textbox', { name: 'Search records' }).fill('no such party')
+    await expect(ws.getByTestId('tally-review-empty')).toContainText('No records match these filters.')
+    await ws.getByTestId('tally-review-empty').getByRole('button', { name: 'Clear filters' }).click()
+    await expect(rows(ws)).toHaveCount(11)
+    // the summary panel repeats the same counts
+    await expect(ws.getByTestId('tally-side-summary')).toContainText(/Ready to import\s*6/)
+  })
+
+  test('per-record review, bulk skip, customers and suppliers kept apart; result screen and Import History', async ({ page, store }) => {
+    const ws = await toReview(page, store, {
+      ...DATA,
+      'export-customers': { total: 3, ready: 1, duplicates: 0, errors: 0, noGstin: ['No GST Party A', 'No GST Party B'] },
+      'export-suppliers': { total: 2, ready: 1, duplicates: 0, errors: 0, noGstin: ['No GST Supplier S'] },
+    })
+    await expect(card(ws, 'gstin')).toContainText('3')
+    await expect(ws.getByTestId('tally-action-status')).toContainText('3 GSTIN confirmations pending')
+    const row = (name: string) => rows(ws).filter({ hasText: name })
+    const dialog = page.getByRole('alertdialog', { name: 'GSTIN Missing' })
+
+    // review one record from the table: yes
+    await row('No GST Party A').getByRole('button', { name: 'Review No GST Party A' }).click()
+    await expect(dialog).toContainText('Are you sure you want to import this Customer without GSTIN?')
+    await dialog.getByRole('button', { name: 'Yes, Import without GSTIN' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(row('No GST Party A')).toContainText('Import without GSTIN')
+    // Close (from the table) keeps every answer and answers nothing
+    await row('No GST Party B').getByRole('button', { name: 'Review No GST Party B' }).click()
+    await dialog.getByRole('button', { name: 'Close' }).click()
+    await expect(row('No GST Party B')).toContainText('Confirmation required')
+    await expect(row('No GST Party A')).toContainText('Import without GSTIN')
+
+    // bulk: select the customer B and the supplier S, then skip them (an explicit no for each)
+    await row('No GST Party B').getByRole('checkbox').check()
+    await row('No GST Supplier S').getByRole('checkbox').check()
+    await expect(ws.getByTestId('tally-bulk')).toContainText('2 selected')
+    await ws.getByTestId('tally-bulk').getByRole('button', { name: 'Skip selected' }).click()
+    await expect(row('No GST Party B')).toContainText('Skipped')
+    await expect(row('No GST Supplier S')).toContainText('Skipped')
+    await expect(card(ws, 'skip')).toContainText('2')
+    await expect(ws.getByTestId('tally-action-status')).toContainText('0 GSTIN confirmations pending')
+
+    // every record answered: no dialog, straight to the final confirmation
+    await ws.getByRole('button', { name: 'Import data' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(ws.getByTestId('tally-confirm')).toContainText('1 imported with the GSTIN left empty, 2 skipped by you')
+    await ws.getByTestId('tally-confirm').getByRole('button', { name: 'Yes, import' }).click()
+
+    // the result comes from the server's replies; each data type got only its own answers
+    const result = ws.getByTestId('tally-result')
+    await expect(result).toContainText('Import finished')
+    await expect(ws.getByRole('list', { name: 'Import steps' }).locator('[aria-current="step"]')).toContainText('Result')
+    await expect(result.getByTestId('tally-result-card').filter({ hasText: 'Successfully Imported' })).toContainText('4') // 1 + 1 confirmed customers, 1 supplier, 1 item
+    await expect(result.getByTestId('tally-result-card').filter({ hasText: /^Skipped/ })).toContainText('2')
+    await expect(ws.getByTestId('tally-gstin-declined')).toContainText('No GST Party B')
+    await expect(ws.getByTestId('tally-gstin-declined')).toContainText('No GST Supplier S')
+    const byType = Object.fromEntries(commits(store).map((c) => [c.dataType, c.gstinDecisions]))
+    expect(byType.customers).toEqual({ 100: 'import', 101: 'skip' })
+    expect(byType.suppliers).toEqual({ 100: 'skip' })
+
+    await result.getByRole('button', { name: 'View Import History' }).click()
+    await expect(page.getByRole('region', { name: 'Tally Import Center' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true')
   })
 })
 

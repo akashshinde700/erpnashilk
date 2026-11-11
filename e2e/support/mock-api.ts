@@ -631,7 +631,20 @@ export function makeApi(store: Store) {
           col('tally-import-calls').push({ jobId: job.id, dataType: body?.dataType, mode: body?.mode, batch: body?.batch, tallyCompany: job.tallyCompany, gstinDecisions: body?.gstinDecisions })
           const d = tc.data?.[job.type] ?? { total: 0, ready: 0, duplicates: 0, errors: 0 }
           const commit = body?.mode === 'commit'
-          const rows: Json[] = Array.from({ length: d.errors }, (_, i) => ({ line: i + 2, status: 'error', messages: ['GSTIN is not valid'], warnings: [], values: { name: `Bad record ${i + 1}` } }))
+          // Lines as the real route numbers them (the record's place in the export + 2); synthetic names per data type.
+          // On preview the ready records are listed too (as the real route does); a commit lists only those needing attention.
+          const noun = job.type === 'export-suppliers' ? 'Supplier' : job.type === 'export-items' ? 'Item' : 'Customer'
+          const party = job.type !== 'export-items'
+          const rows: Json[] = Array.from({ length: d.errors }, (_, i) => ({ line: 30 + i, status: 'error', messages: ['GSTIN is not valid'], warnings: [], values: { name: `Bad record ${i + 1}` } }))
+          if (!commit) {
+            for (let i = 0; i < d.ready; i++) {
+              rows.push({ line: 2 + i, status: 'ready', messages: [], warnings: [], code: `${noun[0]}-${String(i + 1).padStart(4, '0')}`,
+                values: { name: `Ready ${noun} ${i + 1}`, ...(party && i % 2 === 0 ? { gstin: `27AAAAA${String(1000 + i)}A1Z5`, gstType: 'Regular' } : {}) } })
+            }
+          }
+          for (let i = 0; i < d.duplicates; i++) {
+            rows.push({ line: 60 + i, status: 'duplicate', messages: [`Duplicate name Existing ${noun} ${i + 1} — skipped`], warnings: [], values: { name: `Existing ${noun} ${i + 1}` } })
+          }
           // Parties without a GSTIN (same rules as the real route): 'confirm' on preview; on commit imported only when
           // gstinDecisions says 'import' for that line, 'declined' for 'skip', still 'confirm' (not imported) without an answer
           const noGstin: string[] = d.noGstin ?? []
@@ -645,8 +658,9 @@ export function makeApi(store: Store) {
             if (a === 'import') { yes++; return }
             if (a === 'skip') { declined++; rows.push({ line, status: 'declined', messages: ['Not imported: you chose not to import it without a GSTIN'], warnings: [], values: { name } }); return }
             confirm++
-            rows.push({ line, status: 'confirm', messages: ['GSTIN is not available for this party. Confirm to import it without a GSTIN.'], warnings: [], values: { name } })
+            rows.push({ line, status: 'confirm', messages: ['GSTIN is not available for this party. Confirm to import it without a GSTIN.'], warnings: [], values: { name, gstType: 'Regular' } })
           })
+          rows.sort((a, b) => Number(a.line) - Number(b.line))
           return ok({
             batch: body?.batch ?? 0, batches: 1, totalRecords: d.total, batchSize: 500,
             result: {
