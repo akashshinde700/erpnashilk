@@ -2,7 +2,7 @@ import { ApiError } from '@/lib/erp-helpers'
 import { applyMapping, type MappingOptions } from '@/lib/import/apply-mapping'
 import type { ImportDataType } from '@/lib/import/fields'
 import type { TableRow } from '@/lib/import/parse-file'
-import { importCustomers, type ImportSummary } from '@/lib/services/customer-import'
+import { importCustomers, type GstinConfirmation, type ImportSummary } from '@/lib/services/customer-import'
 import { importItems } from '@/lib/services/item-import'
 import { importSuppliers } from '@/lib/services/supplier-import'
 import { importOpeningStock, type StockReconciliation } from '@/lib/services/opening-stock-import'
@@ -14,7 +14,8 @@ import { previewOpeningBalances, type OpeningBalanceTotals } from '@/lib/service
  * preview reports is exactly what the commit would do with unchanged data.
  */
 
-export type RunRowStatus = 'ready' | 'duplicate' | 'error' | 'imported' | 'failed'
+// confirm: waiting for the user's yes / no to import it without a GSTIN (Tally); declined: the user said no
+export type RunRowStatus = 'ready' | 'duplicate' | 'error' | 'imported' | 'failed' | 'confirm' | 'declined'
 
 export interface RunRow {
   line: number
@@ -30,7 +31,7 @@ export interface RunResult {
   headers: string[]
   notes: string[]
   rows: RunRow[]
-  counts: { total: number; ready: number; imported: number; duplicates: number; errors: number; failed: number; withWarnings: number }
+  counts: { total: number; ready: number; imported: number; duplicates: number; errors: number; failed: number; withWarnings: number; confirm?: number; declined?: number }
   /** Opening stock: source vs posted, read back from the stock ledger after the import. */
   reconciliation?: StockReconciliation
   /** Opening balances: Dr / Cr / net totals of the matched rows, to compare with the source report. */
@@ -38,7 +39,7 @@ export interface RunResult {
 }
 
 const STATUS: Record<ImportSummary['results'][number]['status'], RunRowStatus> = {
-  ready: 'ready', imported: 'imported', skipped: 'duplicate', error: 'error', failed: 'failed',
+  ready: 'ready', imported: 'imported', skipped: 'duplicate', error: 'error', failed: 'failed', confirm: 'confirm', declined: 'declined',
 }
 
 export async function runImport(input: {
@@ -54,6 +55,8 @@ export async function runImport(input: {
   goLive?: Date
   /** Opening stock: reference stamped on every ledger row of this import. */
   importRef?: string
+  /** Import from Tally (customers / suppliers): the user's answer per row for parties without a GSTIN. */
+  gstinConfirm?: GstinConfirmation
 }): Promise<RunResult> {
   const mapped = applyMapping(input.dataType, input.table, input.headerRow, input.mapping, input.options)
   const { companyId, dryRun } = input
@@ -63,10 +66,10 @@ export async function runImport(input: {
   let summary: ImportSummary
   switch (input.dataType.key) {
     case 'customers':
-      summary = await importCustomers(companyId, rowsIn, { canWriteSuppliers: input.canWriteSuppliers, dryRun })
+      summary = await importCustomers(companyId, rowsIn, { canWriteSuppliers: input.canWriteSuppliers, dryRun, gstinConfirm: input.gstinConfirm })
       break
     case 'suppliers':
-      summary = await importSuppliers(companyId, rowsIn, { dryRun })
+      summary = await importSuppliers(companyId, rowsIn, { dryRun, gstinConfirm: input.gstinConfirm })
       break
     case 'items':
       summary = await importItems(companyId, rowsIn, { dryRun, autoCode: true })
@@ -108,6 +111,7 @@ export async function runImport(input: {
     counts: {
       total: rows.length, ready: count('ready'), imported: count('imported'), duplicates: count('duplicate'),
       errors: count('error'), failed: count('failed'), withWarnings: rows.filter((r) => r.warnings.length).length,
+      confirm: count('confirm'), declined: count('declined'),
     },
     reconciliation,
     balanceTotals,

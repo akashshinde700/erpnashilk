@@ -54,6 +54,9 @@ const STATUS_STYLE: Record<RunRowStatus, { cls: string; icon: typeof CheckCircle
   duplicate: { cls: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border', icon: Ban },
   error: { cls: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border', icon: XCircle },
   failed: { cls: 'bg-danger-soft text-destructive ring-1 ring-inset ring-danger-border', icon: XCircle },
+  // Import from Tally only (parties without a GSTIN); a file import never produces these
+  confirm: { cls: 'bg-warning-soft text-warning ring-1 ring-inset ring-warning-border', icon: Ban },
+  declined: { cls: 'bg-muted text-muted-foreground ring-1 ring-inset ring-border', icon: Ban },
 }
 
 interface Parsed {

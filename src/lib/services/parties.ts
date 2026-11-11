@@ -18,6 +18,8 @@ export interface CreateOptions {
   /** Write the per-record CREATE audit row (default true; bulk imports write one summary instead). */
   audit?: boolean
   userName?: string
+  /** The user confirmed importing this Regular / Composition / SEZ party without a GSTIN (see partyData). */
+  gstinMayBeMissing?: boolean
 }
 
 /** Party name: required, trimmed. */
@@ -30,7 +32,7 @@ export function partyName(body: Body): string {
 /** Create one customer or supplier. Blank code → next free C-0001 / S-0001 style code. */
 export async function createParty(tx: Tx, companyId: string, kind: PartyKind, body: Body, opts: CreateOptions = {}) {
   const name = partyName(body)
-  const profile = partyData(body, 'create')
+  const profile = partyData(body, 'create', { gstinMayBeMissing: opts.gstinMayBeMissing })
   const code = String(body.code || '').trim() || (await nextPartyCode(companyId, kind))
   const data = { companyId, code, name, ...profile, status: (body.status as string) || 'ACTIVE' }
   const created = kind === 'customer'
@@ -50,9 +52,9 @@ export async function createParty(tx: Tx, companyId: string, kind: PartyKind, bo
  * `creditLimitSupplier` for the supplier. `supplierCode` overrides the supplier's code when the
  * caller allocates codes itself (imports); otherwise both sides use `code` or their own next code.
  */
-export async function createBothParty(tx: Tx, companyId: string, body: Body) {
+export async function createBothParty(tx: Tx, companyId: string, body: Body, opts: { gstinMayBeMissing?: boolean } = {}) {
   const name = partyName(body)
-  const shared = partyData(body, 'create')
+  const shared = partyData(body, 'create', { gstinMayBeMissing: opts.gstinMayBeMissing })
   const code = String(body.code || '').trim()
   const supplierCode = String(body.supplierCode || '').trim()
   const supplier = await tx.supplier.create({

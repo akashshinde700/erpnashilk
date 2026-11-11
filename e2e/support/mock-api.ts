@@ -628,15 +628,30 @@ export function makeApi(store: Store) {
           const job = col('tally-jobs').find((j) => j.id === body?.jobId)
           if (!job) return fail('This Tally request was not found — start again', 'ERR', 404)
           if (body?.mode === 'commit' && body?.confirm !== true) return fail('Confirm the import first', 'ERR', 400)
-          col('tally-import-calls').push({ jobId: job.id, dataType: body?.dataType, mode: body?.mode, batch: body?.batch, tallyCompany: job.tallyCompany })
+          col('tally-import-calls').push({ jobId: job.id, dataType: body?.dataType, mode: body?.mode, batch: body?.batch, tallyCompany: job.tallyCompany, gstinDecisions: body?.gstinDecisions })
           const d = tc.data?.[job.type] ?? { total: 0, ready: 0, duplicates: 0, errors: 0 }
           const commit = body?.mode === 'commit'
-          const rows = Array.from({ length: d.errors }, (_, i) => ({ line: i + 2, status: 'error', messages: ['GSTIN is not valid'], warnings: [], values: { name: `Bad record ${i + 1}` } }))
+          const rows: Json[] = Array.from({ length: d.errors }, (_, i) => ({ line: i + 2, status: 'error', messages: ['GSTIN is not valid'], warnings: [], values: { name: `Bad record ${i + 1}` } }))
+          // Parties without a GSTIN (same rules as the real route): 'confirm' on preview; on commit imported only when
+          // gstinDecisions says 'import' for that line, 'declined' for 'skip', still 'confirm' (not imported) without an answer
+          const noGstin: string[] = d.noGstin ?? []
+          const answers = (commit && body?.gstinDecisions && typeof body.gstinDecisions === 'object') ? body.gstinDecisions as Record<string, string> : {}
+          let yes = 0
+          let declined = 0
+          let confirm = 0
+          noGstin.forEach((name, i) => {
+            const line = 100 + i
+            const a = answers[String(line)]
+            if (a === 'import') { yes++; return }
+            if (a === 'skip') { declined++; rows.push({ line, status: 'declined', messages: ['Not imported: you chose not to import it without a GSTIN'], warnings: [], values: { name } }); return }
+            confirm++
+            rows.push({ line, status: 'confirm', messages: ['GSTIN is not available for this party. Confirm to import it without a GSTIN.'], warnings: [], values: { name } })
+          })
           return ok({
             batch: body?.batch ?? 0, batches: 1, totalRecords: d.total, batchSize: 500,
             result: {
               headers: [], notes: [], rows,
-              counts: { total: d.total, ready: commit ? 0 : d.ready, imported: commit ? d.ready : 0, duplicates: d.duplicates, errors: d.errors, failed: 0, withWarnings: 0 },
+              counts: { total: d.total, ready: commit ? 0 : d.ready, imported: commit ? d.ready + yes : 0, duplicates: d.duplicates, errors: d.errors, failed: 0, withWarnings: 0, confirm, declined },
             },
           })
         }

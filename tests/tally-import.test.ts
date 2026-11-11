@@ -9,6 +9,8 @@ import { POST as heartbeatRoute } from '@/app/api/tally-connector/heartbeat/rout
 import { POST as pairRoute } from '@/app/api/tally-connector/pair/route'
 import { POST as resultRoute } from '@/app/api/tally-connector/result/route'
 import { db } from '@/lib/db'
+import { partyData } from '@/lib/party'
+import { importCustomers } from '@/lib/services/customer-import'
 import { JOB_RUN_LIMIT_MS } from '@/lib/tally/connector'
 import * as connector from '../connector/tally/manuflow-tally-connector.mjs'
 import { apiRequest, call, type TestUser } from './helpers/api'
@@ -21,6 +23,9 @@ type TallyMode = 'ok' | 'no-companies' | 'line-error' | 'utf16' | 'html' | 'slow
 let mode: TallyMode = 'ok'
 let debtorCount = 3
 const bodies: string[] = []
+// A test's own debtor / creditor ledgers (synthetic), replacing the defaults when set
+let customDebtors: string | null = null
+let customCreditors: string | null = null
 
 function partyXml(i: number) {
   // Alternate the older flat fields and the TallyPrime 3+ nested lists
@@ -42,8 +47,9 @@ function reply(id: string): string {
         '<COMPANY NAME="Shree &amp; Sons Pvt Ltd"><NAME>Shree &amp; Sons Pvt Ltd</NAME><STARTINGFROM TYPE="Date">20260401</STARTINGFROM><BOOKSFROM TYPE="Date">20240401</BOOKSFROM></COMPANY>' +
         '<COMPANY NAME="Trial Co&#4;"><STARTINGFROM>20250401</STARTINGFROM></COMPANY>')
     case 'ManuFlowDebtors':
-      return wrap(Array.from({ length: debtorCount }, (_, i) => partyXml(i + 1)).join(''))
+      return wrap(customDebtors ?? Array.from({ length: debtorCount }, (_, i) => partyXml(i + 1)).join(''))
     case 'ManuFlowCreditors':
+      if (customCreditors !== null) return wrap(customCreditors)
       return wrap('<LEDGER NAME="Steel Traders"><GUID>g-c-1</GUID><PARTYGSTIN>24AAACS1234A1Z5</PARTYGSTIN><GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE><INCOMETAXNUMBER>AAACS1234A</INCOMETAXNUMBER></LEDGER>')
     case 'ManuFlowStockItems':
       return wrap(
@@ -100,6 +106,8 @@ beforeEach(async () => {
   process.env.TALLY_CONNECTOR_POC = '1'
   mode = 'ok'
   debtorCount = 3
+  customDebtors = null
+  customCreditors = null
   bodies.length = 0
 })
 
@@ -431,5 +439,139 @@ describe('import through the Import Center pipeline', () => {
       expect(b).toContain('<TALLYREQUEST>Export</TALLYREQUEST>')
       expect(b).not.toMatch(/<TALLYREQUEST>(?!Export)/)
     }
+  })
+})
+
+// ---------------------------------------------------------------- GSTIN missing: confirmation per record
+
+/** A party ledger as Tally sends it; registration type and GSTIN only when given (all synthetic). */
+function ledger(name: string, guid: string, opts: { type?: string; gstin?: string; mobile?: string } = {}) {
+  return `<LEDGER NAME="${name}"><GUID>${guid}</GUID>` +
+    (opts.type ? `<GSTREGISTRATIONTYPE>${opts.type}</GSTREGISTRATIONTYPE>` : '') +
+    (opts.gstin ? `<PARTYGSTIN>${opts.gstin}</PARTYGSTIN>` : '') +
+    (opts.mobile ? `<LEDGERMOBILE>${opts.mobile}</LEDGERMOBILE>` : '') + '</LEDGER>'
+}
+
+describe('GSTIN missing in Tally: imported only after a yes for that record', () => {
+  // Lines are the record's place in the export + 2 (line 1 is the header), which is how the answers are keyed
+  const DEBTORS = [
+    ledger('No GST Debtor A', 'g-ng-a', { type: 'Regular' }), // line 2: Regular, no GSTIN → needs an answer
+    ledger('No GST Debtor B', 'g-ng-b', { type: 'Regular' }), // line 3: Regular, no GSTIN → needs an answer
+    ledger('With GST Debtor', 'g-ng-c', { type: 'Regular', gstin: '27AAPFU0939F1Z1' }), // line 4: valid → ready
+    ledger('Bad Phone Debtor', 'g-ng-d', { type: 'Regular', mobile: '123' }), // line 5: other error stays an error
+    ledger('Unregistered Debtor', 'g-ng-e'), // line 6: no type, no GSTIN → unregistered, imported as before
+  ].join('')
+  const CREDITORS = [
+    ledger('No GST Supplier Y', 'g-ns-y', { type: 'Regular' }), // line 2
+    ledger('No GST Supplier N', 'g-ns-n', { type: 'Composition' }), // line 3
+    ledger('With GST Supplier', 'g-ns-ok', { type: 'Regular', gstin: '24AAACS1234A1Z5' }), // line 4
+  ].join('')
+
+  async function exportedParties(type: 'export-customers' | 'export-suppliers') {
+    const l = await linked()
+    await companies(l)
+    const j = await runJob(l, type, 'Shree & Sons Pvt Ltd')
+    expect(j.status).toBe('done')
+    return { l, j }
+  }
+  const commit = (l: Linked, jobId: string, dataType: string, gstinDecisions?: unknown) =>
+    importBatch(l.user, { jobId, dataType, mode: 'commit', batch: 0, confirm: true, ...(gstinDecisions !== undefined ? { gstinDecisions } : {}) })
+  type Row = { line: number; status: string; messages: string[] }
+  const rowOf = (res: { json: { data?: { result?: { rows?: Row[] } } } }, line: number) =>
+    res.json.data?.result?.rows?.find((r) => r.line === line)
+
+  test('preview: GSTIN-less Regular parties wait for an answer (not an error); others unchanged; nothing written', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    const p = await importBatch(l.user, { jobId: j.id, dataType: 'customers', mode: 'preview', batch: 0, gstinDecisions: { 2: 'import' } })
+    expect(p.status).toBe(200)
+    // answers are ignored on preview: both still wait
+    expect(p.json.data.result.counts).toMatchObject({ total: 5, ready: 2, confirm: 2, errors: 1, declined: 0 })
+    expect(rowOf(p, 2)).toMatchObject({ status: 'confirm' })
+    expect(rowOf(p, 2)!.messages.join(' ')).toContain('GSTIN is not available for this party.')
+    expect(rowOf(p, 3)).toMatchObject({ status: 'confirm' })
+    expect(rowOf(p, 5)).toMatchObject({ status: 'error' }) // the phone rule still applies
+    expect(rowOf(p, 5)!.messages.join(' ')).toContain('10-digit')
+    expect(JSON.stringify(p.json.data.result.rows)).not.toContain('GSTIN is required')
+    expect(await db.customer.count({ where: { companyId: l.companyId } })).toBe(0)
+  })
+
+  test('customers: YES imports with GSTIN empty and the GST type kept; NO skips only that record; mixed in one import', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    const c = await commit(l, j.id, 'customers', { 2: 'import', 3: 'skip' })
+    expect(c.status).toBe(200)
+    expect(c.json.data.result.counts).toMatchObject({ imported: 3, declined: 1, confirm: 0, errors: 1 })
+    expect(rowOf(c, 3)).toMatchObject({ status: 'declined' })
+    const saved = await db.customer.findMany({ where: { companyId: l.companyId }, orderBy: { name: 'asc' } })
+    expect(saved.map((s) => s.name)).toEqual(['No GST Debtor A', 'Unregistered Debtor', 'With GST Debtor'])
+    const a = saved.find((s) => s.name === 'No GST Debtor A')!
+    expect(a.gstin).toBeNull() // nothing invented
+    expect(a.gstType).toBe('REGULAR') // the type from Tally is kept, not changed to Unregistered
+    expect(saved.find((s) => s.name === 'With GST Debtor')!.gstin).toBe('27AAPFU0939F1Z1')
+    expect(saved.find((s) => s.name === 'Unregistered Debtor')!.gstType).toBe('UNREGISTERED')
+    const history = await db.auditLog.findFirst({ where: { companyId: l.companyId, action: 'IMPORT' } })
+    expect(history?.details).toContain('1 skipped by the user (no GSTIN)')
+  })
+
+  test('suppliers: YES imports without GSTIN, NO skips it; a supplier with a GSTIN imports as before', async () => {
+    customCreditors = CREDITORS
+    const { l, j } = await exportedParties('export-suppliers')
+    const p = await importBatch(l.user, { jobId: j.id, dataType: 'suppliers', mode: 'preview', batch: 0 })
+    expect(p.json.data.result.counts).toMatchObject({ ready: 1, confirm: 2 })
+    const c = await commit(l, j.id, 'suppliers', { 2: 'import', 3: 'skip' })
+    expect(c.json.data.result.counts).toMatchObject({ imported: 2, declined: 1, confirm: 0 })
+    const saved = await db.supplier.findMany({ where: { companyId: l.companyId }, orderBy: { name: 'asc' } })
+    expect(saved.map((s) => [s.name, s.gstin, s.gstType])).toEqual([
+      ['No GST Supplier Y', null, 'REGULAR'],
+      ['With GST Supplier', '24AAACS1234A1Z5', 'REGULAR'],
+    ])
+  })
+
+  test('cancelled import / no answer: a GSTIN-less record is never imported; the rest of the batch is', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    const c = await commit(l, j.id, 'customers') // no answers at all
+    expect(c.json.data.result.counts).toMatchObject({ imported: 2, confirm: 2, declined: 0 })
+    expect(await db.customer.count({ where: { companyId: l.companyId, name: { startsWith: 'No GST' } } })).toBe(0)
+    const history = await db.auditLog.findFirst({ where: { companyId: l.companyId, action: 'IMPORT' } })
+    expect(history?.details).toContain('2 not imported (no GSTIN, not confirmed)')
+  })
+
+  test('duplicates and repeated clicks: the same record is never imported twice; an existing party is not asked about', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    // an existing customer with the name of record B: reported as already there, no question asked
+    await db.customer.create({ data: { companyId: l.companyId, code: 'C-9001', name: 'No GST Debtor B' } })
+    const p = await importBatch(l.user, { jobId: j.id, dataType: 'customers', mode: 'preview', batch: 0 })
+    expect(rowOf(p, 3)).toMatchObject({ status: 'duplicate' })
+    expect(p.json.data.result.counts.confirm).toBe(1)
+    // the same commit twice (double click / retry): imported once, then skipped as already imported
+    const first = await commit(l, j.id, 'customers', { 2: 'import' })
+    expect(first.json.data.result.counts.imported).toBe(3)
+    const again = await commit(l, j.id, 'customers', { 2: 'import' })
+    expect(again.json.data.result.counts.imported).toBe(0)
+    expect(rowOf(again, 2)).toMatchObject({ status: 'duplicate' })
+    expect(await db.customer.count({ where: { companyId: l.companyId, name: 'No GST Debtor A' } })).toBe(1)
+  })
+
+  test('answers are checked: anything but line → import | skip is refused, and nothing is imported', async () => {
+    customDebtors = DEBTORS
+    const { l, j } = await exportedParties('export-customers')
+    for (const bad of [{ 2: 'yes' }, { abc: 'import' }, { 1: 'import' }, ['import'], 'import']) {
+      const r = await commit(l, j.id, 'customers', bad)
+      expect(r.status).toBe(400)
+    }
+    expect(await db.customer.count({ where: { companyId: l.companyId } })).toBe(0)
+  })
+
+  test('the rule itself is unchanged elsewhere: the party form and file imports still require a GSTIN for Regular', async () => {
+    expect(() => partyData({ name: 'X', gstType: 'REGULAR' }, 'create')).toThrow('GSTIN is required for Regular parties')
+    expect(() => partyData({ name: 'X', gstType: 'COMPOSITION' }, 'create')).toThrow('GSTIN is required for Composition parties')
+    expect(() => partyData({ name: 'X', gstType: 'REGULAR', gstin: 'BADGSTIN' }, 'create', { gstinMayBeMissing: true })).toThrow('GSTIN is not valid')
+    const { company } = await seedTenant()
+    const r = await importCustomers(company.id, [{ row: 2, data: { name: 'File Party', gstType: 'REGULAR' } }], { canWriteSuppliers: true, dryRun: true })
+    expect(r.results[0]).toMatchObject({ status: 'error' })
+    expect(r.results[0].message).toContain('GSTIN is required for Regular parties')
   })
 })

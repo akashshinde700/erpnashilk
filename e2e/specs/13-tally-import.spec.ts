@@ -251,6 +251,64 @@ test.describe('Import from Tally — full workspace page', () => {
   })
 })
 
+test.describe('Import from Tally — GSTIN missing (one confirmation per record)', () => {
+  // Synthetic parties: one with a GSTIN (ready) and two whose GST type needs one that Tally does not have
+  const GST_DATA = { ...DATA, 'export-customers': { total: 3, ready: 1, duplicates: 0, errors: 0, noGstin: ['No GST Party A', 'No GST Party B'] } }
+  async function toReview(page: Page, store: Store) {
+    store.collections['tally-connector'] = [{ state: 'connected', companies: ['Shree & Sons Pvt Ltd'], data: GST_DATA }]
+    const ws = await openTallyImport(page, store)
+    await ws.getByRole('radio', { name: /Shree & Sons/ }).click()
+    await ws.getByRole('button', { name: 'Next' }).click()
+    await ws.getByRole('checkbox', { name: 'Customers', exact: true }).click()
+    await ws.getByRole('button', { name: 'Next' }).click()
+    await expect(ws.getByRole('button', { name: 'Import data' })).toBeEnabled()
+    return ws
+  }
+
+  test('preview lists them apart; YES imports, NO skips that record only; the answers reach the server', async ({ page, store }) => {
+    const ws = await toReview(page, store)
+    await expect(ws.getByTestId('tally-gstin-missing')).toContainText('GSTIN missing — confirmation required (2)')
+    await expect(ws.getByTestId('tally-gstin-missing')).toContainText('No GST Party A')
+    await ws.getByRole('button', { name: 'Import data' }).click()
+
+    const dialog = page.getByRole('alertdialog', { name: 'GSTIN Missing' })
+    await expect(dialog).toContainText('The GSTIN for No GST Party A is not available in Tally. Are you sure you want to import this Customer without GSTIN?')
+    await expect(dialog).toContainText('Record 1 of 2')
+    await dialog.getByRole('button', { name: 'Yes, import without GSTIN' }).click()
+    await expect(dialog).toContainText('No GST Party B')
+    await dialog.getByRole('button', { name: 'No, skip this record' }).click()
+    await expect(dialog).toHaveCount(0)
+
+    const confirm = ws.getByTestId('tally-confirm')
+    await expect(confirm).toContainText('Import 2 new records')
+    await expect(confirm).toContainText('1 imported with the GSTIN left empty, 1 skipped by you')
+    expect(commits(store)).toEqual([])
+    await confirm.getByRole('button', { name: 'Yes, import' }).click()
+    await expect(ws.getByText('Import finished')).toBeVisible()
+    await expect(ws.getByText(/2 imported · 0 already in ManuFlow \(skipped\) · 0 not imported · 1 skipped by you \(no GSTIN\)/)).toBeVisible()
+    await expect(ws.getByTestId('tally-gstin-declined')).toContainText('No GST Party B')
+    expect(commits(store).map((c) => c.gstinDecisions)).toEqual([{ 100: 'import', 101: 'skip' }])
+  })
+
+  test('cancelling the import imports nothing and asks again next time', async ({ page, store }) => {
+    const ws = await toReview(page, store)
+    await ws.getByRole('button', { name: 'Import data' }).click()
+    const dialog = page.getByRole('alertdialog', { name: 'GSTIN Missing' })
+    await dialog.getByRole('button', { name: 'Yes, import without GSTIN' }).click()
+    await dialog.getByRole('button', { name: 'Cancel import' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(ws.getByTestId('tally-confirm')).toHaveCount(0)
+    expect(commits(store)).toEqual([])
+    // Escape cancels too, and the workspace stays open
+    await ws.getByRole('button', { name: 'Import data' }).click()
+    await expect(dialog).toContainText('No GST Party A') // the earlier answer was dropped with the cancel
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(ws).toBeVisible()
+    expect(commits(store)).toEqual([])
+  })
+})
+
 test.describe('Import from Tally — automatic connection', () => {
   const tc = (store: Store) => store.collections['tally-connector'][0]
 

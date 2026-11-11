@@ -40,7 +40,26 @@ function num(v: unknown, label: string, opts: { min?: number; int?: boolean } = 
 
 type Body = Record<string, unknown>
 
-export function partyData(body: Body, mode: 'create' | 'update') {
+/** The GST type a party ends up with: the one given, else Regular when a GSTIN is given, else Unregistered. */
+function effectiveGstType(body: Body): string {
+  const given = text(body.gstType)?.toUpperCase() ?? null
+  return given ?? (text(body.gstin) ? 'REGULAR' : 'UNREGISTERED')
+}
+
+/**
+ * True when the party's GST type needs a GSTIN (Regular, Composition, SEZ) but none is given — the case partyData
+ * refuses unless the caller passes `gstinMayBeMissing` after the user explicitly confirmed it (Tally import).
+ */
+export function gstinRequiredButMissing(body: Body): boolean {
+  return !!GSTIN_NEEDED[effectiveGstType(body)] && !text(body.gstin)
+}
+
+/**
+ * opts.gstinMayBeMissing: accept a Regular / Composition / SEZ party without a GSTIN. Only for a record the user
+ * explicitly confirmed (Import from Tally, where Tally itself has no GSTIN for the party); the GST type is kept as
+ * given, nothing is invented. Every other check (GSTIN format when one is given, PAN, phone, …) still applies.
+ */
+export function partyData(body: Body, mode: 'create' | 'update', opts: { gstinMayBeMissing?: boolean } = {}) {
   const has = (k: string) => mode === 'create' || body[k] !== undefined
   const out: Record<string, string | number | null> = {}
 
@@ -65,7 +84,7 @@ export function partyData(body: Body, mode: 'create' | 'update') {
     // Default on create (or when cleared): registered when a GSTIN is given.
     const type = t ?? (typeof out.gstin === 'string' ? 'REGULAR' : 'UNREGISTERED')
     // Only enforced when the GSTIN is part of this request (an update may change just the type).
-    if (GSTIN_NEEDED[type] && out.gstin === null) throw new ApiError(`GSTIN is required for ${GSTIN_NEEDED[type]} parties`, 400)
+    if (GSTIN_NEEDED[type] && out.gstin === null && !opts.gstinMayBeMissing) throw new ApiError(`GSTIN is required for ${GSTIN_NEEDED[type]} parties`, 400)
     out.gstType = type
   }
   if (has('stateCode') && out.stateCode === undefined) {

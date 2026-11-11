@@ -7,6 +7,9 @@ import {
   FileSpreadsheet, Info, Loader2, Lock, Package, RefreshCw, Search, Square, Tags, Truck, Upload, Users, XCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -69,9 +72,18 @@ interface CatState {
   preview: Counts
   done: Counts
   problems: RunRow[]
+  /** Parties for which Tally has no GSTIN although their GST type needs one: imported only after a yes per record */
+  gstinMissing: RunRow[]
+  /** Parties the user chose not to import without a GSTIN (from the import's own answer) */
+  declinedRows: RunRow[]
 }
-type Counts = { ready: number; duplicates: number; problems: number; imported: number }
-const ZERO: Counts = { ready: 0, duplicates: 0, problems: 0, imported: 0 }
+// confirm = waiting for a GSTIN yes / no; declined = the user said no
+type Counts = { ready: number; duplicates: number; problems: number; imported: number; confirm: number; declined: number }
+const ZERO: Counts = { ready: 0, duplicates: 0, problems: 0, imported: 0, confirm: 0, declined: 0 }
+type GstinAnswer = 'import' | 'skip'
+/** One record awaiting its GSTIN answer: kind + its line in the Tally export (the server's key) + name to show */
+interface GstinAsk { kind: Kind; line: number; name: string }
+const gstinKey = (kind: Kind, line: number) => `${kind}:${line}`
 type Phase = 'idle' | 'reading' | 'checking' | 'ready' | 'importing' | 'done' | 'stopped' | 'failed'
 interface BatchReply { batch: number; batches: number; totalRecords: number; result: RunResult }
 
@@ -116,6 +128,9 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const [progress, setProgress] = React.useState({ done: 0, total: 0 })
   const [runError, setRunError] = React.useState('')
   const [confirming, setConfirming] = React.useState(false)
+  // GSTIN missing: the user's answer per record (kind:line), and the records still being asked about (one dialog each)
+  const [gstinAnswers, setGstinAnswers] = React.useState<Record<string, GstinAnswer>>({})
+  const [gstinAsk, setGstinAsk] = React.useState<{ items: GstinAsk[]; index: number } | null>(null)
   const [importStarted, setImportStarted] = React.useState(false)
   const [timing, setTiming] = React.useState<{ start: number; end: number | null } | null>(null)
   const [, setTick] = React.useState(0)
@@ -291,7 +306,9 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     setConfirming(false)
     setImportStarted(false)
     setTiming(null)
-    const list: CatState[] = selected.map((k) => ({ kind: k.kind, read: 'waiting', batches: 0, preview: { ...ZERO }, done: { ...ZERO }, problems: [] }))
+    setGstinAnswers({})
+    setGstinAsk(null)
+    const list: CatState[] = selected.map((k) => ({ kind: k.kind, read: 'waiting', batches: 0, preview: { ...ZERO }, done: { ...ZERO }, problems: [], gstinMissing: [], declinedRows: [] }))
     setCats(list)
     try {
       setPhase('reading')
@@ -312,6 +329,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
         const label = KINDS.find((k) => k.kind === c.kind)!.label.toLowerCase()
         const counts = { ...ZERO }
         const problems: RunRow[] = []
+        const gstinMissing: RunRow[] = []
         let batches = 1
         for (let b = 0; b < batches; b++) {
           if (stopRef.current) throw new Stopped()
@@ -321,9 +339,11 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           counts.ready += r.result.counts.ready
           counts.duplicates += r.result.counts.duplicates
           counts.problems += r.result.counts.errors + r.result.counts.failed
+          counts.confirm += r.result.counts.confirm ?? 0
           problems.push(...r.result.rows.filter((x) => x.status === 'error' || x.status === 'failed'))
+          gstinMissing.push(...r.result.rows.filter((x) => x.status === 'confirm'))
         }
-        patch(c.kind, { preview: counts, batches, problems })
+        patch(c.kind, { preview: counts, batches, problems, gstinMissing })
       }
       setPhase('ready')
       setStage('')
@@ -348,8 +368,10 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
     setImportStarted(true)
     const startedAt = Date.now()
     setTiming({ start: startedAt, end: null })
-    const todo = cats.filter((c) => c.read === 'done' && c.preview.ready > 0)
-    const total = todo.reduce((s, c) => s + c.preview.ready + c.preview.duplicates + c.preview.problems, 0)
+    // A part with only GSTIN-less records is sent too: the server imports or skips each one by the user's answer
+    const todo = cats.filter((c) => c.read === 'done' && (c.preview.ready > 0 || c.gstinMissing.length > 0))
+    const total = todo.reduce((s, c) => s + c.preview.ready + c.preview.duplicates + c.preview.problems + c.preview.confirm, 0)
+    const answers = gstinAnswers
     let processed = 0
     setProgress({ done: 0, total })
     setPhase('importing')
@@ -358,17 +380,26 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
         const label = KINDS.find((k) => k.kind === c.kind)!.label.toLowerCase()
         const counts = { ...ZERO }
         const problems: RunRow[] = []
+        const declinedRows: RunRow[] = []
+        // { line: 'import' | 'skip' } for this data type; a record without an answer is never imported by the server
+        const gstinDecisions = Object.fromEntries(c.gstinMissing.flatMap((r) => {
+          const a = answers[gstinKey(c.kind, r.line)]
+          return a ? [[String(r.line), a]] : []
+        }))
         for (let b = 0; b < c.batches; b++) {
           if (stopRef.current) throw new Stopped()
           setStage(`Importing ${label}${c.batches > 1 ? ` (part ${b + 1} of ${c.batches})` : ''}…`)
-          const r = await apiPost<BatchReply>('/api/import-center/tally/import', { companyId, jobId: c.jobId, dataType: c.kind, mode: 'commit', batch: b, options: options(c.kind), confirm: true })
+          const r = await apiPost<BatchReply>('/api/import-center/tally/import', { companyId, jobId: c.jobId, dataType: c.kind, mode: 'commit', batch: b, options: options(c.kind), confirm: true, gstinDecisions })
           counts.imported += r.result.counts.imported
           counts.duplicates += r.result.counts.duplicates
           counts.problems += r.result.counts.errors + r.result.counts.failed
+          counts.confirm += r.result.counts.confirm ?? 0
+          counts.declined += r.result.counts.declined ?? 0
           problems.push(...r.result.rows.filter((x) => x.status === 'error' || x.status === 'failed'))
+          declinedRows.push(...r.result.rows.filter((x) => x.status === 'declined'))
           processed += r.result.counts.total
           setProgress({ done: processed, total })
-          patch(c.kind, { done: { ...counts }, problems })
+          patch(c.kind, { done: { ...counts }, problems, declinedRows })
         }
       }
       setPhase('done')
@@ -407,7 +438,37 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   // After an import has started, the table shows what was imported instead of what would be
   const afterImport = phase === 'importing' || phase === 'done' || (phase === 'stopped' && sum((c) => c.done.imported + c.done.duplicates + c.done.problems) > 0)
   const counted = phase !== 'reading' && phase !== 'checking' && phase !== 'idle'
-  const totals = { imported: sum((c) => c.done.imported), skipped: sum((c) => c.done.duplicates), failed: sum((c) => c.done.problems) }
+  const totals = {
+    imported: sum((c) => c.done.imported), skipped: sum((c) => c.done.duplicates), failed: sum((c) => c.done.problems),
+    declined: sum((c) => c.done.declined), unanswered: sum((c) => c.done.confirm),
+  }
+  // GSTIN missing: records waiting for an answer, and what the user answered so far
+  const gstinMissingAll: GstinAsk[] = cats.flatMap((c) => c.gstinMissing.map((r) => ({ kind: c.kind, line: r.line, name: String(r.values.name ?? '') })))
+  const gstinYes = gstinMissingAll.filter((g) => gstinAnswers[gstinKey(g.kind, g.line)] === 'import').length
+  const gstinNo = gstinMissingAll.filter((g) => gstinAnswers[gstinKey(g.kind, g.line)] === 'skip').length
+  const previewReady = sum((c) => c.preview.ready)
+  const canImport = previewReady > 0 || gstinMissingAll.length > 0
+
+  /** "Import data": every record without a GSTIN is asked about first (one dialog each), then the import is confirmed. */
+  function startImport() {
+    const unanswered = gstinMissingAll.filter((g) => !gstinAnswers[gstinKey(g.kind, g.line)])
+    if (unanswered.length) setGstinAsk({ items: unanswered, index: 0 })
+    else setConfirming(true)
+  }
+  function answerGstin(answer: GstinAnswer) {
+    if (!gstinAsk) return
+    const item = gstinAsk.items[gstinAsk.index]
+    if (!item) return
+    setGstinAnswers((a) => ({ ...a, [gstinKey(item.kind, item.line)]: answer }))
+    if (gstinAsk.index + 1 < gstinAsk.items.length) setGstinAsk({ ...gstinAsk, index: gstinAsk.index + 1 })
+    else { setGstinAsk(null); setConfirming(true) }
+  }
+  /** Cancel the whole import: nothing is imported, and every GSTIN answer is asked again next time. */
+  function cancelImport() {
+    setGstinAsk(null)
+    setGstinAnswers({})
+    setConfirming(false)
+  }
   const percent = phase === 'done' ? 100 : progress.total ? Math.min(99, Math.floor((progress.done / progress.total) * 100)) : 0
   const lostConnection = step > 1 && conn && conn.state !== 'connected'
   const flow = tallyFlow(conn, { listing, companies, error: listError })
@@ -785,6 +846,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                     <Stat label="Imported" value={totals.imported} tone="text-success" />
                     <Stat label="Skipped (already in ManuFlow)" value={totals.skipped} />
                     <Stat label="Not imported" value={totals.failed} tone={totals.failed ? 'text-warning' : undefined} />
+                    {totals.declined > 0 && <Stat label="Skipped by you (no GSTIN)" value={totals.declined} />}
                     <Stat label="Time" value={timing ? elapsed((timing.end ?? Date.now()) - timing.start) : '—'} />
                   </dl>
                 </div>
@@ -799,6 +861,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                       <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4">{afterImport ? 'Imported' : 'New'}</th>
                       <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4"><span className="sm:hidden">Existing</span><span className="hidden sm:inline">Already in ManuFlow</span></th>
                       <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4"><span className="sm:hidden">Issues</span><span className="hidden sm:inline">Need attention</span></th>
+                      <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4">{afterImport ? 'Skipped by you' : <><span className="sm:hidden">No GSTIN</span><span className="hidden sm:inline">GSTIN missing</span></>}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -817,6 +880,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                           <td className="px-3 py-3.5 text-right font-medium tabular-nums text-success sm:px-4">{show ? (afterImport ? n.imported : n.ready) : '—'}</td>
                           <td className="px-3 py-3.5 text-right tabular-nums sm:px-4">{show ? n.duplicates : '—'}</td>
                           <td className={cn('px-3 py-3.5 text-right tabular-nums sm:px-4', n.problems > 0 && 'font-medium text-warning')}>{show ? n.problems : '—'}</td>
+                          <td className={cn('px-3 py-3.5 text-right tabular-nums sm:px-4', !afterImport && n.confirm > 0 && 'font-medium text-warning')}>{show ? (afterImport ? n.declined : n.confirm) : '—'}</td>
                         </tr>
                       )
                     })}
@@ -824,18 +888,36 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </table>
               </div>
 
-              {phase === 'ready' && sum((c) => c.preview.ready) === 0 && (
+              {phase === 'ready' && !canImport && (
                 <p className="rounded-xl border bg-muted/30 px-4 py-3 text-sm">Nothing new to import{sum((c) => c.preview.duplicates) ? ' — everything is already in ManuFlow' : ''}.</p>
               )}
-              {phase === 'ready' && sum((c) => c.preview.ready) > 0 && (
+              {phase === 'ready' && canImport && (
                 <p className="text-sm text-muted-foreground">Existing ManuFlow records are never changed: matching names are skipped. Rows that need attention are not imported and are listed below.</p>
+              )}
+              {gstinMissingAll.length > 0 && (phase === 'ready' || phase === 'stopped' || phase === 'failed') && (
+                <div className="space-y-2 rounded-xl border border-warning-border bg-warning-soft px-4 py-3" data-testid="tally-gstin-missing">
+                  <p className="flex items-center gap-2 text-sm font-medium"><AlertTriangle className="h-4 w-4 text-warning" aria-hidden /> GSTIN missing — confirmation required ({gstinMissingAll.length})</p>
+                  <p className="text-xs text-muted-foreground">Tally has no GSTIN for these parties although their GST type needs one. When you import, you are asked for each one whether to import it without a GSTIN.</p>
+                  <ul className="divide-y rounded-lg border bg-background text-sm">
+                    {gstinMissingAll.slice(0, 100).map((g) => {
+                      const a = gstinAnswers[gstinKey(g.kind, g.line)]
+                      return (
+                        <li key={gstinKey(g.kind, g.line)} className="flex flex-wrap items-center gap-x-2 px-3 py-2">
+                          <span className="font-medium">{g.name || '—'}</span>
+                          <span className="text-muted-foreground">· {g.kind === 'suppliers' ? 'Supplier' : 'Customer'}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">{a === 'import' ? 'Import without GSTIN' : a === 'skip' ? 'Skip' : 'Not answered yet'}</span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
               )}
               {phase === 'done' && (
                 <Alert className="rounded-xl border-success-border bg-success-soft">
                   <CheckCircle2 className="h-4 w-4 text-success" />
                   <AlertTitle>Import finished</AlertTitle>
                   <AlertDescription>
-                    {totals.imported} imported · {totals.skipped} already in ManuFlow (skipped) · {totals.failed} not imported{timing?.end ? ` · ${elapsed(timing.end - timing.start)}` : ''}. Each part is recorded in Import History.
+                    {totals.imported} imported · {totals.skipped} already in ManuFlow (skipped) · {totals.failed} not imported{totals.declined ? ` · ${totals.declined} skipped by you (no GSTIN)` : ''}{totals.unanswered ? ` · ${totals.unanswered} not imported (no GSTIN, not confirmed)` : ''}{timing?.end ? ` · ${elapsed(timing.end - timing.start)}` : ''}. Each part is recorded in Import History.
                   </AlertDescription>
                 </Alert>
               )}
@@ -843,17 +925,33 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               {confirming && phase === 'ready' && (
                 <Alert data-testid="tally-confirm" className="rounded-xl border-primary/40 bg-success-soft">
                   <Upload className="h-4 w-4" />
-                  <AlertTitle>Import {sum((c) => c.preview.ready)} new records into {companyName || 'this company'}?</AlertTitle>
+                  <AlertTitle>Import {previewReady + gstinYes} new records into {companyName || 'this company'}?</AlertTitle>
                   <AlertDescription>
                     <p>From Tally company “{company}”. Existing ManuFlow records are not changed; {sum((c) => c.preview.duplicates)} already there will be skipped and {sum((c) => c.preview.problems)} that need attention are not imported. Nothing is written to Tally.</p>
+                    {gstinMissingAll.length > 0 && (
+                      <p className="mt-2" data-testid="tally-confirm-gstin">Without GSTIN: {gstinYes} imported with the GSTIN left empty, {gstinNo} skipped by you.</p>
+                    )}
                     <div className="mt-4 flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => void importAll()} className="bg-primary text-primary-foreground hover:bg-primary/90">Yes, import</Button>
-                      <Button size="sm" variant="outline" onClick={() => setConfirming(false)} className="bg-background">Cancel</Button>
+                      <Button size="sm" variant="outline" onClick={cancelImport} className="bg-background">Cancel</Button>
                     </div>
                   </AlertDescription>
                 </Alert>
               )}
               {runError && <Problem text={runError} />}
+              {afterImport && sum((c) => c.declinedRows.length) > 0 && (
+                <div className="space-y-2" data-testid="tally-gstin-declined">
+                  <p className="text-sm font-medium">Skipped by you — no GSTIN ({sum((c) => c.declinedRows.length)})</p>
+                  <ul className="divide-y rounded-xl border text-sm">
+                    {cats.flatMap((c) => c.declinedRows.map((r) => (
+                      <li key={gstinKey(c.kind, r.line)} className="px-4 py-2.5">
+                        <span className="font-medium">{r.values.name || '—'}</span>
+                        <span className="text-muted-foreground"> · {c.kind === 'suppliers' ? 'Supplier' : 'Customer'}</span>
+                      </li>
+                    )))}
+                  </ul>
+                </div>
+              )}
 
               {allProblems.length > 0 && (phase === 'ready' || phase === 'done' || phase === 'stopped') && (
                 <div className="space-y-3">
@@ -906,7 +1004,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               </Button>
             )}
             {step === 4 && phase === 'ready' && !confirming && (
-              <Button onClick={() => setConfirming(true)} disabled={sum((c) => c.preview.ready) === 0} className="rounded-lg bg-primary px-5 text-primary-foreground hover:bg-primary/90">
+              <Button onClick={startImport} disabled={!canImport || !!gstinAsk} className="rounded-lg bg-primary px-5 text-primary-foreground hover:bg-primary/90">
                 <Upload className="mr-2 h-4 w-4" aria-hidden /> Import data
               </Button>
             )}
@@ -916,6 +1014,34 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           </span>
         </div>
       </div>
+
+      {/* GSTIN missing: one yes / no per record before anything is imported (the server enforces the answer) */}
+      <AlertDialog open={!!gstinAsk} onOpenChange={(o) => { if (!o) cancelImport() }}>
+        <AlertDialogContent data-testid="tally-gstin-dialog">
+          {gstinAsk && gstinAsk.items[gstinAsk.index] && (() => {
+            const item = gstinAsk.items[gstinAsk.index]
+            const party = item.kind === 'suppliers' ? 'Supplier' : 'Customer'
+            return (
+              <>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>GSTIN Missing</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The GSTIN for <span className="font-medium text-foreground">{item.name || 'this party'}</span> is not available in Tally. Are you sure you want to import this {party} without GSTIN?
+                  </AlertDialogDescription>
+                  {gstinAsk.items.length > 1 && <p className="text-xs text-muted-foreground">Record {gstinAsk.index + 1} of {gstinAsk.items.length}</p>}
+                </AlertDialogHeader>
+                <AlertDialogFooter className="gap-2 sm:justify-between">
+                  <Button variant="ghost" onClick={cancelImport}>Cancel import</Button>
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                    <AlertDialogCancel onClick={(e) => { e.preventDefault(); answerGstin('skip') }}>No, skip this record</AlertDialogCancel>
+                    <AlertDialogAction onClick={(e) => { e.preventDefault(); answerGstin('import') }}>Yes, import without GSTIN</AlertDialogAction>
+                  </div>
+                </AlertDialogFooter>
+              </>
+            )
+          })()}
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

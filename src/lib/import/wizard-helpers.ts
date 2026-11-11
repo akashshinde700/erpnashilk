@@ -23,6 +23,7 @@ export const DATA_TYPE_UI: Record<string, { name: string; hint: string }> = {
 
 export const STATUS_LABEL: Record<RunRowStatus, string> = {
   ready: 'Ready', duplicate: 'Skipped (already exists)', error: 'Error', imported: 'Imported', failed: 'Failed',
+  confirm: 'GSTIN missing — confirmation required', declined: 'Skipped by you (no GSTIN)',
 }
 
 /** Example values for the sample templates (keys = catalogue field keys). */
@@ -146,8 +147,8 @@ export function splitParts(table: TableRow[], headerRow: number, size: number = 
 /** The results of the parts as one result (rows in file order, counts added up, notes once). */
 export function mergeRunResults(parts: RunResult[]): RunResult {
   if (parts.length === 1) return parts[0]
-  const counts = { total: 0, ready: 0, imported: 0, duplicates: 0, errors: 0, failed: 0, withWarnings: 0 }
-  for (const p of parts) for (const k of Object.keys(counts) as (keyof typeof counts)[]) counts[k] += p.counts[k]
+  const counts = { total: 0, ready: 0, imported: 0, duplicates: 0, errors: 0, failed: 0, withWarnings: 0, confirm: 0, declined: 0 }
+  for (const p of parts) for (const k of Object.keys(counts) as (keyof typeof counts)[]) counts[k] += p.counts[k] ?? 0
   return {
     headers: parts[0]?.headers ?? [],
     notes: [...new Set(parts.flatMap((p) => p.notes))],
@@ -206,7 +207,7 @@ export function markFileDuplicates(dataTypeKey: string, result: RunResult): { re
 /** Counts again after rows changed status (imported / failed are kept from the server). */
 export function recount(rows: RunRow[], before: RunResult['counts']): RunResult['counts'] {
   const n = (st: RunRowStatus) => rows.filter((r) => r.status === st).length
-  return { ...before, total: rows.length, ready: n('ready'), duplicates: n('duplicate'), errors: n('error'), imported: n('imported'), failed: n('failed'), withWarnings: rows.filter((r) => r.warnings.length).length }
+  return { ...before, total: rows.length, ready: n('ready'), duplicates: n('duplicate'), errors: n('error'), imported: n('imported'), failed: n('failed'), withWarnings: rows.filter((r) => r.warnings.length).length, confirm: n('confirm'), declined: n('declined') }
 }
 
 /** The table without the rows found to be file duplicates (they are not sent to the import at all). */

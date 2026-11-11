@@ -1,8 +1,8 @@
 import { db } from '@/lib/db'
-import { partyData, partyCodeAllocator } from '@/lib/party'
+import { gstinRequiredButMissing, partyData, partyCodeAllocator } from '@/lib/party'
 import { createParty } from '@/lib/services/parties'
 import { ImportDuplicateError, lockCompanyForImport } from '@/lib/import/lock'
-import { rowMessage, type ImportInputRow, type ImportRowResult, type ImportSummary } from '@/lib/services/customer-import'
+import { applyGstinDecision, rowMessage, type GstinConfirmation, type ImportInputRow, type ImportRowResult, type ImportSummary } from '@/lib/services/customer-import'
 
 /**
  * Bulk supplier import (Import Center). Same party validation as the supplier form (partyData):
@@ -31,7 +31,7 @@ const cell = (row: Record<string, string>, key: string) => {
   return (v === undefined || v === null ? '' : String(v)).trim()
 }
 
-export async function importSuppliers(companyId: string, rows: ImportInputRow[], opts: { dryRun?: boolean } = {}): Promise<ImportSummary> {
+export async function importSuppliers(companyId: string, rows: ImportInputRow[], opts: { dryRun?: boolean; gstinConfirm?: GstinConfirmation } = {}): Promise<ImportSummary> {
   const [suppliers, customers, codes] = await Promise.all([
     db.supplier.findMany({ where: { companyId }, select: { code: true, name: true, gstin: true, customer: { select: { code: true } } } }),
     db.customer.findMany({ where: { companyId, supplierId: null }, select: { code: true, name: true } }),
@@ -69,8 +69,10 @@ export async function importSuppliers(companyId: string, rows: ImportInputRow[],
 
     if (!name) { reject('name is required'); continue }
     let profile: Record<string, string | number | null>
+    // With gstinConfirm (Tally), a missing GSTIN is decided below by the user; every other rule still applies here
+    const gstinMissing = !!opts.gstinConfirm && gstinRequiredButMissing(input)
     try {
-      profile = partyData(input, 'create')
+      profile = partyData(input, 'create', { gstinMayBeMissing: gstinMissing })
     } catch (e) {
       reject(rowMessage(e, 'Invalid row', 'suppliers/import'))
       continue
@@ -85,6 +87,8 @@ export async function importSuppliers(companyId: string, rows: ImportInputRow[],
       continue
     }
     if (seenNames.has(lower)) { reject(`Duplicate name ${name} earlier in this file — skipped`, true); continue }
+    // Only a new, otherwise valid record is asked about; nothing is reserved for it until the user says yes
+    if (gstinMissing && !applyGstinDecision(res, opts.gstinConfirm!)) continue
     let code = input.code.toUpperCase()
     if (code) {
       if (usedCodes.has(code) || codes.exists(code)) { reject(`Duplicate code ${code} — skipped`, true); continue }
@@ -109,7 +113,7 @@ export async function importSuppliers(companyId: string, rows: ImportInputRow[],
         // Serialise with other imports of this company (any process) and re-check names created meanwhile
         await lockCompanyForImport(tx, companyId)
         if (await tx.supplier.findFirst({ where: { companyId, name }, select: { id: true } })) throw new ImportDuplicateError(`Duplicate name ${name} — skipped`)
-        return createParty(tx, companyId, 'supplier', { ...input, code, status: 'ACTIVE' }, { audit: false })
+        return createParty(tx, companyId, 'supplier', { ...input, code, status: 'ACTIVE' }, { audit: false, gstinMayBeMissing: gstinMissing })
       })
       res.status = 'imported'
       res.entityId = created.id
