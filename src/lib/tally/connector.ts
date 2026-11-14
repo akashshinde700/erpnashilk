@@ -72,7 +72,7 @@ const TOKEN_RE = /^mftc_([a-f0-9]{24})_([A-Za-z0-9_-]{43})$/
 
 /** Connectors older than this get no jobs (they must be updated); older than the latest are told an update exists. */
 export const CONNECTOR_MIN_VERSION = '0.2.0'
-export const CONNECTOR_LATEST_VERSION = '0.3.3'
+export const CONNECTOR_LATEST_VERSION = '0.4.0'
 const DEVICE_ID_RE = /^[a-f0-9]{32}$/
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/
 
@@ -95,6 +95,8 @@ export const TALLY_JOB_TYPES = [
   'list-companies', 'export-customers', 'export-suppliers', 'export-items',
   // masters kept as a source copy only (Layer 1, src/lib/tally/layer1.ts)
   'export-groups', 'export-ledgers', 'export-stockgroups', 'export-units', 'export-godowns',
+  // connector 0.4.0 and newer (MIN_JOB_VERSION in jobs.ts)
+  'export-costcentres',
 ] as const
 export type TallyJobType = (typeof TALLY_JOB_TYPES)[number]
 export type TallyJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'

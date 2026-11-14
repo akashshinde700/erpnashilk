@@ -14,6 +14,7 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConnectErrorCard, ConnectingCard, PairingIntro } from '@/components/erp/import-center/tally-auto-connect'
 import TallyConnectorPanel, { CONNECTOR_BADGE } from '@/components/erp/import-center/tally-connector-panel'
+import TallyMasters from '@/components/erp/import-center/tally-masters'
 import {
   GstinDialog, ImportResult, ImportSidePanel, ImportStages, ReviewTable, SummaryCards, type ReviewCounts, type ReviewRow, type StatusFilter,
 } from '@/components/erp/import-center/tally-review'
@@ -21,6 +22,7 @@ import { ITEM_TYPES, ITEM_TYPE_LABEL, fmtDate } from '@/lib/erp-constants'
 import type { RunResult, RunRow } from '@/lib/import/run'
 import { downloadText, friendlyError, problemRowsCsv } from '@/lib/import/wizard-helpers'
 import type { ConnectorStatus } from '@/lib/tally/connector'
+import { MASTER_TYPES, STATUS_LABEL, TALLY_DATA_TYPES, type DataTypeStatus } from '@/lib/tally/data-types'
 import {
   CONNECT_DEADLINE_MS, LIST_AUTO_RETRIES, autoConnectProgress, connectFailure, pollDelay, tallyFlow, type TallyFlow,
 } from '@/lib/tally/flow'
@@ -33,7 +35,9 @@ import { cn } from '@/lib/utils'
  * Import from Tally through the ManuFlow Tally Connector: 1 Connect → 2 Company → 3 Data → 4 Review & import.
  * Everything shown comes from the server: the connector status, Tally's own company list, the records the connector
  * read, and the Import Center preview / import of those records (same checks and duplicate rules as a file import).
- * Vouchers, orders, other masters, stock, balances and the period are shown as not available — they are not built.
+ * The six reference masters (ledgers, groups, stock groups, units, godowns, cost centres) can be read into a review copy
+ * (TallyMasters; nothing imported). Vouchers, stock, balances and the period are listed with their real status
+ * (src/lib/tally/data-types.ts) and cannot be chosen.
  * Automatic connection: a paired connector reconnects by itself, and whenever it is connected the dialog moves on to the
  * company list (unless the user went back to step 1), which it fetches by itself; a list that failed is fetched again
  * when the connection comes back. The connection is watched on every step. Nothing is read from a company until the
@@ -49,14 +53,15 @@ const KINDS: { kind: Kind; label: string; hint: string; job: string }[] = [
   { kind: 'suppliers', label: 'Suppliers', hint: 'Sundry Creditors ledgers', job: 'export-suppliers' },
   { kind: 'items', label: 'Stock items', hint: 'Name, unit, HSN, GST rate, stock group', job: 'export-items' },
 ]
-// Listed so users see what is not there yet; none can be selected (no Tally reader, mapping or accounting rules yet)
-const UNAVAILABLE: { title: string; items: string[] }[] = [
-  { title: 'Masters', items: ['Ledgers (bank, expenses, …)', 'Ledger groups', 'Stock groups', 'Units', 'Godowns / locations', 'Cost centres'] },
-  { title: 'Vouchers', items: ['Sales', 'Purchase', 'Payment', 'Receipt', 'Contra', 'Journal', 'Debit notes', 'Credit notes', 'Sales orders', 'Purchase orders', 'Delivery notes', 'Receipt notes', 'Stock journals'] },
-  { title: 'Stock', items: ['Opening stock', 'Stock movements', 'Stock summary / balances', 'Closing stock'] },
-  { title: 'Accounts', items: ['Opening balances', 'Closing balances', 'Ledger balances', 'Trial balance', 'Outstanding receivables', 'Outstanding payables'] },
-]
-const UNAVAILABLE_COUNT = UNAVAILABLE.reduce((s, g) => s + g.items.length, 0)
+// Listed with their real status so users see what is not there yet and why; none of these can be selected
+const NOT_YET = TALLY_DATA_TYPES.filter((t) => t.status !== 'ready-for-preview')
+const NOT_YET_GROUPS = (['Vouchers', 'Stock', 'Accounts'] as const).map((title) => ({ title, items: NOT_YET.filter((t) => t.group === title) }))
+const STATUS_TONE: Record<DataTypeStatus, string> = {
+  'ready-for-preview': 'border-success-border bg-success-soft text-success',
+  'in-development': 'border-info-border bg-info-soft text-info',
+  blocked: 'border-warning-border bg-warning-soft text-warning',
+  'requires-configuration': 'border-warning-border bg-warning-soft text-warning',
+}
 const WATCH_MS = 10_000
 const PAGE = 50
 const POLL_MS = 1500
@@ -120,6 +125,8 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   const [company, setCompany] = React.useState('')
   // Step 3
   const [kinds, setKinds] = React.useState<Set<Kind>>(new Set())
+  // Reference masters to read into the review copy (MASTER_TYPES keys)
+  const [masters, setMasters] = React.useState<Set<string>>(new Set())
   const [itemType, setItemType] = React.useState('')
   const [showLater, setShowLater] = React.useState(false)
   // Step 3: what each period would cover for the chosen Tally company (worked out by the server from Tally's dates)
@@ -367,7 +374,8 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
   }
 
   React.useEffect(() => {
-    if (step === 4 && checkedFor.current !== signature && !busyRef.current) void readAndCheck()
+    if (step === 4) stopRef.current = false
+    if (step === 4 && selected.length > 0 && checkedFor.current !== signature && !busyRef.current) void readAndCheck()
   }, [step])
 
   async function importAll() {
@@ -426,14 +434,26 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
 
   // ---------- navigation ----------
   const filtered = (companies ?? []).filter((c) => c.name.toLowerCase().includes(search.trim().toLowerCase()))
-  const canNext = step === 1 ? connected : step === 2 ? !!company : step === 3 ? kinds.size > 0 && (!kinds.has('items') || !!itemType) : false
+  const chosen = kinds.size + masters.size
+  const canNext = step === 1 ? connected : step === 2 ? !!company : step === 3 ? chosen > 0 && (!kinds.has('items') || !!itemType) : false
   const nextHint = step === 1 ? (connected ? '' : 'Connect Tally to continue')
     : step === 2 ? (company ? '' : 'Choose a company to continue')
-      : step === 3 ? (kinds.size === 0 ? 'Choose what to import' : kinds.has('items') && !itemType ? 'Choose the item type for stock items' : '') : ''
+      : step === 3 ? (chosen === 0 ? 'Choose what to import' : kinds.has('items') && !itemType ? 'Choose the item type for stock items' : '') : ''
+  // Masters only: step 4 is the masters review, with no import
+  const mastersOnly = kinds.size === 0 && masters.size > 0
+  const masterKey = `${company}|${[...masters].sort().join(',')}`
+  // The masters review reads through the same job runner (Back / Cancel stop and cancel its reads too)
+  const readMasterJob = React.useCallback(async (type: string) => {
+    try {
+      return await waitForJob(type, company)
+    } catch (e) {
+      throw e instanceof Stopped ? new Error('Stopped.') : e
+    }
+  }, [company])
 
   function back() {
     if (step === 2) setManualConnect(true)
-    if (step === 4 && busy && phase !== 'importing') { stopRef.current = true; cancelOpenJobs() }
+    if (step === 4 && phase !== 'importing') { stopRef.current = true; cancelOpenJobs() }
     setStep((s) => Math.max(1, s - 1))
   }
 
@@ -843,28 +863,69 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 </div>
               </fieldset>
 
-              {/* E. not available yet */}
+              {/* E. masters: read into the review copy (nothing imported) */}
+              <fieldset className="min-w-0 space-y-3 rounded-2xl border p-4 sm:p-5" data-testid="tally-masters-choice">
+                <legend className="sr-only">Masters to review</legend>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="mr-auto min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 text-base font-semibold tracking-tight">
+                      Masters <span className={cn('rounded-full border px-2 py-0.5 text-xs font-medium', STATUS_TONE['ready-for-preview'])}>{STATUS_LABEL['ready-for-preview']}</span>
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">Read into a review copy: check them, see what each ledger is, link godowns to warehouses and bank / cash ledgers to accounts. They are not imported as business data.</p>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setMasters(new Set(MASTER_TYPES.map((t) => t.key)))} disabled={masters.size === MASTER_TYPES.length}>Choose every master</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setMasters(new Set())} disabled={masters.size === 0}>Unselect masters</Button>
+                </div>
+                <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {MASTER_TYPES.map((t) => {
+                    const on = masters.has(t.key)
+                    return (
+                      <li key={t.key}>
+                        <label className={cn('flex h-full cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition-colors focus-within:ring-2 focus-within:ring-ring',
+                          on ? 'border-primary bg-success-soft' : 'hover:bg-muted/40')}>
+                          <Checkbox checked={on} aria-label={t.label} className="mt-0.5"
+                            onCheckedChange={(v) => setMasters((m) => { const n = new Set(m); if (v === true) n.add(t.key); else n.delete(t.key); return n })} />
+                          <span className="min-w-0">
+                            <span className="block font-medium">{t.label}</span>
+                            <span className="mt-0.5 block text-xs text-muted-foreground">{t.note}</span>
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </fieldset>
+
+              {/* F. not available yet: each with its real status and what it waits for */}
               <div className="overflow-hidden rounded-xl border">
                 <button type="button" onClick={() => setShowLater((v) => !v)} aria-expanded={showLater} aria-controls="t-unavailable"
                   className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                   <Lock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1 font-medium">{UNAVAILABLE_COUNT} additional data types <span className="font-normal text-muted-foreground">– Coming soon</span></span>
+                  <span className="flex-1 font-medium">{NOT_YET.length} more data types <span className="font-normal text-muted-foreground">– not available yet</span></span>
                   <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200', showLater && 'rotate-180')} aria-hidden />
                 </button>
                 {showLater && (
                   <div id="t-unavailable" className="space-y-4 border-t bg-muted/20 px-4 py-4 text-sm" data-testid="tally-unavailable">
-                    <p className="text-muted-foreground">These cannot be read from Tally yet: vouchers, stock and balances need accounting rules (ledgers, numbering, outstanding bills) that ManuFlow does not have for imported data, and the Tally replies are not verified yet.</p>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      {UNAVAILABLE.map((g) => (
+                    <p className="text-muted-foreground">These cannot be chosen yet. Each shows where it stands and what it is waiting for; none is imported until its Tally reply has been checked against a real TallyPrime company.</p>
+                    <div className="grid gap-3 lg:grid-cols-3">
+                      {NOT_YET_GROUPS.map((g) => (
                         <fieldset key={g.title} disabled className="min-w-0 rounded-lg border bg-background p-3">
                           <legend className="sr-only">{g.title}</legend>
                           <p className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground" aria-hidden>
                             {g.title} <span className="font-normal tabular-nums">{g.items.length}</span>
                           </p>
-                          <ul className="space-y-1.5">
-                            {g.items.map((item) => (
-                              <li key={item} className="flex items-center gap-2 text-muted-foreground/80">
-                                <Checkbox disabled aria-label={`${item} (not available yet)`} className="opacity-60" /> <span className="min-w-0">{item}</span>
+                          <ul className="space-y-2.5">
+                            {g.items.map((t) => (
+                              <li key={t.key} className="flex items-start gap-2" data-testid={`tally-type-${t.key}`}>
+                                <Checkbox disabled aria-label={`${t.label} (${STATUS_LABEL[t.status]})`} className="mt-0.5 opacity-60" />
+                                <span className="min-w-0">
+                                  <span className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-foreground/80">{t.label}</span>
+                                    <span className={cn('rounded-full border px-1.5 py-px text-[0.6875rem] font-medium', STATUS_TONE[t.status])}>{STATUS_LABEL[t.status]}</span>
+                                  </span>
+                                  <span className="mt-0.5 block text-xs text-muted-foreground">{t.note}</span>
+                                  {t.needs.length > 0 && <span className="mt-0.5 block text-xs text-muted-foreground">Needs: {t.needs.join('; ')}</span>}
+                                </span>
                               </li>
                             ))}
                           </ul>
@@ -875,12 +936,12 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 )}
               </div>
 
-              {kinds.size > 0 && (
+              {chosen > 0 && (
                 <p className="flex items-start gap-2 text-sm text-muted-foreground" role="status">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
                   <span>
-                    <span className="font-medium text-foreground">{selected.map((k) => k.label).join(', ')}</span> from <span className="font-medium text-foreground">{company}</span>.
-                    {' '}Opening balances and opening stock are not imported.
+                    <span className="font-medium text-foreground">{[...selected.map((k) => k.label), ...MASTER_TYPES.filter((t) => masters.has(t.key)).map((t) => t.label)].join(', ')}</span> from <span className="font-medium text-foreground">{company}</span>.
+                    {' '}Opening balances and opening stock are not imported{masters.size > 0 ? '; masters are read for review only' : ''}.
                   </span>
                 </p>
               )}
@@ -892,7 +953,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             <section className="space-y-6" aria-labelledby="t-step4">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h3 id="t-step4" className="text-base font-semibold tracking-tight sm:text-lg">
-                  {importStage === 4 ? 'Import result' : importStage === 3 ? 'Importing' : importStage === 2 ? 'Review & confirm' : 'Reading from Tally'}
+                  {mastersOnly ? 'Masters review' : importStage === 4 ? 'Import result' : importStage === 3 ? 'Importing' : importStage === 2 ? 'Review & confirm' : 'Reading from Tally'}
                 </h3>
                 <span className="text-sm text-muted-foreground">{company} → {companyName || 'this company'}</span>
                 {!busy && phase !== 'done' && !importStarted && (
@@ -900,7 +961,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
                 )}
               </div>
               <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span>Data: <span className="font-medium text-foreground">{selected.map((k) => k.label).join(', ')}</span></span>
+                <span>Data: <span className="font-medium text-foreground">{[...selected.map((k) => k.label), ...MASTER_TYPES.filter((t) => masters.has(t.key)).map((t) => t.label)].join(', ')}</span></span>
                 {kinds.has('items') && <span>New stock items are: <span className="font-medium text-foreground">{itemType ? ITEM_TYPE_LABEL[itemType as keyof typeof ITEM_TYPE_LABEL] ?? itemType : '—'}</span></span>}
                 <span>Voucher period: not applied — records are read as they are in Tally today</span>
               </p>
@@ -1020,6 +1081,13 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
               )}
               {phase === 'stopped' && !importStarted && <Problem text="Stopped before anything was imported. Check again to read the records from Tally." tone="info" />}
               {runError && <Problem text={runError} />}
+
+              {/* Masters: read into the review copy; nothing imported (src/lib/tally/master-review.ts) */}
+              {masters.size > 0 && (
+                <div className={cn(!mastersOnly && 'border-t pt-6')}>
+                  <TallyMasters key={masterKey} companyId={companyId} tallyCompany={company} keys={[...masters]} readJob={readMasterJob} />
+                </div>
+              )}
             </section>
           )}
       </div>
@@ -1033,7 +1101,8 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
           <span className="order-last w-full text-xs text-muted-foreground sm:order-none sm:mr-auto sm:w-auto" aria-live="polite" data-testid="tally-action-status">
             {step === 4 && phase === 'ready'
               ? `${selectedKeys.size} selected · ${reviewCounts.pending} GSTIN confirmation${reviewCounts.pending === 1 ? '' : 's'} pending · ${previewReady + gstinYes} ready to import`
-              : nextHint || (step === 3 && kinds.size > 0 ? `${kinds.size} of ${KINDS.length} data types selected` : '')}
+              : step === 4 && mastersOnly ? 'Masters are read for review only — nothing is imported'
+                : nextHint || (step === 3 && chosen > 0 ? `${chosen} data type${chosen === 1 ? '' : 's'} selected` : '')}
           </span>
           <span className="ml-auto flex flex-wrap items-center justify-end gap-2 sm:ml-0">
             {step < 4 && (
@@ -1063,7 +1132,7 @@ export default function TallyImport({ open, onOpenChange, companyId, companyName
             {step === 4 && phase === 'done' && onShowHistory && (
               <Button variant="outline" onClick={onShowHistory} className="rounded-lg">Import History</Button>
             )}
-            {step === 4 && phase === 'done' && (
+            {step === 4 && (phase === 'done' || mastersOnly) && (
               <Button onClick={() => onOpenChange(false)} className="rounded-lg bg-primary px-5 text-primary-foreground hover:bg-primary/90">Done</Button>
             )}
           </span>

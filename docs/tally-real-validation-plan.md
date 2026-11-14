@@ -155,8 +155,37 @@ For each TallyPrime release tried:
 
 ## Later (separate design and approval)
 
-* **Phase E master readers** (groups, ledgers, stock groups, units, godowns): new fixed Export requests, captured and
-  checked the same way.
+* **Phase E master readers** (groups, ledgers, stock groups, units, godowns, and cost centres from connector 0.4.0):
+  prepared, see "Phase 1 masters capture" below.
+
+## Phase 1 masters capture (prepared, not run)
+
+Status: **readers, review screen and links are built and tested against a mock Tally. Nothing has been sent to a real
+TallyPrime.** Until this capture is checked, the Import Center says so on the masters review.
+
+Same rules as steps 1–7 above (owner chooses the test company in writing; output folder new and outside Git; raw files
+deleted after anonymised fixtures are accepted). Only the command changes:
+
+```bash
+node connector/tally/manuflow-tally-connector.mjs capture \
+  --tally http://<tally-pc>:9000 \
+  --company "<exact name of the test company>" \
+  --masters \
+  --out ~/manuflow-tally-captures/$(date +%Y%m%d)-0.4.0-ref-masters
+```
+
+`--masters` reads groups, ledgers, stock groups, units, godowns and cost centres (six fixed Export collections, same
+guard as every job). Compare with Tally's own screens:
+
+* **Counts:** Chart of Accounts → Groups, Ledgers; Inventory Info → Stock Groups, Units, Godowns; Cost Centres.
+* **Groups:** `RESERVEDNAME` is filled for Tally's predefined groups (if it is empty, renamed predefined groups are not
+  recognised, and ledgers under them show "needs review" — acceptable, never a wrong guess).
+* **Ledgers:** for 10 ledgers, parent group and opening balance (sign as Tally shows Dr / Cr) match.
+* **Units:** a compound unit shows base unit, additional unit and conversion.
+* **Cost centres:** `CATEGORY` matches the cost category.
+
+Any field that comes back empty or differently shaped becomes a fixture and a reader fix before the masters are called
+verified (`verifiedLive` in `src/lib/tally/data-types.ts` stays false until then).
 * **Vouchers:** fixed Export requests for one voucher type and one month, then reconciliation against the Day Book
   and the Trial Balance, in paise.
 

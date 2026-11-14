@@ -53,6 +53,10 @@ CHECK_ONLY = "--check" in ARGS
 ROLLBACK = "--rollback" in ARGS
 STAGE_ONLY = "--stage" in ARGS
 DB_PUSH = "--no-db-push" not in ARGS and not STAGE_ONLY
+# Keep every release folder (no rotation down to keep_releases), e.g. while older releases are evidence or rollback points.
+PRUNE_RELEASES = "--no-prune" not in ARGS
+# Recovery only: the BUILD_ID the operator saw running (see running_app_problems). Never needed for a normal deploy.
+CONFIRM_BUILD = ARGS[ARGS.index("--confirm-running-build") + 1] if "--confirm-running-build" in ARGS[:-1] else ""
 
 # -- Config ---------------------------------------------------
 CFG = {
@@ -162,6 +166,31 @@ def connect():
     return c
 
 
+def running_app_problems(ssh):
+    """When the source files in APP are not ManuFlow's (they were replaced, e.g. by another project's deploy), the site
+    can still be proven to be ManuFlow by what is RUNNING there. Every fact must hold, and the operator must name the
+    running build (--confirm-running-build) after looking at it -- so another application is never accepted."""
+    problems = []
+    build, _, _ = run(ssh, f"cat {STANDALONE}/.next/BUILD_ID 2>/dev/null", quiet=True)
+    if build.strip() != CONFIRM_BUILD:
+        problems.append(f"running build is {build.strip() or 'missing'}, not {CONFIRM_BUILD}")
+    schema, _, _ = run(ssh, f"head -5 {STANDALONE}/node_modules/.prisma/client/schema.prisma 2>/dev/null", quiet=True)
+    if APP_MARKER not in schema:
+        problems.append("the running build's Prisma client is not ManuFlow's")
+    out, _, _ = run(ssh, "pm2 jlist 2>/dev/null", quiet=True)
+    try:
+        proc = next((x for x in json.loads(out or "[]") if x["name"] == PM2_NAME), None)
+    except (ValueError, KeyError, TypeError):
+        proc = None
+    if not proc or proc["pm2_env"].get("status") != "online" or proc["pm2_env"].get("pm_cwd") != STANDALONE:
+        problems.append(f"PM2 {PM2_NAME} is not online in {STANDALONE}")
+    title, _, _ = run(ssh, f"curl -s --max-time 20 http://127.0.0.1:{APP_PORT}/ | grep -o '<title>[^<]*</title>' | head -1",
+                      quiet=True)
+    if APP_MARKER not in title:
+        problems.append(f"the app on port {APP_PORT} does not identify itself as {APP_MARKER}")
+    return problems
+
+
 def verify_target(ssh):
     """Refuse to touch a site that isn't ManuFlow, or whose .env would break login."""
     out, _, code = run(ssh, f"head -5 {APP}/prisma/schema.prisma 2>/dev/null", quiet=True)
@@ -171,7 +200,16 @@ def verify_target(ssh):
                         quiet=True)
         code = 0 if out.strip() else 1
     if code == 0 and APP_MARKER not in out:
-        raise RuntimeError(f"{APP} is not a {APP_MARKER} site -- check site_user/site_domain in {CONFIG_PATH}")
+        if not CONFIRM_BUILD:
+            raise RuntimeError(f"{APP} is not a {APP_MARKER} site -- check site_user/site_domain in {CONFIG_PATH} "
+                               f"(if only its source files were replaced and the RUNNING app is ManuFlow, check that and "
+                               f"pass --confirm-running-build <its BUILD_ID>)")
+        problems = running_app_problems(ssh)
+        if problems:
+            raise RuntimeError(f"{APP}'s source files are not {APP_MARKER}'s and the running app could not be "
+                               f"confirmed as {APP_MARKER}: {'; '.join(problems)}")
+        p(f"  [WARN] the source files in {APP} are not {APP_MARKER}'s (this deploy replaces them); the running app "
+          f"is confirmed {APP_MARKER}: build {CONFIRM_BUILD}, Prisma client, PM2 {PM2_NAME}, page title")
     out, _, _ = run(ssh, "pm2 jlist 2>/dev/null", quiet=True)
     try:
         procs = {x["name"]: x["pm2_env"].get("pm_cwd") for x in json.loads(out or "[]")}
@@ -433,7 +471,10 @@ def deploy(ssh):
         rollback(ssh)
         raise RuntimeError("deploy rolled back: new release failed health check")
 
-    run(ssh, f"cd {RELEASES} && ls -1t | tail -n +{KEEP_RELEASES + 1} | xargs -r rm -rf")
+    if PRUNE_RELEASES:
+        run(ssh, f"cd {RELEASES} && ls -1t | tail -n +{KEEP_RELEASES + 1} | xargs -r rm -rf")
+    else:
+        p(f"  --no-prune: every release in {RELEASES} is kept")
     banner("[SUCCESS]")
     p(f"  URL      : https://{SITE_DOMAIN}")
     p(f"  Previous : {RELEASES}/next-{stamp}  (python deploy.py --rollback)")

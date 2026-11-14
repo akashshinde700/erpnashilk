@@ -624,6 +624,53 @@ export function makeApi(store: Store) {
           }
           return ok({ today: todayInIndia(), options: { 'current-fy': option('current-fy'), 'last-fy': option('last-fy'), all: option('all') } })
         }
+        if (third === 'master-review') {
+          // Same shapes as src/app/api/import-center/tally/master-review/route.ts. The scenario gives the review rows per
+          // kind in tc.masters (the classification is the real server's job; here it is part of the fixture).
+          const masters = (tc.masters ??= {}) as Record<string, Json[]>
+          const kinds = ['group', 'ledger', 'stockgroup', 'unit', 'godown', 'costcentre']
+          const summaryOf = (kind: string) => {
+            const rows = masters[kind] ?? []
+            return {
+              kind, total: rows.length, withIssues: rows.filter((r) => (r.issues as Json[] | undefined)?.length).length,
+              missing: rows.filter((r) => r.missingSince).length, needsReview: rows.filter((r) => r.needsReview && !r.missingSince).length,
+              linked: rows.filter((r) => r.link).length, lastReadAt: rows.length ? iso() : null,
+            }
+          }
+          if (method === 'POST') {
+            const row = (masters[String(body?.kind)] ?? []).find((r) => r.guid === body?.guid)
+            if (!row) return fail('This godown has not been read from Tally — read it again', 'ERR', 404)
+            col('tally-master-links').push({ kind: body?.kind, guid: body?.guid, warehouseId: body?.warehouseId, moneyAccountId: body?.moneyAccountId, create: body?.create, unlink: body?.unlink })
+            if (body?.unlink) { row.link = null; row.needsReview = body?.kind === 'godown'; return ok({ changed: true }) }
+            let label = ''
+            let id = String(body?.warehouseId ?? body?.moneyAccountId ?? '')
+            if (body?.create) {
+              id = store.nextId('wh')
+              const created = { id, code: String(row.name).toUpperCase().replace(/[^A-Z0-9]+/g, '-'), name: row.name, type: 'GENERAL' }
+              col('warehouses').push(created)
+              label = `Warehouse ${created.code} — ${created.name}`
+            } else if (body?.kind === 'godown') {
+              const w = col('warehouses').find((x) => x.id === id)
+              if (!w) return fail('Warehouse not found', 'ERR', 404)
+              label = `Warehouse ${w.code} — ${w.name}`
+            } else {
+              const a = col('accounts').find((x) => x.id === id)
+              if (!a) return fail('Cash or bank account not found', 'ERR', 404)
+              label = `${a.type === 'CASH' ? 'Cash' : 'Bank'} account — ${a.name}`
+            }
+            row.link = { kind: body?.kind === 'godown' ? 'warehouse' : 'moneyaccount', id, label }
+            if (body?.kind === 'godown') row.needsReview = false
+            return ok({ linked: row.link, created: !!body?.create, changed: true })
+          }
+          const kind = query.get('kind')
+          if (!kind) return ok({ summary: kinds.map(summaryOf) })
+          const filter = query.get('filter') ?? 'all'
+          const qs = (query.get('q') ?? '').toLowerCase()
+          const rows = (masters[kind] ?? []).filter((r) => (!qs || String(r.name).toLowerCase().includes(qs))
+            && (filter === 'all' || (filter === 'review' && r.needsReview && !r.missingSince) || (filter === 'issues' && (r.issues as Json[] | undefined)?.length)
+              || (filter === 'missing' && r.missingSince) || (filter === 'linked' && r.link) || (filter === 'unlinked' && !r.link)))
+          return ok({ summary: summaryOf(kind), matching: rows.length, page: 0, pageSize: 100, rows })
+        }
         if (third === 'import') {
           const job = col('tally-jobs').find((j) => j.id === body?.jobId)
           if (!job) return fail('This Tally request was not found — start again', 'ERR', 404)

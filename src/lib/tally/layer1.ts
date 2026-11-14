@@ -18,7 +18,7 @@ import type { TallyJobType } from '@/lib/tally/connector'
  * Nothing in this file reads or writes Customer, Supplier, Item or any other business table.
  */
 
-export const MASTER_KINDS = ['group', 'ledger', 'stockgroup', 'stockitem', 'unit', 'godown'] as const
+export const MASTER_KINDS = ['group', 'ledger', 'stockgroup', 'stockitem', 'unit', 'godown', 'costcentre'] as const
 export type MasterKind = (typeof MASTER_KINDS)[number]
 
 /** Which kind a job reads, and whether it reads all of that kind (only then can absence mean "missing"). */
@@ -31,6 +31,7 @@ export const LAYER1_SOURCE: Partial<Record<TallyJobType, { kind: MasterKind; ful
   'export-stockgroups': { kind: 'stockgroup', full: true },
   'export-units': { kind: 'unit', full: true },
   'export-godowns': { kind: 'godown', full: true },
+  'export-costcentres': { kind: 'costcentre', full: true },
 }
 
 export interface MasterIssue { code: 'no_guid' | 'bad_alter_id' | 'bad_opening_balance'; message: string }

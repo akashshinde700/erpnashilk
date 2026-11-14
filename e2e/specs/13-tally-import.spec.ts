@@ -138,11 +138,19 @@ test.describe('Import from Tally (connector)', () => {
     await expect(dialog.getByTestId('tally-period-all')).toContainText(/1 Apr 2024|01[-/ ]04[-/ ]2024/)
     await expect(dialog.getByTestId('tally-period-all')).toContainText('financial years')
     await expect(dialog.getByTestId('tally-period-current-fy')).not.toHaveText('…')
-    await expect(dialog.getByRole('button', { name: /29 additional data types/ })).toHaveAttribute('aria-expanded', 'false') // collapsed at first
-    await dialog.getByRole('button', { name: /additional data types/ }).click()
-    for (const name of ['Sales (not available yet)', 'Journal (not available yet)', 'Ledgers (bank, expenses, …) (not available yet)', 'Trial balance (not available yet)', 'Opening stock (not available yet)']) {
-      await expect(dialog.getByTestId('tally-unavailable').getByRole('checkbox', { name })).toBeDisabled()
+    // the six masters can be chosen (review copy); the other 23 types are listed with their real status and cannot be
+    for (const name of ['Ledgers', 'Ledger groups', 'Stock groups', 'Units', 'Godowns / locations', 'Cost centres']) {
+      await expect(dialog.getByTestId('tally-masters-choice').getByRole('checkbox', { name, exact: true })).toBeEnabled()
     }
+    await expect(dialog.getByRole('button', { name: /23 more data types/ })).toHaveAttribute('aria-expanded', 'false') // collapsed at first
+    await dialog.getByRole('button', { name: /more data types/ }).click()
+    const unavailable = dialog.getByTestId('tally-unavailable')
+    for (const name of ['Sales (In development)', 'Journal (In development)', 'Trial balance (Blocked by dependency)', 'Opening stock (Requires configuration)']) {
+      await expect(unavailable.getByRole('checkbox', { name })).toBeDisabled()
+    }
+    await expect(unavailable.getByRole('checkbox')).toHaveCount(23)
+    await expect(unavailable).not.toContainText('Coming soon')
+    await expect(dialog.getByTestId('tally-type-journal')).toContainText('General ledger')
     await dialog.getByRole('button', { name: 'Select all' }).click()
     for (const name of ['Customers', 'Suppliers', 'Stock items']) await expect(dialog.getByRole('checkbox', { name, exact: true })).toBeChecked()
     await expect(dialog.getByRole('button', { name: 'Next' })).toBeDisabled() // item type still needed
@@ -247,7 +255,7 @@ test.describe('Import from Tally — full workspace page', () => {
     expect(await sideways()).toBe(false)
     await workspace.getByRole('button', { name: 'Next' }).click()
     await workspace.getByRole('button', { name: 'Select all' }).click()
-    await workspace.getByRole('button', { name: /additional data types/ }).click()
+    await workspace.getByRole('button', { name: /more data types/ }).click()
     expect(await sideways()).toBe(false)
   })
 })
@@ -504,5 +512,75 @@ test.describe('Import from Tally — automatic connection', () => {
     await expect(dialog.getByTestId('tally-auto-connect')).toBeVisible()
     await page.waitForTimeout(9000)
     expect(most).toBe(1)
+  })
+})
+
+test.describe('Import from Tally — masters review copy (Phase 1)', () => {
+  // Review rows as the real master-review route returns them (classification worked out by the server)
+  const MASTERS = {
+    group: [{ guid: 'g-1', name: 'Pune Banks', parent: 'Bank Accounts', alterId: 2, data: {}, issues: [], missingSince: null, lastSeenAt: '2026-11-11T10:00:00Z', needsReview: false }],
+    ledger: [
+      { guid: 'l-1', name: 'HDFC Current A/c', parent: 'Pune Banks', alterId: 3, data: {}, issues: [], missingSince: null, lastSeenAt: '2026-11-11T10:00:00Z', needsReview: false, link: null,
+        classification: { category: 'bank', confidence: 'exact', via: 'Bank Accounts', path: ['Pune Banks', 'Bank Accounts'], reason: 'Under Tally’s “Bank Accounts” group.' } },
+      { guid: 'l-2', name: 'Odd Ledger', parent: 'Current Assets', alterId: 4, data: {}, issues: [], missingSince: null, lastSeenAt: '2026-11-11T10:00:00Z', needsReview: true, link: null,
+        classification: { category: 'asset', confidence: 'review', via: 'Current Assets', path: ['Current Assets'], reason: 'Directly under Tally’s broad “Current Assets” group — confirm what this ledger is.' } },
+    ],
+    godown: [{ guid: 'gd-1', name: 'Bhosari Godown', parent: null, alterId: 5, data: {}, issues: [], missingSince: null, lastSeenAt: '2026-11-11T10:00:00Z', needsReview: true, link: null, suggestion: null }],
+    stockgroup: [], unit: [], costcentre: [],
+  }
+  async function toMasters(page: Page, store: Store, pick: string[]) {
+    store.collections['tally-connector'] = [{
+      state: 'connected', companies: ['Shree & Sons Pvt Ltd'], masters: structuredClone(MASTERS),
+      data: { ...DATA, 'export-groups': { total: 1 }, 'export-ledgers': { total: 2 }, 'export-godowns': { total: 1 } },
+    }]
+    const ws = await openTallyImport(page, store)
+    await ws.getByRole('radio', { name: /Shree & Sons/ }).click()
+    await ws.getByRole('button', { name: 'Next' }).click()
+    for (const name of pick) await ws.getByTestId('tally-masters-choice').getByRole('checkbox', { name, exact: true }).check()
+    await expect(ws.getByTestId('tally-action-status')).toContainText(`${pick.length} data type`)
+    await ws.getByRole('button', { name: 'Next' }).click()
+    return ws
+  }
+
+  test('masters only: read, reviewed with real counts, nothing imported', async ({ page, store }) => {
+    const ws = await toMasters(page, store, ['Ledgers', 'Ledger groups', 'Godowns / locations'])
+    await expect(ws.getByRole('heading', { name: 'Masters review' })).toBeVisible()
+    const panel = ws.getByTestId('tally-masters')
+    await expect(panel.getByTestId('tally-masters-unverified')).toContainText('not yet been checked against a real TallyPrime')
+    await expect(panel.getByTestId('tally-master-read-ledgers')).toContainText('2 read from Tally')
+    await expect(panel.getByTestId('tally-master-read-groups')).toContainText('1 read from Tally')
+    // the jobs asked for are exactly the chosen masters, read-only exports
+    const types = (store.collections['tally-jobs'] ?? []).map((j) => j.type).filter((t) => t !== 'list-companies').sort()
+    expect(types).toEqual(['export-godowns', 'export-groups', 'export-ledgers'])
+    expect(store.collections['tally-import-calls'] ?? []).toEqual([]) // no import of business data
+    // ledgers tab: suggested meaning, review flag
+    await panel.getByRole('tab', { name: /Ledgers/ }).click()
+    const table = panel.getByTestId('tally-masters-table')
+    await expect(table).toContainText('Bank account')
+    await expect(table).toContainText('Needs review')
+    await expect(panel.getByTestId('tally-masters-summary')).toContainText('Needs review1')
+    await panel.getByRole('button', { name: 'Needs review' }).click()
+    await expect(table.getByRole('row')).toHaveCount(2) // header + Odd Ledger
+    await expect(table).toContainText('Odd Ledger')
+    await expect(ws.getByRole('button', { name: 'Import data' })).toHaveCount(0)
+    await expect(ws.getByRole('button', { name: 'Done' })).toBeVisible()
+  })
+
+  test('link a bank ledger to a bank account and a godown to a new warehouse — one explicit action each', async ({ page, store }) => {
+    const ws = await toMasters(page, store, ['Ledgers', 'Godowns / locations'])
+    const panel = ws.getByTestId('tally-masters')
+    await expect(panel.getByTestId('tally-master-read-godowns')).toContainText('1 read from Tally')
+    await panel.getByRole('tab', { name: /Ledgers/ }).click()
+    const pick = panel.getByLabel('Account for HDFC Current A/c')
+    await expect(pick.locator('option')).toHaveText(['Choose bank account…', 'HDFC Current', 'ICICI OD']) // bank accounts only
+    await pick.selectOption({ label: 'HDFC Current' })
+    await panel.getByRole('button', { name: 'Link', exact: true }).click()
+    await expect(panel.getByTestId('tally-masters-table')).toContainText('Bank account — HDFC Current')
+    await panel.getByRole('tab', { name: /Godowns/ }).click()
+    await panel.getByRole('button', { name: 'Create warehouse' }).click()
+    await expect(panel.getByTestId('tally-masters-table')).toContainText('Warehouse BHOSARI-GODOWN — Bhosari Godown')
+    expect((store.collections['tally-master-links'] ?? []).map((l) => [l.kind, l.guid, l.moneyAccountId ?? null, !!l.create])).toEqual([
+      ['ledger', 'l-1', 'acc_bank', false], ['godown', 'gd-1', null, true],
+    ])
   })
 })

@@ -18,6 +18,7 @@
  *   node manuflow-tally-connector.mjs capture --tally http://127.0.0.1:9000 --out /absolute/new/folder [--company "Exact name"]
  *            [--vouchers-from YYYYMMDD --vouchers-to YYYYMMDD]   (vouchers of that period instead of masters)
  *            [--daybook]          (diagnostic: TallyPrime's own Day Book report for the period instead)
+ *            [--masters]          (groups, ledgers, stock groups, units, godowns, cost centres instead)
  *
  * What it sends to Tally: TALLY_HEALTH_REQUEST below (an Export of a report that does not exist, so Tally answers with
  * a short status reply) and, when ManuFlow asks for one of its NAMED read jobs, the matching fixed Export request
@@ -46,7 +47,7 @@ import { homedir, hostname, platform as osPlatform, uptime } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const VERSION = '0.3.3'
+export const VERSION = '0.4.0'
 export const TALLY_DEFAULT_URL = 'http://127.0.0.1:9000'
 const TALLY_TIMEOUT_MS = 4000
 const TALLY_MAX_BYTES = 256 * 1024
@@ -193,10 +194,12 @@ export const JOBS = {
   // Masters kept as a source copy in ManuFlow (Layer 1), never imported into its business tables by themselves.
   // NOTE: these five requests have not been run against a real TallyPrime yet (docs/tally-real-validation-plan.md).
   'export-groups': {
-    request: (company) => collectionRequest('ManuFlowGroups', 'Group', 'NAME, GUID, PARENT, ALTERID, ISREVENUE, AFFECTSGROSSPROFIT, ISDEEMEDPOSITIVE, ISSUBLEDGER, ISBILLWISEON', { company }),
+    // RESERVEDNAME (0.4.0): the original name of one of Tally's predefined groups, kept when the group was renamed; lets
+    // ManuFlow recognise "Sundry Debtors", "Bank Accounts", … under any name. Not yet seen in a real TallyPrime reply.
+    request: (company) => collectionRequest('ManuFlowGroups', 'Group', 'NAME, GUID, PARENT, ALTERID, RESERVEDNAME, ISREVENUE, AFFECTSGROSSPROFIT, ISDEEMEDPOSITIVE, ISSUBLEDGER, ISBILLWISEON', { company }),
     tag: 'GROUP',
     read: (n) => ({
-      ...master(n), isRevenue: text(n, 'ISREVENUE'), affectsGrossProfit: text(n, 'AFFECTSGROSSPROFIT'),
+      ...master(n), reservedName: text(n, 'RESERVEDNAME'), isRevenue: text(n, 'ISREVENUE'), affectsGrossProfit: text(n, 'AFFECTSGROSSPROFIT'),
       isDeemedPositive: text(n, 'ISDEEMEDPOSITIVE'), isSubLedger: text(n, 'ISSUBLEDGER'), isBillWiseOn: text(n, 'ISBILLWISEON'),
     }),
   },
@@ -227,6 +230,12 @@ export const JOBS = {
     request: (company) => collectionRequest('ManuFlowGodowns', 'Godown', 'NAME, GUID, PARENT, ALTERID', { company }),
     tag: 'GODOWN',
     read: master,
+  },
+  // 0.4.0. Same read-only collection pattern as the masters above; not yet run against a real TallyPrime.
+  'export-costcentres': {
+    request: (company) => collectionRequest('ManuFlowCostCentres', 'CostCentre', 'NAME, GUID, PARENT, ALTERID, CATEGORY', { company }),
+    tag: 'COSTCENTRE',
+    read: (n) => ({ ...master(n), category: text(n, 'CATEGORY') }),
   },
 }
 
@@ -542,6 +551,8 @@ export function insideGitRepo(path) {
 }
 
 const CAPTURE_EXPORTS = ['export-customers', 'export-suppliers', 'export-items']
+/** With --masters: the reference masters instead (groups, ledgers, stock groups, units, godowns, cost centres). */
+const CAPTURE_MASTERS = ['export-groups', 'export-ledgers', 'export-stockgroups', 'export-units', 'export-godowns', 'export-costcentres']
 
 /**
  * Saves Tally's raw replies to the existing read-only requests, for turning into anonymised test fixtures.
@@ -551,13 +562,15 @@ const CAPTURE_EXPORTS = ['export-customers', 'export-suppliers', 'export-items']
  * With `from` and `to` (YYYYMMDD, plus `company`): the vouchers of that period instead of the masters — the request
  * voucherRequest() builds, through the same guard; one reply file, a manifest with the voucher count per type.
  * With `dayBook` (and the same dates): TallyPrime's own Day Book report instead of the voucher collection (diagnostic).
- * @param {{ tally?: string, out?: string, company?: string, from?: string, to?: string, dayBook?: boolean, log?: (m: string) => void }} opts
+ * With `masters` (and `company`): the reference masters (CAPTURE_MASTERS) instead of customers, suppliers, stock items.
+ * @param {{ tally?: string, out?: string, company?: string, from?: string, to?: string, dayBook?: boolean, masters?: boolean, log?: (m: string) => void }} opts
  */
-export async function capture({ tally, out, company, from, to, dayBook = false, log = console.log }) {
+export async function capture({ tally, out, company, from, to, dayBook = false, masters = false, log = console.log }) {
   const t = validateTallyUrl(tally)
   if (t.error) throw new Error(t.error)
   const vouchers = from !== undefined || to !== undefined
   if (dayBook && !vouchers) throw new Error('--daybook needs --vouchers-from and --vouchers-to')
+  if (masters && vouchers) throw new Error('--masters cannot be combined with --vouchers-from / --vouchers-to')
   if (vouchers) (dayBook ? dayBookRequest(company ?? '', from, to) : voucherRequest(company ?? '', from, to)) // checks company and dates before anything is created or sent
   if (typeof out !== 'string' || !isAbsolute(out)) throw new Error('--out must be an absolute folder path')
   if (insideGitRepo(out)) throw new Error('--out must be outside any Git working tree: raw Tally data is never committed')
@@ -613,7 +626,7 @@ export async function capture({ tally, out, company, from, to, dayBook = false, 
     log(`Saved in ${out}. Nothing was sent to ManuFlow; Tally was only read.`)
     return { companies: names, files, summary }
   }
-  for (const type of CAPTURE_EXPORTS) save(type, await runJob(t.url, { type, company }, { keepRaw: true }))
+  for (const type of masters ? CAPTURE_MASTERS : CAPTURE_EXPORTS) save(type, await runJob(t.url, { type, company }, { keepRaw: true }))
   writeManifest()
   log(`Saved in ${out}. Nothing was sent to ManuFlow; Tally was only read.`)
   return { companies: names, files }
@@ -930,7 +943,7 @@ function arg(argv, name) {
 }
 
 const USAGE = 'Commands: check [--tally <url>] [--server <url>] | pair --server <url> (--code <code> | --code-stdin) [--tally http://127.0.0.1:9000] | ' +
-  'run [--log-file <file>] | set-tally --tally <url> | status | version | forget | capture --tally <url> --out <folder> [--company <name>] ' +
+  'run [--log-file <file>] | set-tally --tally <url> | status | version | forget | capture --tally <url> --out <folder> [--company <name>] [--masters] ' +
   '(all but capture: [--config <settings file>])'
 
 /** io.stdin: how --code-stdin reads the code (standard input; replaced in tests). */
@@ -1008,7 +1021,7 @@ export async function main(argv = process.argv.slice(2), log = console.log, io =
   if (cmd === 'capture') {
     try {
       // The Tally address must be given: capture never uses the saved settings or token
-      await capture({ tally: arg(argv, 'tally'), out: arg(argv, 'out'), company: arg(argv, 'company'), from: arg(argv, 'vouchers-from'), to: arg(argv, 'vouchers-to'), dayBook: argv.includes('--daybook'), log })
+      await capture({ tally: arg(argv, 'tally'), out: arg(argv, 'out'), company: arg(argv, 'company'), from: arg(argv, 'vouchers-from'), to: arg(argv, 'vouchers-to'), dayBook: argv.includes('--daybook'), masters: argv.includes('--masters'), log })
       return 0
     } catch (e) {
       log(`Capture stopped: ${e.message}`)

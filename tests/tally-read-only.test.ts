@@ -77,10 +77,11 @@ describe('connector program never writes to Tally', () => {
     expect(exported.pushVoucher).toBeUndefined()
     expect(exported.pushProblem).toBeUndefined()
     expect(exported.PUSH_MAX_BYTES).toBeUndefined()
-    // the complete list of things the connector can be asked to do: read-only exports only (Phase E added the masters)
+    // the complete list of things the connector can be asked to do: read-only exports only (Phase E added the masters,
+    // 0.4.0 cost centres)
     expect(Object.keys(connector.JOBS).sort()).toEqual([
-      'export-customers', 'export-godowns', 'export-groups', 'export-items', 'export-ledgers', 'export-stockgroups', 'export-suppliers',
-      'export-units', 'list-companies',
+      'export-costcentres', 'export-customers', 'export-godowns', 'export-groups', 'export-items', 'export-ledgers', 'export-stockgroups',
+      'export-suppliers', 'export-units', 'list-companies',
     ])
   })
 

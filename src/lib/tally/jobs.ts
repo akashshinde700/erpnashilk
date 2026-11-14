@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { ApiError } from '@/lib/erp-helpers'
 import { stageMasters } from '@/lib/tally/layer1'
 import {
-  CONNECTOR_MIN_VERSION, ONLINE_WINDOW_MS, OPEN_JOB_STATUSES, RETENTION, TALLY_JOB_TYPES, connectorOutdated, type TallyJobStatus, type TallyJobType,
+  CONNECTOR_MIN_VERSION, ONLINE_WINDOW_MS, OPEN_JOB_STATUSES, RETENTION, TALLY_JOB_TYPES, connectorOutdated, olderThan, type TallyJobStatus, type TallyJobType,
 } from '@/lib/tally/connector'
 
 /**
@@ -32,19 +32,22 @@ export const MAX_OPEN_JOBS = 6
 /** A company list read this recently is reused when the screen asks for one by itself (not on an explicit refresh). */
 export const LIST_REUSE_MS = 20_000
 export const CHUNK_RECORDS = 500
+/** Jobs an older connector does not know (it would answer with an error): asked for only from this version on. */
+export const MIN_JOB_VERSION: Partial<Record<TallyJobType, string>> = { 'export-costcentres': '0.4.0' }
 
 const FIELDS: Record<TallyJobType, Record<string, number>> = {
   'list-companies': { name: 200, guid: 100, booksFrom: 10, startingFrom: 10 },
   'export-customers': partyFields(),
   'export-suppliers': partyFields(),
   'export-items': { guid: 100, name: 200, parent: 200, alterId: 20, unit: 50, hsn: 20, gstRate: 10 },
-  'export-groups': { ...masterFields(), isRevenue: 5, affectsGrossProfit: 5, isDeemedPositive: 5, isSubLedger: 5, isBillWiseOn: 5 },
+  'export-groups': { ...masterFields(), reservedName: 200, isRevenue: 5, affectsGrossProfit: 5, isDeemedPositive: 5, isSubLedger: 5, isBillWiseOn: 5 },
   'export-ledgers': { ...masterFields(), openingBalance: 40, isBillWiseOn: 5, isCostCentresOn: 5, currency: 20, gstin: 20, state: 100 },
   'export-stockgroups': masterFields(),
   'export-units': {
     guid: 100, name: 50, alterId: 20, formalName: 100, isSimple: 5, decimals: 5, baseUnits: 50, additionalUnits: 50, conversion: 40, gstUqc: 20,
   },
   'export-godowns': masterFields(),
+  'export-costcentres': { ...masterFields(), category: 200 },
 }
 function masterFields() {
   return { guid: 100, name: 200, parent: 200, alterId: 20 }
@@ -183,6 +186,10 @@ export async function createJob(
     company = tallyCompany
   }
   const c = await readyConnector(companyId)
+  const needs = MIN_JOB_VERSION[t]
+  if (needs && (!c.version || olderThan(c.version, needs))) {
+    throw new ApiError(`Reading this from Tally needs Tally connector ${needs} or newer — update the connector on the Tally computer`, 409, 'CONNECTOR_UPDATE_NEEDED')
+  }
   if (t === 'list-companies' && opts.reuseRecentList) {
     // Asked for by the screen itself: a list this connector read seconds ago is the answer (no second read of Tally)
     const recent = await db.tallyJob.findFirst({
